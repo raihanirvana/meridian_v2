@@ -1,57 +1,132 @@
 # Meridian V2 Progress
 
-Last updated: 2026-04-18
-Current batch: Batch 1 - Config schema dan environment boundary
+Last updated: 2026-04-20
+Current batch: Batch 6 - Use case deploy end-to-end
 Status: Complete
 
-## Scope Batch 1
-- Implement strict config schema
-- Pisahkan secrets `.env` dari non-secret `user-config.json`
-- Tambahkan `.env.example` dan `user-config.example.json`
-- Tambahkan redacted logging helper untuk config
-- Tambahkan tests untuk valid config, secret boundary, invalid config, dan unknown keys
+## Scope Batch 6
+- Implement request deploy lewat queue
+- Implement queue-side deploy submission handler
+- Implement confirmation handling sampai posisi `OPEN` atau timeout
+- Tambahkan tests untuk deploy success, fail, timeout, dan duplicate request
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
 - Repo lama `Desktop/meridian` sudah diaudit sebagai referensi perilaku dan anti-pattern
-- Struktur folder awal V2 sudah dibuat
 - Batch 0 selesai:
   - bootstrap TypeScript greenfield
   - setup `vitest`, `eslint`, `prettier`, `zod`, dan `pino`
   - contoh schema dan dummy test
   - verifikasi `lint`, `build`, dan `test`
-- File Batch 1 sudah ditambahkan:
-  - `src/infra/config/configSchema.ts`
-  - `src/infra/config/loadConfig.ts`
-  - `.env.example`
-  - `user-config.example.json`
-  - `tests/unit/loadConfig.test.ts`
-- Boundary config sudah aktif:
-  - secrets dibaca dari `.env`
-  - non-secret dibaca dari `user-config.json`
-  - unknown keys ditolak secara strict
-  - secret-like keys di `user-config.json` gagal dengan pesan eksplisit
-  - helper `redactSecretsForLogging()` tersedia
-- Verifikasi Batch 1 selesai:
+- Batch 1 selesai:
+  - strict config schema
+  - config loader dengan boundary `.env` vs `user-config.json`
+  - `.env.example` dan `user-config.example.json`
+  - `ConfigValidationError` + secret redaction
+  - verifikasi `lint`, `build`, dan `test`
+- Batch 2 selesai:
+  - enums lifecycle resmi
+  - entity schema `Position`, `Action`, `Candidate`, `PortfolioState`
+  - state machine pure untuk `Position` dan `Action`
+  - lifecycle review fixes sudah masuk
+  - verifikasi `lint`, `build`, dan `test`
+- Batch 3 selesai:
+  - file-based persistence untuk positions/actions
+  - append-only journal
+  - atomic replace dengan backup-restore
+  - verifikasi persist/reload dan failure recovery
+  - verifikasi `lint`, `build`, dan `test`
+- Batch 4 selesai:
+  - wallet/position locks
+  - queue skeleton
+  - idempotency key generator
+  - sequential write guarantee test
+  - verifikasi `lint`, `build`, dan `test`
+- File Batch 5 sudah ditambahkan:
+  - `src/adapters/mockBehavior.ts`
+  - `src/adapters/dlmm/DlmmGateway.ts`
+  - `src/adapters/jupiter/SwapGateway.ts`
+  - `src/adapters/screening/ScreeningGateway.ts`
+  - `src/adapters/analytics/TokenIntelGateway.ts`
+  - `src/adapters/llm/LlmGateway.ts`
+  - `src/adapters/telegram/NotifierGateway.ts`
+  - `tests/unit/mockGateways.test.ts`
+- Adapter contracts yang sekarang tersedia:
+  - `DlmmGateway`
+  - `SwapGateway`
+  - `ScreeningGateway`
+  - `TokenIntelGateway`
+  - `LlmGateway`
+  - `NotifierGateway`
+- Mock behavior yang sekarang tersedia:
+  - `success`
+  - `fail`
+  - `timeout`
+- Export surface di `src/index.ts` sudah diperbarui untuk semua gateway contract dan mock
+- Verifikasi Batch 5 selesai:
   - `npm run lint` ✅
   - `npm run build` ✅
   - `npm test` ✅
+- Hardening after audit sudah masuk:
+  - `KeyedLock` cleanup fixed, `isLocked()` tidak stuck true
+  - `ActionQueue` sekarang mengubah handler throw menjadi `FAILED`
+  - repository upsert sekarang tidak lost-update saat write paralel
+  - `FileStore` sekarang punya recovery untuk orphan `.tmp` / `.bak`
+  - `ActionQueue` sekarang bisa menulis journal event untuk enqueue/running/finalize/fail
+  - `JournalRepository` sekarang tolerate malformed trailing line
+  - regression tests untuk semua bug audit kritis sudah ditambahkan
+  - regression untuk H1 ditambahkan: claimed action tidak leak saat processing gagal sebelum handler jalan
+  - `ActionQueue` sekarang reset `startedAt` saat retry masuk `RUNNING` lagi
+  - `DlmmGateway` contract sekarang lebih lengkap: partial close, wallet position listing, pool info
+  - `LlmGateway` management explanation sekarang menerima `positionSnapshot` dan `triggerReasons`
+  - residue `ExampleActionEnvelopeSchema` dari Batch 0 sudah dibersihkan
+  - boundary IO schemas sekarang mulai diexport untuk adapter contracts penting
+  - selective hardening N1/N2/N3 sudah masuk:
+    - `ActionQueue.QueueExecutionResult.nextStatus` dipersempit ke transisi yang benar-benar legal dari `RUNNING`
+    - `TokenIntelGateway`, `SwapGateway`, dan `NotifierGateway` sekarang punya Zod schemas untuk boundary IO
+    - `DlmmGateway` dan `LlmGateway` sekarang memakai `PositionSchema` aktual, bukan `z.custom<Position>()`
+    - regression tests ditambahkan untuk boundary validation yang sebelumnya lolos tanpa parse runtime
+- Batch 6 selesai:
+  - `requestDeploy.ts` sudah membuat deploy request via `ActionQueue`, bukan direct write
+  - `processDeployAction.ts` sudah submit deploy ke gateway dan membuat posisi `DEPLOYING`
+  - confirmation handler sekarang mengubah action `WAITING_CONFIRMATION -> RECONCILING -> DONE`
+  - posisi hanya menjadi `OPEN` setelah confirmation sukses
+  - jika confirmation tidak muncul, action menjadi `TIMED_OUT` dan posisi masuk `RECONCILIATION_REQUIRED`
+  - journal deploy-specific sekarang ditulis untuk accepted, submitted, confirmed, dan timeout/failure
+  - integration test deploy flow end-to-end sudah ditambahkan
+  - hardening deploy audit fixes sudah masuk:
+    - transisi `OPEN` sekarang memakai `pendingPosition.status`, bukan hardcoded `DEPLOYING`
+    - gateway `getPosition()` hanya dianggap confirmed jika status benar-benar `OPEN`
+    - jika submit on-chain sukses tetapi persist lokal gagal, action tidak jatuh ke `FAILED`; flow dinaikkan ke jalur reconcile-safe
+    - regression test ditambahkan untuk non-OPEN confirmation, repeat confirmation idempotent, dan post-submit local write failure
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 1
+- Tidak ada blocker fungsional untuk Batch 6
+- Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
+  - N4 orphan temp artifact cleanup
+  - N5 cross-validation `Action.positionId` vs `Action.type`
+  - N6 optimasi syscall recovery check
+  - N7 shared schema cleanup kecil
 - Opsional: inisialisasi git repo jika memang mau mulai commit dari folder ini
 
 ## Decisions
 - V2 mengikuti PRD greenfield, bukan struktur repo lama
 - Progress note ini harus terus diupdate tiap batch untuk memudahkan handoff ke AI lain
 - Vitest perlu dijalankan di luar sandbox pada environment ini karena `esbuild` kena `spawn EPERM` di sandbox
-- `loadConfig()` melempar `ConfigValidationError` dengan `details` yang cocok untuk troubleshooting atau surface ke operator
+- Semua batch berikutnya harus bergantung pada interface gateway, bukan SDK/vendor langsung
+- Mock gateway memakai `MockBehavior` yang seragam supaya integration tests batch selanjutnya tetap simpel
+- File persistence sekarang memakai keyed lock per file path di level `FileStore`, bukan hanya mengandalkan lock di service layer
+- Prinsip eksekusi saat ini: prioritaskan fix yang berpotensi mengganggu production atau batch berikutnya, dan tunda cleanup yang belum memberi leverage nyata
+- Di Batch 6, posisi pending deploy baru dimaterialisasi saat submit gateway sukses dan `positionId` canonical sudah diketahui; tidak ada posisi `OPEN` sebelum confirmation
 
 ## Next Recommended Step
-- Batch 2: domain enums, entities, dan explicit state machine untuk Position dan Action
+- Batch 7: use case close + finalizer accounting
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
 - Belum ada `.git` di `meridian_v2`
 - Jika test dijalankan di sandbox dan gagal `spawn EPERM`, rerun `npm test` dengan escalation
 - Jangan pakai repo lama sebagai source implementasi; pakai hanya untuk parity/spec bila diperlukan
+- Deploy/close use case di batch berikutnya sebaiknya langsung bergantung pada `ActionQueue` + `ActionRepository` + gateway interfaces yang sudah ada
+- Deploy flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` sebagai confirmation check pada mock/integration layer
+- `npm test` terakhir hijau dengan total `42` tests passed

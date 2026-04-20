@@ -1318,7 +1318,8 @@ Menghubungkan engine ke dunia nyata setelah core cukup stabil.
 - domain tidak tahu detail vendor SDK
 
 ### Prompt vibecode
-“Implement real DLMM, swap, and screening gateways behind the existing interfaces. Map vendor-specific errors into typed domain-safe errors. Add contract tests and mocks for network failures.”
+
+ways behind the existing interfaces. Map vendor-specific errors into typed domain-safe errors. Add contract tests and mocks for network failures.”
 
 ---
 
