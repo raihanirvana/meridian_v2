@@ -114,6 +114,15 @@ export {
   type FileSystemAdapter,
 } from "./adapters/storage/FileStore.js";
 export {
+  AdapterHttpStatusError,
+  AdapterResponseValidationError,
+  AdapterTransportError,
+  JsonHttpClient,
+  type FetchLike,
+  type JsonHttpClientOptions,
+  type JsonHttpRequestOptions,
+} from "./adapters/http/HttpJsonClient.js";
+export {
   MockDlmmGateway,
   ClaimFeesRequestSchema,
   ClaimFeesResultSchema,
@@ -139,6 +148,10 @@ export {
   type WalletPositionsSnapshot,
 } from "./adapters/dlmm/DlmmGateway.js";
 export {
+  HttpDlmmGateway,
+  type HttpDlmmGatewayOptions,
+} from "./adapters/dlmm/HttpDlmmGateway.js";
+export {
   MockSwapGateway,
   ExecuteSwapRequestSchema,
   ExecuteSwapResultSchema,
@@ -152,6 +165,10 @@ export {
   type SwapQuoteResult,
 } from "./adapters/jupiter/SwapGateway.js";
 export {
+  JupiterApiSwapGateway,
+  type JupiterApiSwapGatewayOptions,
+} from "./adapters/jupiter/JupiterApiSwapGateway.js";
+export {
   MockScreeningGateway,
   CandidateDetailsSchema,
   ListCandidatesRequestSchema,
@@ -161,6 +178,10 @@ export {
   type ScreeningGateway,
 } from "./adapters/screening/ScreeningGateway.js";
 export {
+  HttpScreeningGateway,
+  type HttpScreeningGatewayOptions,
+} from "./adapters/screening/HttpScreeningGateway.js";
+export {
   MockTokenIntelGateway,
   type MockTokenIntelGatewayBehaviors,
   SmartMoneySnapshotSchema,
@@ -169,6 +190,10 @@ export {
   TokenRiskSnapshotSchema,
   type TokenRiskSnapshot,
 } from "./adapters/analytics/TokenIntelGateway.js";
+export {
+  HttpTokenIntelGateway,
+  type HttpTokenIntelGatewayOptions,
+} from "./adapters/analytics/HttpTokenIntelGateway.js";
 export {
   MockPriceGateway,
   SolPriceQuoteSchema,

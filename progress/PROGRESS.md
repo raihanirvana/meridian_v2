@@ -1,13 +1,13 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 15 - AI advisory layer
+Current batch: Batch 16 - real adapters
 Status: Complete
 
-## Scope Batch 15
-- Add reusable AI advisory service untuk shortlist ranking dan management explanation
-- Wire AI advisory secara aman ke management worker tanpa memberi write privilege ke LLM
-- Keep deterministic engine as source of truth with strict fallback on invalid AI output or timeout
+## Scope Batch 16
+- Add reusable HTTP JSON client with adapter-level error mapping
+- Implement real HTTP adapters for DLMM, swap, screening, and token-intel boundaries
+- Add contract tests for response validation and transport/HTTP failure mapping
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -322,9 +322,36 @@ Status: Complete
   - hardening pasca-audit Batch 15 yang sudah masuk:
     - advisory AI sekarang di-skip untuk hasil deterministic final seperti `HOLD` dan `RECONCILE_ONLY`, jadi worker tidak membayar latency/token cost yang tidak perlu
     - output schema `LlmGateway` sekarang benar-benar `.strict()` untuk ranking dan management explanation boundary
+- Batch 16 selesai:
+  - utility HTTP resmi sekarang tersedia di `HttpJsonClient.ts`, lengkap dengan error mapping:
+    - `AdapterTransportError`
+    - `AdapterHttpStatusError`
+    - `AdapterResponseValidationError`
+  - adapter nyata yang sekarang tersedia:
+    - `HttpDlmmGateway`
+    - `JupiterApiSwapGateway`
+    - `HttpScreeningGateway`
+    - `HttpTokenIntelGateway`
+  - response liar dari service eksternal sekarang dibersihkan di adapter layer sebelum masuk domain contract
+  - test Batch 16 sekarang cover:
+    - successful contract mapping untuk DLMM / Jupiter / screening / token intel
+    - non-2xx HTTP response -> adapter status error
+    - invalid JSON/schema -> response validation error
+    - transport failure -> transport error
+    - timeout-abort -> transport error
+    - DLMM `getPosition()` 404 -> `null`
+    - Jupiter execute membutuhkan execution bridge eksplisit
+  - batasan Batch 16 yang disengaja:
+    - repo tetap interface-first; worker/use case existing belum otomatis menginstansiasi adapter nyata
+    - quote/read path bisa langsung bicara ke HTTP API, tapi write execution tertentu masih butuh bridge/composition root eksplisit
+    - khusus `JupiterApiSwapGateway.executeSwap()`, caller harus memberi `executeBaseUrl` bridge karena repo ini belum membawa signer/runtime submit flow resmi
+  - hardening pasca-audit Batch 16 yang sudah masuk:
+    - `JsonHttpClient` sekarang mendukung timeout berbasis `AbortController`
+    - `HttpDlmmGateway.getPosition()` sekarang memetakan HTTP 404 menjadi `null`, jadi semantik reconciliation tetap konsisten dengan mock
+    - `SwapQuoteResultSchema.priceImpactPct` sekarang mendokumentasikan unit canonical sebagai fractional ratio (`0.01 = 1%`)
 
 ## Pending
-- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 16
+- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 17
 - Gap yang masih tersisa sekarang lebih ke scope/surface:
   - `screeningWorker`
   - `reportingWorker`
@@ -357,7 +384,7 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 16: real adapters DLMM / swap / screening APIs
+- Batch 17: dry-run simulation harness
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -373,4 +400,5 @@ Status: Complete
 - Portfolio risk engine sekarang sudah di-inject ke management worker lewat `PortfolioStateBuilder` + `runManagementCycle()`, dengan valuation boundary tetap dipisah di `PriceGateway`
 - Operator interface Batch 14 sekarang berbagi parser/executor yang sama antara CLI dan Telegram agar manual request tetap konsisten dan tidak mem-bypass queue
 - Batch 15 menambahkan advisory AI tanpa mengubah write boundary: worker tetap dispatch berdasarkan hasil deterministic, sementara output AI hanya dipakai untuk ranking/explanation metadata dan selalu punya fallback
-- `npm test` terakhir hijau dengan total `109` tests passed
+- Batch 16 menambahkan adapter nyata berbasis HTTP + error mapping, tetapi runtime composition tetap external/manual: worker masih menerima gateway via dependency injection, bukan instantiate service live sendiri
+- `npm test` terakhir hijau dengan total `117` tests passed

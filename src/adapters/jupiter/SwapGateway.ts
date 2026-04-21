@@ -13,6 +13,7 @@ export const SwapQuoteRequestSchema = z.object({
 
 export const SwapQuoteResultSchema = z.object({
   expectedOutputAmount: z.number().nonnegative(),
+  // Canonical unit: fractional ratio, where 0.01 = 1%.
   priceImpactPct: z.number().nonnegative(),
 });
 

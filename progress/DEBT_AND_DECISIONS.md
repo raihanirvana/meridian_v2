@@ -187,6 +187,21 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: pada mock Batch 15 ini tidak memengaruhi correctness karena fallback tetap jalan, tetapi saat adapter LLM nyata dipasang, timeout tanpa abort bisa meninggalkan request HTTP menggantung dan menumpuk di background.
   Revisit: saat Batch 16 memasang adapter LLM nyata; pertimbangkan menambah `AbortSignal` ke contract `LlmGateway`.
 
+- `N40` `JupiterApiSwapGateway.executeSwap()` masih memerlukan execution bridge eksplisit (`executeBaseUrl`) karena repo belum membawa signer/runtime submit flow resmi; adapter belum bisa mengeksekusi swap langsung hanya dari quote + wallet string di [JupiterApiSwapGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/jupiter/JupiterApiSwapGateway.ts:60>)
+  Status: deferred
+  Kenapa ditunda: Batch 16 fokus pada contract-safe HTTP adapters dan error mapping. Quote Jupiter resmi sudah tersambung, tetapi submit swap nyata masih butuh signing/orchestration yang belum ada di repo ini.
+  Revisit: saat Batch 16/17 mulai memasang signer/runtime submit flow resmi atau saat real live swap execution menjadi kebutuhan langsung.
+
+- `N41` HTTP adapters saat ini belum punya retry/backoff untuk read path idempotent (`GET` quote/list/pool-info/token intel) di [HttpJsonClient.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/http/HttpJsonClient.ts:1>)
+  Status: deferred
+  Kenapa ditunda: timeout dan typed error mapping sudah cukup untuk Batch 16 correctness, tetapi transient 5xx/read blip masih langsung menggagalkan cycle sekali jalan.
+  Revisit: saat worker runtime mulai memakai adapter live secara periodik; putuskan apakah retry di adapter atau di worker orchestration layer.
+
+- `N42` `summarizeText()` di HTTP client memotong error body ke 200 karakter, sehingga structured vendor error bisa kehilangan detail di [HttpJsonClient.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/http/HttpJsonClient.ts:78>)
+  Status: deferred
+  Kenapa ditunda: body ringkas cukup untuk sekarang dan mencegah log/error terlalu bising, tetapi beberapa upstream bisa menyimpan kode error penting di payload yang lebih panjang.
+  Revisit: saat real adapter observability mulai dipakai operator dan perlu richer vendor error context.
+
 - `T8` coverage gap risk engine setelah hardening Batch 12 di [riskRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/riskRules.test.ts:1>)
   Status: deferred
   Kenapa ditunda: core semantics Batch 12 sudah diregresikan, tetapi beberapa branch penting dan ambiguity cases belum diuji eksplisit.
@@ -293,6 +308,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - Batch 15 mempertahankan AI sebagai advisory layer; bahkan pada mode `constrained_action`, management worker tetap mengeksekusi hasil deterministic dan hanya membawa metadata AI (`aiSuggestedAction`, `aiReasoning`, `aiSource`) di [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:1>) dan [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:1>)
   Rationale: prinsip produk tetap “AI advisory unless explicitly allowed”; Batch 15 menambah ranking/explanation terstruktur tanpa membuka write privilege atau memberi override langsung ke lifecycle inti.
   Tradeoff: mode `constrained_action` saat ini baru membatasi bentuk saran AI, belum menjadi sumber aksi final. Override action baru layak dipertimbangkan setelah supervised/live governance lebih matang.
+
+- Batch 16 memakai pola “HTTP adapter + composition root”, bukan instantiate live service langsung dari worker. Adapter nyata tersedia di [HttpDlmmGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/dlmm/HttpDlmmGateway.ts:1>), [JupiterApiSwapGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/jupiter/JupiterApiSwapGateway.ts:1>), [HttpScreeningGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/screening/HttpScreeningGateway.ts:1>), dan [HttpTokenIntelGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/analytics/HttpTokenIntelGateway.ts:1>)
+  Rationale: domain/worker layer tetap bergantung pada interface, sementara pemilihan service live, base URL, key, dan execution bridge menjadi tanggung jawab composition root atau runtime supervisor.
+  Tradeoff: “real adapter available” tidak sama dengan “runtime default sudah live”; wiring ke service nyata tetap langkah terpisah.
 
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
