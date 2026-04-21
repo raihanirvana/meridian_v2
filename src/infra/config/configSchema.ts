@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ManagementPolicySchema } from "../../domain/rules/managementRules.js";
+
 const PositiveNumber = z.number().positive();
 const PercentNumber = z.number().min(0).max(100);
 
@@ -56,6 +58,9 @@ export const UserConfigSchema = z
         reportingIntervalSec: z.number().int().positive(),
       })
       .strict(),
+    management: ManagementPolicySchema.omit({
+      maxRebalancesPerPosition: true,
+    }),
     ai: z
       .object({
         mode: AiModeSchema,

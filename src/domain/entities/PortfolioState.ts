@@ -15,6 +15,8 @@ export const PortfolioStateSchema = z
     dailyRealizedPnl: z.number(),
     drawdownState: DrawdownStateSchema,
     circuitBreakerState: CircuitBreakerStateSchema,
+    circuitBreakerActivatedAt: z.string().datetime().nullable().optional(),
+    circuitBreakerCooldownStartedAt: z.string().datetime().nullable().optional(),
     exposureByToken: z.record(z.string(), z.number().nonnegative()),
     exposureByPool: z.record(z.string(), z.number().nonnegative()),
   })

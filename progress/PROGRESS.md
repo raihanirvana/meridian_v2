@@ -1,13 +1,13 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 12 - Portfolio risk engine
+Current batch: Batch 14 - operator interfaces CLI dan Telegram read-first
 Status: Complete
 
-## Scope Batch 12
-- Implement `riskRules.ts`
-- Implement capital usage / exposure / drawdown / circuit-breaker calculators
-- Tambahkan tests untuk daily loss limit, reserve guard, exposure caps, dan safe close/reconcile allowance
+## Scope Batch 14
+- Implement shared operator command parser/executor
+- Add explicit CLI dan Telegram wrappers untuk read-state dan manual request yang queue-safe
+- Add operator alert notification helper
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -231,9 +231,78 @@ Status: Complete
     - risk policy/config reserve sekarang dikunci sebagai `minReserveUsd` agar unit convention konsisten dengan allocation/equity snapshot yang dipakai evaluator
     - threshold `max` untuk capital usage dan exposure sekarang konsisten inclusive (`>=`)
     - regression tests ditambahkan untuk rebalance replacement semantic, token-ordering safety, exact-max boundary, helper projection pure, dan config rename coverage
+- Batch 13 selesai:
+  - `PriceGateway` dan `WalletGateway` contract + mock sekarang tersedia sebagai boundary resmi untuk valuation/input balance worker
+  - `PortfolioStateBuilder` sekarang membangun snapshot USD-equivalent canonical dari:
+    - wallet balance SOL
+    - SOL price quote
+    - local positions
+    - pending actions
+    - realized PnL harian
+  - `countRecentNewDeploys()` sekarang menjadi helper resmi untuk rule `maxNewDeploysPerHour`
+  - `runManagementCycle()` / `runManagementWorker()` sekarang meng-wire:
+    - portfolio snapshot builder
+    - management rules engine
+    - risk rules engine
+    - `requestClose()`
+    - `requestRebalance()`
+  - decision `N27` sekarang terpakai nyata di orchestration: `REBALANCE` tidak dihitung terhadap `maxNewDeploysPerHour`
+  - config sekarang punya section `management` resmi, dan duplicate operator config `maxRebalancesPerPosition` sudah dikurangi: source canonical tetap di `risk`
+  - hardening pasca-audit Batch 13 yang sudah masuk:
+    - active capital snapshot sekarang memasukkan status in-flight/reconciliation penting, jadi posisi stuck tidak lagi invisible ke risk engine
+    - builder sekarang menjalankan lifecycle breaker penuh `ON -> COOLDOWN -> OFF` dengan timestamp cooldown/activation yang dibawa antar-cycle
+    - `dailyRealizedPnl` worker sekarang diturunkan dari delta journal `before/after.realizedPnlUsd`, bukan dari `closedAt` snapshot semata
+    - close path di management worker tidak lagi menjalankan risk check yang memang dead untuk action `CLOSE`
+  - batasan Batch 13 yang disengaja:
+    - worker hanya men-dispatch action yang memang sudah punya request flow resmi (`CLOSE`, `REBALANCE`)
+    - hasil management `CLAIM_FEES` / `PARTIAL_CLOSE` masih di-skip sebagai unsupported dan dicatat di debt register
+    - Batch 13 belum memenuhi seluruh surface PRD: `screeningWorker`, `reportingWorker`, scheduler metadata, dan manual triggers belum dikerjakan dan sudah dicatat eksplisit di debt register
+  - tests Batch 13 sudah ditambahkan untuk:
+    - canonical portfolio snapshot builder
+    - recent deploy counter
+    - close dispatch dari management worker
+    - rebalance dispatch walau recent deploy sudah menyentuh limit
+    - unsupported claim-fees decision skip
+    - cooldown entry
+    - reconciliation-required capital visibility
+- Batch 14 selesai:
+  - shared parser/executor operator sekarang tersedia di `operatorCommands.ts`
+  - command read-first yang sekarang didukung:
+    - `status`
+    - `positions`
+    - `pending-actions`
+  - manual request command yang sekarang didukung:
+    - `close <positionId> <reason>`
+    - `deploy <json>`
+    - `rebalance <positionId> <json>`
+  - manual operator path tetap queue-safe:
+    - CLI/Telegram hanya memanggil `requestClose()`, `requestDeploy()`, atau `requestRebalance()`
+    - tidak ada direct process/finalize write dari surface operator
+  - wrapper eksplisit sekarang tersedia untuk:
+    - `handleCliOperatorCommand()`
+    - `handleTelegramOperatorCommand()`
+    - `sendOperatorAlert()`
+  - export surface `src/index.ts` sudah diperbarui untuk seluruh operator interface Batch 14
+  - tests Batch 14 sudah ditambahkan untuk:
+    - command parser success path
+    - invalid command rejection
+    - status/positions/pending-actions rendering
+    - manual close request membuat action `QUEUED` tanpa mutasi posisi langsung
+    - manual deploy/rebalance request tetap masuk queue
+    - Telegram wrapper mengirim reply hasil command
+    - operator alert memakai notifier gateway
+  - hardening pasca-audit Batch 14 yang sudah masuk:
+    - kegagalan `NotifierGateway.sendMessage()` di Telegram handler tidak lagi menggagalkan hasil command yang sebenarnya sudah accepted ke queue
+    - regression test ditambahkan untuk memastikan operator command tetap sukses walau delivery reply Telegram gagal
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 12
+- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 15
+- Gap yang masih tersisa sekarang lebih ke scope/surface:
+  - `screeningWorker`
+  - `reportingWorker`
+  - scheduler metadata
+  - manual triggers
+  - management auto-dispatch untuk `CLAIM_FEES` / `PARTIAL_CLOSE`
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
@@ -260,7 +329,7 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 13: workers orchestration tanpa AI
+- Batch 15: AI layer advisory di atas worker/operator foundation yang sekarang sudah ada
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -273,5 +342,6 @@ Status: Complete
 - Reconciliation worker sekarang juga bisa recover `REBALANCE`, dengan phase action disimpan di `resultPayload`
 - Management rules engine saat ini masih memakai input `signals`/`policy` yang diberikan caller; enrichment data dan orchestration evaluasi multi-posisi sengaja ditunda ke batch worker/risk berikutnya
 - Screening/scoring engine saat ini memakai policy dan candidate snapshot yang diberikan caller; ingestion real candidate details dan orchestration shortlist lintas gateway tetap ditunda ke batch worker screening berikutnya
-- Portfolio risk engine saat ini sudah reusable sebagai pure validator/calculator, tetapi belum di-inject ke worker/action orchestration; integrasinya natural dikerjakan di Batch 13
-- `npm test` terakhir hijau dengan total `86` tests passed
+- Portfolio risk engine sekarang sudah di-inject ke management worker lewat `PortfolioStateBuilder` + `runManagementCycle()`, dengan valuation boundary tetap dipisah di `PriceGateway`
+- Operator interface Batch 14 sekarang berbagi parser/executor yang sama antara CLI dan Telegram agar manual request tetap konsisten dan tidak mem-bypass queue
+- `npm test` terakhir hijau dengan total `104` tests passed

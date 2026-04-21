@@ -170,6 +170,20 @@ export {
   type TokenRiskSnapshot,
 } from "./adapters/analytics/TokenIntelGateway.js";
 export {
+  MockPriceGateway,
+  SolPriceQuoteSchema,
+  type MockPriceGatewayBehaviors,
+  type PriceGateway,
+  type SolPriceQuote,
+} from "./adapters/pricing/PriceGateway.js";
+export {
+  MockWalletGateway,
+  WalletBalanceSnapshotSchema,
+  type MockWalletGatewayBehaviors,
+  type WalletBalanceSnapshot,
+  type WalletGateway,
+} from "./adapters/wallet/WalletGateway.js";
+export {
   MockLlmGateway,
   CandidateRankingResultSchema,
   ManagementExplanationInputSchema,
@@ -224,6 +238,14 @@ export {
   createQueuedAction,
   type CreateQueuedActionInput,
 } from "./app/services/ActionService.js";
+export {
+  buildPortfolioState,
+  type BuildPortfolioStateInput,
+} from "./app/services/PortfolioStateBuilder.js";
+export {
+  countRecentNewDeploys,
+  type CountRecentNewDeploysInput,
+} from "./app/services/RecentDeployCounter.js";
 export {
   processActionQueue,
   type ProcessActionQueueInput,
@@ -287,9 +309,40 @@ export {
   type ReconciliationRecord,
 } from "./app/usecases/reconcilePortfolio.js";
 export {
+  executeOperatorCommand,
+  parseOperatorCommand,
+  type ExecuteOperatorCommandInput,
+  type OperatorCommand,
+  type OperatorCommandExecutionResult,
+  type OperatorCommandParseInput,
+} from "./app/usecases/operatorCommands.js";
+export {
+  handleCliOperatorCommand,
+  type HandleCliOperatorCommandInput,
+} from "./app/usecases/handleCliOperatorCommand.js";
+export {
+  handleTelegramOperatorCommand,
+  type HandleTelegramOperatorCommandInput,
+} from "./app/usecases/handleTelegramOperatorCommand.js";
+export {
+  sendOperatorAlert,
+  type SendOperatorAlertInput,
+} from "./app/usecases/sendOperatorAlert.js";
+export {
+  runManagementCycle,
+  type ManagementCyclePositionResult,
+  type ManagementCycleResultStatus,
+  type RunManagementCycleInput,
+  type RunManagementCycleResult,
+} from "./app/usecases/runManagementCycle.js";
+export {
   runReconciliationWorker,
   type ReconciliationWorkerInput,
 } from "./app/workers/reconciliationWorker.js";
+export {
+  runManagementWorker,
+  type ManagementWorkerInput,
+} from "./app/workers/managementWorker.js";
 export {
   AiModeSchema,
   EnvSecretsSchema,

@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (Batch 12 policy decisions N27/N31 resolved)
+Last updated: 2026-04-21 (Batch 14 operator interfaces applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -137,11 +137,6 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   duplicate rebalance idempotency, submit-OK/persist-fail di `processRebalanceAction()`, redeploy persist-fail di `finalizeRebalance()`, redeploy confirmation non-`OPEN`, terminal re-entry `UNCHANGED`, request reject branches, rebalance from `HOLD`, dan re-entry dari phase `REDEPLOY_SUBMITTED`.
   Revisit: sebelum Batch 13 worker/reporting mulai lebih bergantung pada rebalance observability dan recovery semantics.
 
-- `N24` `circuitBreakerCooldownMin` belum dipakai untuk expiry/transisi `ON -> COOLDOWN -> OFF` di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:206>)
-  Status: deferred
-  Kenapa ditunda: Batch 12 baru membangun pure guardrail engine dasar; cooldown clock/state transition belum dibutuhkan sampai worker orchestration benar-benar mulai mengelola breaker lifecycle.
-  Revisit: wajib saat Batch 13/14 mulai mengoperasikan circuit breaker end-to-end.
-
 - `N25` risk engine masih bisa menghasilkan blocking reason yang redundant (`daily loss limit` + `circuit breaker`) di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:438>)
   Status: deferred
   Kenapa ditunda: tidak mengubah correctness keputusan block, hanya menambah noise observability.
@@ -167,15 +162,25 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: guard saat ini sudah memblok ketika reserve snapshot jatuh di bawah minimum, tetapi contract antara `walletBalance`, `availableBalance`, dan `reservedBalance` belum diformalisasi di schema. Perubahan penuh lebih aman dilakukan saat worker Batch 13 benar-benar menjadi producer utama snapshot portfolio.
   Revisit: saat integrasi worker risk/orchestration sudah final, lalu kencangkan schema atau builder snapshot di boundary.
 
-- `N32` builder `PortfolioState` canonical belum ada; worker Batch 13 berisiko membentuk snapshot risk dengan logika yang tersebar di banyak tempat di [PortfolioState.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/entities/PortfolioState.ts:1>)
+- `N34` management worker Batch 13 saat ini hanya men-dispatch action yang memang sudah punya request flow resmi (`CLOSE`, `REBALANCE`); hasil engine `CLAIM_FEES` dan `PARTIAL_CLOSE` masih di-skip sebagai unsupported di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:171>)
   Status: deferred
-  Kenapa ditunda: evaluator risk sudah siap menerima snapshot, tetapi belum ada service/usecase tunggal yang mengagregasi wallet balance, reserve, pending actions, exposure, dan daily realized PnL menjadi `PortfolioState`. Tanpa builder resmi, tiap worker bisa membangun snapshot dengan invariant yang berbeda.
-  Revisit: wajib dikerjakan di Batch 13 sebelum risk engine dipakai lebih dari satu orchestration path.
+  Kenapa ditunda: Batch 13 fokus pada orchestration fondasi dan tidak menambah close/confirm pipeline baru untuk `CLAIM_FEES` / `PARTIAL_CLOSE`. Worker tetap deterministic dan jujur tentang keterbatasannya, tetapi coverage auto-management penuh masih belum lengkap.
+  Revisit: saat flow request/process/finalize untuk `CLAIM_FEES` dan `PARTIAL_CLOSE` masuk roadmap aktif.
 
-- `N33` sumber `recentNewDeploys` untuk window 1 jam belum dibakukan di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:60>)
+- `N36` PRD Batch 13 belum terpenuhi penuh; `screeningWorker`, `reportingWorker`, scheduler metadata, dan manual triggers belum diimplementasikan dan scope-nya formal digeser ke batch berikutnya
   Status: deferred
-  Kenapa ditunda: evaluator hanya menerima angka final, tetapi belum ada helper/query resmi yang menghitung deploy baru dari journal/action repo dalam sliding window. Tanpa definisi ini, worker Batch 13 bisa memakai sumber atau kriteria hitung yang saling berbeda.
-  Revisit: wajib diputuskan saat Batch 13 mulai meng-wire rule `maxNewDeploysPerHour`.
+  Kenapa ditunda: Batch 13 yang dikirim fokus pada management orchestration foundation (`PriceGateway`, `PortfolioStateBuilder`, `recentNewDeploys`, `managementWorker`) agar boundary risk/valuation matang dulu. Sisa worker/scheduler surface belum dikerjakan pada batch ini.
+  Revisit: wajib dibawa sebagai scope eksplisit worker/runtime batch berikutnya, bukan diasumsikan sudah selesai.
+
+- `N37` `PortfolioStateBuilder` belum mengecek staleness `asOf` dari `PriceGateway` dan `WalletGateway` snapshot di [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:67>)
+  Status: deferred
+  Kenapa ditunda: boundary pricing/balance sekarang sudah typed, tetapi quote/snapshot lama masih bisa lolos tanpa guard dan menghasilkan valuation basi.
+  Revisit: saat scheduler/reporting mulai mengandalkan snapshot runtime nyata, atau sebelum price adapter non-mock dipasang.
+
+- `N38` `signalProvider` throw masih menjatuhkan seluruh management cycle; belum ada per-position error boundary + journal event di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:134>)
+  Status: deferred
+  Kenapa ditunda: worker Batch 13 sekarang masih sederhana dan gagal keras ketika enrichment signal gagal, sehingga satu posisi bermasalah bisa menggagalkan satu cycle penuh.
+  Revisit: sebelum worker orchestration dipakai sebagai loop runtime utama atau dihubungkan ke reporter/operator surface.
 
 - `T8` coverage gap risk engine setelah hardening Batch 12 di [riskRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/riskRules.test.ts:1>)
   Status: deferred
@@ -183,6 +188,13 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Missing coverage:
   `maxConcurrentPositions` on deploy, `pendingActions` block, `maxRebalancesPerPosition`, `maxNewDeploysPerHour`, rebalance shrink (`allocationDeltaUsd < 0`), pool-same-as-old rebalance projection, circuit breaker `COOLDOWN` pass-through/expiry semantics, recovery of loss back below limit, dan allow-assertion individual untuk `CLAIM_FEES`/`PARTIAL_CLOSE`.
   Revisit: sebelum Batch 13 worker benar-benar mengonsumsi evaluator ini secara langsung.
+
+- `T9` coverage gap management worker/orchestration di [managementWorker.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/managementWorker.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: Batch 13 sudah punya regression untuk canonical snapshot builder, recent deploy counter, close dispatch, rebalance dispatch di deploy-limit boundary, unsupported action skip, expanded active-capital statuses, dan cooldown entry. Tetapi beberapa branch orchestration belum diuji eksplisit.
+  Missing coverage:
+  `dryRun`, `BLOCKED_BY_RISK`, `RECONCILE_ONLY`, planner `null`, multiple open positions in one cycle, signalProvider failure boundary, gateway failure propagation, dan journal events untuk unsupported/skipped actions.
+  Revisit: sebelum worker orchestration dipakai sebagai loop runtime utama atau mulai dihubungkan ke reporter/operator surface.
 
 ## Design Decisions
 - Deploy request tetap menulis via `ActionQueue`; `requestDeploy()` tidak boleh direct write ke state/action terminal.
@@ -250,8 +262,28 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 
 - Unit bridge SOL↔USD dikerjakan di boundary worker lewat `PriceGateway` (konversi sekali di entry Batch 13), bukan disimpan sebagai rate di `PortfolioState` (resolves `N31`)
   Rationale: harga = dependency eksternal yang berubah cepat, natural diletakkan sebagai adapter port. Menaruh rate di `PortfolioState` akan mencampur "apa isi portfolio" dengan "dengan rate berapa kita menilainya", dan membuat snapshot basi ketika rate berubah. Risk engine tetap pure USD tanpa perlu tahu soal konversi.
-  Tradeoff: tiap worker yang menyuplai snapshot ke evaluator wajib melewati `PriceGateway` terlebih dulu; belum ada adapter price yang tersedia sampai Batch 13 dikerjakan.
-  Implementation note: Batch 13 harus memperkenalkan `PriceGateway` port + adapter mock, lalu `PortfolioState` builder (`N32`) memakainya untuk memproduksi semua nilai USD-equivalent sebelum evaluator dipanggil.
+  Tradeoff: tiap worker yang menyuplai snapshot ke evaluator wajib melewati `PriceGateway` terlebih dulu.
+  Implementation note: Batch 13 sudah memperkenalkan `PriceGateway` port + adapter mock, dan `PortfolioState` builder sekarang memakainya untuk memproduksi semua nilai USD-equivalent sebelum evaluator dipanggil.
+
+- Management worker Batch 13 sengaja me-rebuild portfolio snapshot per posisi, bukan sekali per cycle, di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:117>)
+  Rationale: setelah satu posisi men-dispatch write action, iterasi berikutnya harus melihat `pendingActions` terbaru agar deterministic safety tetap menang. Ini membuat worker efektif hanya akan mengizinkan satu write action baru per cycle per wallet.
+  Tradeoff: IO jadi lebih mahal dan behavior “satu write per cycle” harus dipahami sebagai desain worker saat ini, bukan side-effect tak sengaja.
+
+- Canonical operator config untuk `maxRebalancesPerPosition` sekarang ada di `risk.maxRebalancesPerPosition`; `management` config tidak lagi meminta field yang sama di [configSchema.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/config/configSchema.ts:21>)
+  Rationale: hindari dua source of truth di file config operator.
+  Tradeoff: pure `managementRules` domain schema masih memakai field itu secara internal, jadi caller non-config tetap harus memberi value saat memanggil engine langsung.
+
+- `dailyRealizedPnl` canonical untuk worker Batch 13 sekarang diturunkan dari delta `before/after.realizedPnlUsd` pada journal event harian, bukan dari snapshot posisi `closedAt` semata di [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:51>)
+  Rationale: pendekatan ini lebih aman untuk partial close, close bertahap, dan posisi yang membawa realized PnL historis dari hari sebelumnya.
+  Tradeoff: akurasi harian sekarang bergantung pada journal position-delta yang lengkap; caller yang membangun portfolio snapshot tanpa journal repository tidak lagi didukung.
+
+- Lifecycle circuit breaker worker sekarang mengandalkan snapshot portfolio sebelumnya yang dibawa antar-cycle, termasuk timestamp `circuitBreakerActivatedAt` dan `circuitBreakerCooldownStartedAt`, di [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:83>) dan [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:81>)
+  Rationale: ini memberi transisi penuh `ON -> COOLDOWN -> OFF` tanpa mencampur concern breaker lifecycle ke risk engine pure.
+  Tradeoff: persistence lintas restart proses tetap menjadi tanggung jawab scheduler/worker runtime saat surface itu dibangun lebih lanjut.
+
+- CLI dan Telegram operator surfaces Batch 14 berbagi parser/executor yang sama, dan manual command hanya boleh memanggil request use case yang masuk queue (`requestClose`, `requestDeploy`, `requestRebalance`) di [operatorCommands.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/operatorCommands.ts:1>)
+  Rationale: ini menjaga DoD Batch 14 tetap tegas; surface operator boleh membaca state dan membuat request, tetapi tidak boleh bypass single-writer boundary.
+  Tradeoff: format output saat ini masih text-first dan sengaja sederhana; jika nanti operator butuh UX lebih kaya, enhancement harus tetap duduk di atas parser/executor yang sama.
 
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
@@ -270,6 +302,14 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `N24b` risk engine/config reserve unit drift sudah ditutup dengan konvensi `minReserveUsd`.
 - `N24c` threshold `max` di capital usage dan exposure sekarang konsisten inclusive.
 - `N29a` rebalance token exposure release sekarang aman terhadap perbedaan ordering `tokenX/tokenY` vs `base/quote`; evaluator melepas exposure dari union mint position yang sudah dide-dupe.
+- `N32` canonical `PortfolioState` builder sekarang ada di `PortfolioStateBuilder`, memakai `WalletGateway` + `PriceGateway` untuk membangun snapshot USD-equivalent yang konsisten.
+- `N33` sumber `recentNewDeploys` sekarang dibakukan lewat helper `countRecentNewDeploys()` yang menghitung action `DEPLOY` non-terminal/valid dalam window 1 jam.
+- `N34a` active capital snapshot sekarang memasukkan status in-flight/reconciliation penting (`DEPLOYING`, `REDEPLOY*`, `RECONCILIATION_REQUIRED`, `RECONCILING`) sehingga capital/exposure tidak lagi invisible saat posisi stuck.
+- `N34b` builder sekarang bisa memasuki `COOLDOWN` ketika snapshot sebelumnya `ON/COOLDOWN` dan loss harian turun di bawah limit; problem yang tersisa tinggal expiry/persistence lifecycle penuh.
+- `N34c` close path di management worker tidak lagi menjalankan risk check yang dead untuk action `CLOSE`.
+- `N34d` duplicate operator config `maxRebalancesPerPosition` sudah dikurangi; field canonical sekarang hanya ada di section `risk`.
+- `N24` circuit breaker lifecycle worker sekarang lengkap sampai `COOLDOWN -> OFF` melalui snapshot state + cooldown timestamp.
+- `N35` `dailyRealizedPnl` worker sekarang dihitung dari journal realized-PnL delta harian, sehingga tidak lagi mengandalkan `closedAt` snapshot yang rawan under/overcount.
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.

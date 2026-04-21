@@ -4,8 +4,10 @@ import { MockTokenIntelGateway } from "../../src/adapters/analytics/TokenIntelGa
 import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
 import { MockSwapGateway } from "../../src/adapters/jupiter/SwapGateway.js";
 import { MockLlmGateway } from "../../src/adapters/llm/LlmGateway.js";
+import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { MockScreeningGateway } from "../../src/adapters/screening/ScreeningGateway.js";
 import { MockNotifierGateway } from "../../src/adapters/telegram/NotifierGateway.js";
+import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 
 const validPositionSnapshot = {
   positionId: "pos_001",
@@ -184,6 +186,26 @@ describe("mock gateways", () => {
         },
       },
     });
+    const price = new MockPriceGateway({
+      getSolPriceUsd: {
+        type: "success",
+        value: {
+          symbol: "SOL",
+          priceUsd: 150,
+          asOf: "2026-04-21T00:00:00.000Z",
+        },
+      },
+    });
+    const wallet = new MockWalletGateway({
+      getWalletBalance: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          balanceSol: 2.5,
+          asOf: "2026-04-21T00:00:00.000Z",
+        },
+      },
+    });
 
     await expect(
       dlmm.deployLiquidity({
@@ -226,6 +248,12 @@ describe("mock gateways", () => {
         message: "hello",
       }),
     ).resolves.toMatchObject({ delivered: true });
+    await expect(price.getSolPriceUsd()).resolves.toMatchObject({
+      priceUsd: 150,
+    });
+    await expect(wallet.getWalletBalance("wallet_001")).resolves.toMatchObject({
+      balanceSol: 2.5,
+    });
   });
 
   it("can simulate failures", async () => {
@@ -243,6 +271,12 @@ describe("mock gateways", () => {
       rankCandidates: { type: "fail", error: "llm unavailable" },
       explainManagementDecision: { type: "fail", error: "llm unavailable" },
     });
+    const failingPrice = new MockPriceGateway({
+      getSolPriceUsd: { type: "fail", error: "price unavailable" },
+    });
+    const failingWallet = new MockWalletGateway({
+      getWalletBalance: { type: "fail", error: "wallet unavailable" },
+    });
 
     await expect(
       failingDlmm.deployLiquidity({
@@ -256,6 +290,12 @@ describe("mock gateways", () => {
 
     await expect(failingLlm.rankCandidates([])).rejects.toThrow(
       /llm unavailable/i,
+    );
+    await expect(failingPrice.getSolPriceUsd()).rejects.toThrow(
+      /price unavailable/i,
+    );
+    await expect(failingWallet.getWalletBalance("wallet_001")).rejects.toThrow(
+      /wallet unavailable/i,
     );
   });
 

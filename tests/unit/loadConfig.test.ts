@@ -66,6 +66,15 @@ function writeFixtureFiles(directory: string, overrides?: { userConfig?: string;
             reconciliationIntervalSec: 300,
             reportingIntervalSec: 3600,
           },
+          management: {
+            stopLossUsd: 50,
+            maxHoldMinutes: 1440,
+            maxOutOfRangeMinutes: 240,
+            claimFeesThresholdUsd: 20,
+            partialCloseEnabled: false,
+            partialCloseProfitTargetUsd: 100,
+            rebalanceEnabled: true,
+          },
           ai: {
             mode: "advisory",
           },
@@ -170,6 +179,15 @@ describe("loadConfig", () => {
           managementIntervalSec: 600,
           reconciliationIntervalSec: 300,
           reportingIntervalSec: 3600,
+        },
+        management: {
+          stopLossUsd: 50,
+          maxHoldMinutes: 1440,
+          maxOutOfRangeMinutes: 240,
+          claimFeesThresholdUsd: 20,
+          partialCloseEnabled: false,
+          partialCloseProfitTargetUsd: 100,
+          rebalanceEnabled: true,
         },
         ai: {
           mode: "advisory",
