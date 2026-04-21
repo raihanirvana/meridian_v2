@@ -82,29 +82,29 @@ export class ActionQueue {
   }
 
   public async enqueue(input: CreateQueuedActionInput): Promise<Action> {
-    const existing = await this.actionRepository.findByIdempotencyKey(
-      input.idempotencyKey,
+    const action = createQueuedAction(input);
+    const enqueueResult = await this.actionRepository.upsertByIdempotencyKey(
+      action,
     );
-    if (existing !== null) {
-      return existing;
+
+    if (!enqueueResult.created) {
+      return enqueueResult.action;
     }
 
-    const action = createQueuedAction(input);
-    await this.actionRepository.upsert(action);
     await this.appendJournalEvent({
       timestamp: new Date().toISOString(),
       eventType: "ACTION_ENQUEUED",
-      actor: action.requestedBy,
-      wallet: action.wallet,
-      positionId: action.positionId,
-      actionId: action.actionId,
+      actor: enqueueResult.action.requestedBy,
+      wallet: enqueueResult.action.wallet,
+      positionId: enqueueResult.action.positionId,
+      actionId: enqueueResult.action.actionId,
       before: null,
-      after: action as unknown as Record<string, unknown>,
+      after: enqueueResult.action as unknown as Record<string, unknown>,
       txIds: [],
-      resultStatus: action.status,
+      resultStatus: enqueueResult.action.status,
       error: null,
     });
-    return action;
+    return enqueueResult.action;
   }
 
   public async processNext(

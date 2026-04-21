@@ -221,6 +221,218 @@ describe("deploy flow", () => {
     );
   });
 
+  it("sets outOfRangeSince when a confirmed deploy is already outside the configured range", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: {
+          ...buildConfirmedPosition("pos_out_of_range"),
+          activeBin: 30,
+          outOfRangeSince: null,
+        },
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_out_of_range",
+          txIds: ["tx_out_of_range"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 30,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    const confirmation = await confirmDeployAction({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway,
+      journalRepository,
+      now: () => "2026-04-20T01:05:00.000Z",
+    });
+
+    expect(confirmation.outcome).toBe("CONFIRMED");
+    expect(confirmation.position?.status).toBe("OPEN");
+    expect(confirmation.position?.outOfRangeSince).toBe(
+      "2026-04-20T01:05:00.000Z",
+    );
+  });
+
+  it("does not infer outOfRangeSince when activeBin is unknown during deploy confirmation", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: {
+          ...buildConfirmedPosition("pos_unknown_bin"),
+          activeBin: null,
+          outOfRangeSince: null,
+        },
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_unknown_bin",
+          txIds: ["tx_unknown_bin"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      wallet: "wallet_001",
+      payload: {
+        ...deployPayload,
+        initialActiveBin: null,
+      },
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    const confirmation = await confirmDeployAction({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway,
+      now: () => "2026-04-20T01:05:00.000Z",
+    });
+
+    expect(confirmation.outcome).toBe("CONFIRMED");
+    expect(confirmation.position?.status).toBe("OPEN");
+    expect(confirmation.position?.activeBin).toBeNull();
+    expect(confirmation.position?.outOfRangeSince).toBeNull();
+  });
+
   it("treats a non-OPEN gateway position as reconciliation-required instead of confirmed", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

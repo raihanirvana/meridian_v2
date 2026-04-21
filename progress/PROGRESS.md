@@ -1,14 +1,14 @@
 # Meridian V2 Progress
 
-Last updated: 2026-04-20
-Current batch: Batch 6 - Use case deploy end-to-end
+Last updated: 2026-04-21
+Current batch: Batch 7 - Use case close + finalizer accounting
 Status: Complete
 
-## Scope Batch 6
-- Implement request deploy lewat queue
-- Implement queue-side deploy submission handler
-- Implement confirmation handling sampai posisi `OPEN` atau timeout
-- Tambahkan tests untuk deploy success, fail, timeout, dan duplicate request
+## Scope Batch 7
+- Implement request close lewat queue
+- Implement queue-side close submission handler
+- Implement finalizer close sampai posisi `CLOSED` atau jalur reconcile-safe
+- Tambahkan tests untuk close success, timeout, dan accounting failure
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -103,16 +103,32 @@ Status: Complete
       - happy path membangun dan menyimpan `OPEN` position dulu sebelum action dipindah ke `RECONCILING`
       - timeout path membangun dan menyimpan `RECONCILIATION_REQUIRED` position dulu sebelum action ditutup ke `TIMED_OUT`
       - regression test ditambahkan untuk malformed confirmed payload dan failure saat timeout reconciliation write
+- Batch 7 selesai:
+  - `requestClose.ts` sudah membuat close request via `ActionQueue`, bukan direct write
+  - `processCloseAction.ts` sudah submit close ke gateway dan memindahkan posisi ke `CLOSING`
+  - `finalizeClose.ts` sekarang menangani confirmation + accounting finalization sampai `CLOSED`
+  - posisi tidak pernah menjadi `CLOSED` sebelum finalizer accounting sukses
+  - jika close confirmation tidak muncul, action menjadi `TIMED_OUT` dan posisi masuk `RECONCILIATION_REQUIRED`
+  - jika close confirmed tetapi accounting/post-close finalization gagal, action menjadi `FAILED` dan posisi masuk `RECONCILIATION_REQUIRED`
+  - optional post-close swap hook interface sudah ditambahkan sebagai extension point finalizer
+  - integration test close flow end-to-end sudah ditambahkan untuk success, timeout, dan accounting failure
+  - hardening Batch 7 yang ikut masuk:
+    - `Action.positionId` sekarang cross-validated terhadap `Action.type`, jadi `CLOSE`/`CLAIM_FEES`/`PARTIAL_CLOSE`/`REBALANCE` scoped action tidak bisa kehilangan `positionId`
+    - enqueue idempotency sekarang atomic, jadi request paralel dengan idempotency key yang sama tidak membuat duplicate action
+    - deploy confirmation sekarang mengisi `outOfRangeSince` saat posisi confirmed langsung berada di luar range
+    - close finalizer menjaga semantik `outOfRangeSince` tetap konsisten saat posisi masuk jalur `CLOSE_CONFIRMED -> RECONCILING -> CLOSED`
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 6
+- Tidak ada blocker fungsional untuk Batch 7
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
-  - N5 cross-validation `Action.positionId` vs `Action.type`
   - N6 optimasi syscall recovery check
   - N7 shared schema cleanup kecil
-- Opsional: inisialisasi git repo jika memang mau mulai commit dari folder ini
+  - N10 gateway field pollution lewat spread
+- Debt yang tadinya dibawa ke Batch 7 sudah ditutup:
+  - N5 cross-validation `Action.positionId` vs `Action.type`
+  - N11 semantik `outOfRangeSince`
 
 ## Decisions
 - V2 mengikuti PRD greenfield, bukan struktur repo lama
@@ -123,15 +139,17 @@ Status: Complete
 - File persistence sekarang memakai keyed lock per file path di level `FileStore`, bukan hanya mengandalkan lock di service layer
 - Prinsip eksekusi saat ini: prioritaskan fix yang berpotensi mengganggu production atau batch berikutnya, dan tunda cleanup yang belum memberi leverage nyata
 - Di Batch 6, posisi pending deploy baru dimaterialisasi saat submit gateway sukses dan `positionId` canonical sudah diketahui; tidak ada posisi `OPEN` sebelum confirmation
+- Di Batch 7, close finalization memisahkan submit close dari accounting finalizer; posisi baru menjadi `CLOSED` setelah confirmation dan finalizer sama-sama sukses
+- Idempotency enqueue sekarang harus atomic di repository layer, bukan check-then-insert di `ActionQueue`
 
 ## Next Recommended Step
-- Batch 7: use case close + finalizer accounting
+- Batch 8: reconciliation worker
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
-- Belum ada `.git` di `meridian_v2`
 - Jika test dijalankan di sandbox dan gagal `spawn EPERM`, rerun `npm test` dengan escalation
 - Jangan pakai repo lama sebagai source implementasi; pakai hanya untuk parity/spec bila diperlukan
 - Deploy/close use case di batch berikutnya sebaiknya langsung bergantung pada `ActionQueue` + `ActionRepository` + gateway interfaces yang sudah ada
 - Deploy flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` sebagai confirmation check pada mock/integration layer
-- `npm test` terakhir hijau dengan total `45` tests passed
+- Close flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` mengembalikan status `CLOSE_CONFIRMED` sebelum finalizer menutup posisi lokal
+- `npm test` terakhir hijau dengan total `55` tests passed

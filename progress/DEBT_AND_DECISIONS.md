@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21
+Last updated: 2026-04-21 (N14 added)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -18,11 +18,6 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: disk clutter risk ada, tapi bukan data-loss dan belum mengganggu Batch 7.
   Revisit: sebelum hardening/live-readiness atau jika recovery artifacts mulai sering muncul.
 
-- `N5` cross-validation `Action.positionId` vs `Action.type` di [Action.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/entities/Action.ts:1>)
-  Status: deferred
-  Kenapa ditunda: sekarang masih bisa ditangkap di use case layer; belum memblokir deploy flow.
-  Revisit: sebelum close/rebalance/claim flow makin banyak, idealnya di Batch 7 atau 8.
-
 - `N6` recovery syscall overhead di [FileStore.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/storage/FileStore.ts:1>)
   Status: deferred
   Kenapa ditunda: ini optimization, bukan correctness issue.
@@ -38,10 +33,30 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: mock sekarang patuh, tapi real adapter nanti sebaiknya whitelist field chain-derived saja.
   Revisit: wajib sebelum atau saat Batch 16 real DLMM adapter.
 
-- `N11` `outOfRangeSince` belum di-set saat deploy langsung out-of-range di [processDeployAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processDeployAction.ts:1>)
+- `N13` strict parsing `postCloseSwap` bisa mengubah misconfiguration hook menjadi `RECONCILIATION_REQUIRED` di [AccountingService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AccountingService.ts:13>)
   Status: deferred
-  Kenapa ditunda: semantik audit kurang akurat, tapi kasus deploy normal diasumsikan in-range.
-  Revisit: saat reconciliation/management logic mulai memakai `outOfRangeSince` secara aktif.
+  Kenapa ditunda: perilaku ini masih fail-safe, tapi error ergonomics-nya kurang jelas karena primitive/array dari hook akan terlihat seperti failure accounting biasa.
+  Revisit: saat Batch 8/13 mulai memperluas reconciliation dan observability untuk finalizer hooks.
+
+- `T1` belum ada test concurrency finalizer / lock contention di [closeFlow.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/closeFlow.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: lock primitives sudah ada dan path dasar sudah hijau, jadi belum memblokir Batch 8.
+  Revisit: sebelum worker reconciliation/management mulai memanggil finalizer lebih paralel.
+
+- `T2` belum ada test posisi berubah antara request dan process sehingga `processCloseAction()` harus fail-fast di [processCloseAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processCloseAction.ts:120>)
+  Status: deferred
+  Kenapa ditunda: behavior sekarang sudah aman secara runtime karena `assertCloseRequestablePosition()` akan throw dan queue akan menandai action `FAILED`, tetapi regression coverage-nya belum ada.
+  Revisit: Batch 8 atau saat close/rebalance interactions mulai lebih kompleks.
+
+- `T3` belum ada test invalid return type dari `postCloseSwapHook` di [finalizeClose.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeClose.ts:338>)
+  Status: deferred
+  Kenapa ditunda: current schema sudah menangkap type mismatch, hanya saja belum ada regression test khusus.
+  Revisit: saat hook ini mulai dipakai nyata atau sebelum Batch 13 operator/reporting observability.
+
+- `N14` asimetri submit-path `processCloseAction` vs post-submit persist di [processCloseAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processCloseAction.ts:139>)
+  Status: deferred
+  Kenapa ditunda: kalau `ClosePositionResultSchema.parse()` gagal atau `closedPositionId` mismatch, action langsung dijatuhkan ke `FAILED` lewat jurnal `CLOSE_SUBMISSION_FAILED`. Padahal analog di Batch 6 (deploy) memilih reconcile-safe untuk scenario "on-chain mungkin sukses tapi response tidak bisa dipercaya". Mock sekarang well-formed jadi tidak memblokir Batch 8, tapi real adapter bisa menghasilkan orphan on-chain close tanpa jejak lokal.
+  Revisit: wajib sebelum atau saat Batch 16 real DLMM adapter, atau saat Batch 8 reconciliation worker mulai mencari signal untuk recover action `FAILED` yang sebenarnya sukses on-chain.
 
 - `F5` duplicate `DEPLOY_REQUEST_ACCEPTED` journal di [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>)
   Status: deferred
@@ -75,6 +90,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - Prioritas implementasi saat ini: patch correctness/safety dulu, cleanup dan ergonomics setelah fondasi lifecycle stabil.
   Rationale: proyek masih di fase greenfield lifecycle, jadi debt management harus ketat terhadap hal yang benar-benar berisiko ke production.
 
+- Idempotency close saat ini diturunkan dari `{ wallet, type, positionId, reason }` tanpa komponen waktu/nonce di [requestClose.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestClose.ts:77>)
+  Rationale: untuk sekarang close request dengan payload identik dianggap duplicate intent dan harus ditahan oleh idempotency guard.
+  Tradeoff: dua request operator terpisah dengan reason yang sama akan collide.
+  Revisit: saat Batch 14 operator interface/CLI mulai butuh explicit retry or override semantics.
+
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
 - `F2` gateway position hanya dianggap confirmed jika status benar-benar `OPEN`.
@@ -84,6 +104,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `N8` partial-commit risk di confirm deploy happy path sudah ditutup dengan ordering commit yang lebih aman.
 - `N9` partial-commit risk di confirm deploy timeout path sudah ditutup dengan ordering commit yang lebih aman.
 - `N12` empty error message sekarang dinormalisasi jadi safe fallback.
+- `N5` cross-validation `Action.positionId` vs `Action.type` sekarang ditegakkan di schema `Action`.
+- `N11` `outOfRangeSince` sekarang dinormalisasi saat deploy confirmed out-of-range dan dipertahankan konsisten saat close finalization.
+- `F8` enqueue idempotency sekarang atomic; duplicate action tidak lagi muncul pada request paralel dengan idempotency key yang sama.
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.

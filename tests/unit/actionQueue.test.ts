@@ -164,6 +164,51 @@ describe("ActionQueue", () => {
     expect(secondAction.actionId).toBe(firstAction.actionId);
   });
 
+  it("does not duplicate actions when the same idempotency key is enqueued concurrently", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    const idempotencyKey = createIdempotencyKey({
+      wallet: "wallet_001",
+      type: "DEPLOY",
+      positionId: null,
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+    });
+
+    const [firstAction, secondAction] = await Promise.all([
+      actionQueue.enqueue({
+        type: "DEPLOY",
+        wallet: "wallet_001",
+        positionId: null,
+        idempotencyKey,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+        requestedBy: "system",
+      }),
+      actionQueue.enqueue({
+        type: "DEPLOY",
+        wallet: "wallet_001",
+        positionId: null,
+        idempotencyKey,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+        requestedBy: "system",
+      }),
+    ]);
+
+    const actions = await actionRepository.list();
+
+    expect(actions).toHaveLength(1);
+    expect(secondAction.actionId).toBe(firstAction.actionId);
+  });
+
   it("can pause and resume queue processing", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

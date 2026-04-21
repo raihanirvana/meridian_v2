@@ -6,6 +6,11 @@ export interface ActionRepositoryOptions extends FileStoreOptions {
   filePath: string;
 }
 
+export interface UpsertByIdempotencyKeyResult {
+  action: Action;
+  created: boolean;
+}
+
 export class ActionRepository {
   private readonly fileStore: FileStore;
   private readonly filePath: string;
@@ -70,6 +75,42 @@ export class ActionRepository {
 
       return JSON.stringify(stableOrder, null, 2);
     });
+  }
+
+  public async upsertByIdempotencyKey(
+    action: Action,
+  ): Promise<UpsertByIdempotencyKeyResult> {
+    const validated = ActionSchema.parse(action);
+    let resolvedAction = validated;
+    let created = true;
+
+    await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
+      const actions =
+        raw === null ? [] : ActionSchema.array().parse(JSON.parse(raw));
+      const existingAction =
+        actions.find(
+          (currentAction) =>
+            currentAction.idempotencyKey === validated.idempotencyKey,
+        ) ?? null;
+
+      if (existingAction !== null) {
+        resolvedAction = existingAction;
+        created = false;
+        return raw ?? JSON.stringify([], null, 2);
+      }
+
+      const nextActions = [...actions, validated];
+      const stableOrder = [...ActionSchema.array().parse(nextActions)].sort(
+        (left, right) => left.actionId.localeCompare(right.actionId),
+      );
+
+      return JSON.stringify(stableOrder, null, 2);
+    });
+
+    return {
+      action: resolvedAction,
+      created,
+    };
   }
 
   public async replaceAll(actions: Action[]): Promise<void> {

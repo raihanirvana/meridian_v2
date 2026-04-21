@@ -15,6 +15,7 @@ import { transitionPositionStatus } from "../../domain/stateMachines/positionLif
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
+import { resolveOutOfRangeSince } from "../services/AccountingService.js";
 
 import {
   DeployActionRequestPayloadSchema,
@@ -134,6 +135,12 @@ function buildOpenPosition(input: {
   actionId: string;
   now: string;
 }): Position {
+  const rangeLowerBin =
+    input.confirmedPosition.rangeLowerBin ?? input.pendingPosition.rangeLowerBin;
+  const rangeUpperBin =
+    input.confirmedPosition.rangeUpperBin ?? input.pendingPosition.rangeUpperBin;
+  const activeBin = input.confirmedPosition.activeBin ?? input.pendingPosition.activeBin;
+
   return PositionSchema.parse({
     ...input.pendingPosition,
     ...input.confirmedPosition,
@@ -144,6 +151,18 @@ function buildOpenPosition(input: {
       input.now,
     lastSyncedAt: input.now,
     closedAt: null,
+    rangeLowerBin,
+    rangeUpperBin,
+    activeBin,
+    outOfRangeSince: resolveOutOfRangeSince({
+      activeBin,
+      rangeLowerBin,
+      rangeUpperBin,
+      preferredValue:
+        input.confirmedPosition.outOfRangeSince ??
+        input.pendingPosition.outOfRangeSince,
+      fallbackValue: input.now,
+    }),
     lastWriteActionId: input.actionId,
     needsReconciliation: false,
   });

@@ -156,6 +156,13 @@ export {
   type QueueExecutionResult,
 } from "./app/services/ActionQueue.js";
 export {
+  buildCloseAccountingSummary,
+  CloseAccountingSummarySchema,
+  resolveOutOfRangeSince,
+  type CloseAccountingSummary,
+  type ResolveOutOfRangeSinceInput,
+} from "./app/services/AccountingService.js";
+export {
   createIdempotencyKey,
   createQueuedAction,
   type CreateQueuedActionInput,
@@ -177,6 +184,24 @@ export {
   type DeployActionRequestPayload,
   type RequestDeployInput,
 } from "./app/usecases/requestDeploy.js";
+export {
+  CloseActionRequestPayloadSchema,
+  requestClose,
+  type CloseActionRequestPayload,
+  type RequestCloseInput,
+} from "./app/usecases/requestClose.js";
+export {
+  processCloseAction,
+  type ProcessCloseActionInput,
+} from "./app/usecases/processCloseAction.js";
+export {
+  finalizeClose,
+  PostCloseSwapInputSchema,
+  type FinalizeCloseInput,
+  type FinalizeCloseResult,
+  type PostCloseSwapHook,
+  type PostCloseSwapInput,
+} from "./app/usecases/finalizeClose.js";
 export {
   AiModeSchema,
   EnvSecretsSchema,

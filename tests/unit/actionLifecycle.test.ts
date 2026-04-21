@@ -86,4 +86,50 @@ describe("actionLifecycle", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("rejects a DEPLOY action that incorrectly carries positionId", () => {
+    const result = ActionSchema.safeParse({
+      actionId: "act_003",
+      type: "DEPLOY",
+      status: "QUEUED",
+      wallet: "wallet_001",
+      positionId: "pos_should_not_exist",
+      idempotencyKey: "wallet_001:deploy:003",
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+      resultPayload: null,
+      txIds: [],
+      error: null,
+      requestedAt: "2026-04-18T00:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      requestedBy: "system",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("requires positionId for CLOSE actions", () => {
+    const result = ActionSchema.safeParse({
+      actionId: "act_004",
+      type: "CLOSE",
+      status: "QUEUED",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: "wallet_001:close:004",
+      requestPayload: {
+        reason: "stop loss",
+      },
+      resultPayload: null,
+      txIds: [],
+      error: null,
+      requestedAt: "2026-04-18T00:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      requestedBy: "system",
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

@@ -26,6 +26,14 @@ export const ActionSchema = z
     requestedBy: ActorSchema,
   })
   .superRefine((action, ctx) => {
+    const positionScopedActionTypes = new Set([
+      "CLOSE",
+      "PARTIAL_CLOSE",
+      "CLAIM_FEES",
+      "REBALANCE",
+      "CANCEL_REBALANCE",
+    ]);
+
     if (action.status === "DONE" && action.completedAt === null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -49,6 +57,25 @@ export const ActionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["startedAt"],
         message: `must be set when status is ${action.status}`,
+      });
+    }
+
+    if (action.type === "DEPLOY" && action.positionId !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["positionId"],
+        message: "must be null when type is DEPLOY",
+      });
+    }
+
+    if (
+      positionScopedActionTypes.has(action.type) &&
+      action.positionId === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["positionId"],
+        message: `must be set when type is ${action.type}`,
       });
     }
   })
