@@ -243,6 +243,18 @@ export {
   type BuildPortfolioStateInput,
 } from "./app/services/PortfolioStateBuilder.js";
 export {
+  adviseManagementDecision,
+  rankShortlistWithAi,
+  ManagementDecisionAdvisorySchema,
+  RankedShortlistWithAiSchema,
+  type AiMode,
+  type AdvisorySource,
+  type AdviseManagementDecisionInput,
+  type ManagementDecisionAdvisory,
+  type RankShortlistWithAiInput,
+  type RankedShortlistWithAi,
+} from "./app/services/AiAdvisoryService.js";
+export {
   countRecentNewDeploys,
   type CountRecentNewDeploysInput,
 } from "./app/services/RecentDeployCounter.js";

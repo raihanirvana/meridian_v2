@@ -10,7 +10,7 @@ import {
 export const CandidateRankingResultSchema = z.object({
   rankedCandidateIds: z.array(z.string().min(1)),
   reasoning: z.string().min(1),
-});
+}).strict();
 
 export const ManagementExplanationInputSchema = z.object({
   positionId: z.string().min(1),
@@ -24,7 +24,7 @@ export const ManagementExplanationInputSchema = z.object({
   ]),
   positionSnapshot: PositionSchema,
   triggerReasons: z.array(z.string().min(1)),
-});
+}).strict();
 
 export const ManagementExplanationResultSchema = z.object({
   action: z.enum([
@@ -36,7 +36,7 @@ export const ManagementExplanationResultSchema = z.object({
     "RECONCILE_ONLY",
   ]),
   reasoning: z.string().min(1),
-});
+}).strict();
 
 export type CandidateRankingResult = z.infer<typeof CandidateRankingResultSchema>;
 export type ManagementExplanationInput = z.infer<

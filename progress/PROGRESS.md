@@ -1,13 +1,13 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 14 - operator interfaces CLI dan Telegram read-first
+Current batch: Batch 15 - AI advisory layer
 Status: Complete
 
-## Scope Batch 14
-- Implement shared operator command parser/executor
-- Add explicit CLI dan Telegram wrappers untuk read-state dan manual request yang queue-safe
-- Add operator alert notification helper
+## Scope Batch 15
+- Add reusable AI advisory service untuk shortlist ranking dan management explanation
+- Wire AI advisory secara aman ke management worker tanpa memberi write privilege ke LLM
+- Keep deterministic engine as source of truth with strict fallback on invalid AI output or timeout
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -294,9 +294,37 @@ Status: Complete
   - hardening pasca-audit Batch 14 yang sudah masuk:
     - kegagalan `NotifierGateway.sendMessage()` di Telegram handler tidak lagi menggagalkan hasil command yang sebenarnya sudah accepted ke queue
     - regression test ditambahkan untuk memastikan operator command tetap sukses walau delivery reply Telegram gagal
+- Batch 15 selesai:
+  - `AiAdvisoryService` sekarang tersedia untuk dua surface AI resmi:
+    - shortlist ranking via `rankShortlistWithAi()`
+    - management explanation via `adviseManagementDecision()`
+  - strict schema output tetap dipakai di boundary AI:
+    - ranking harus menutup shortlist exact-set, kalau tidak fallback ke deterministic order
+    - management explanation harus tetap berada di enum action resmi, kalau tidak fallback ke deterministic result
+  - `runManagementCycle()` / `runManagementWorker()` sekarang bisa menerima:
+    - `aiMode`
+    - `llmGateway`
+    - `aiTimeoutMs`
+  - AI management di worker sekarang bersifat advisory:
+    - hasil deterministic tetap menjadi `managementAction`
+    - metadata AI (`aiSource`, `aiSuggestedAction`, `aiReasoning`) ikut dibawa di result per posisi
+    - timeout / invalid output / gateway failure tidak memblok dispatch deterministic
+  - mode AI yang sekarang tersedia:
+    - `disabled`
+    - `advisory`
+    - `constrained_action`
+  - tests Batch 15 sudah ditambahkan untuk:
+    - valid AI shortlist reorder
+    - invalid AI ranking fallback ke deterministic shortlist
+    - invalid AI management action fallback ke deterministic result
+    - AI timeout tidak memblok management worker
+    - `HOLD` result tidak lagi memanggil advisory AI
+  - hardening pasca-audit Batch 15 yang sudah masuk:
+    - advisory AI sekarang di-skip untuk hasil deterministic final seperti `HOLD` dan `RECONCILE_ONLY`, jadi worker tidak membayar latency/token cost yang tidak perlu
+    - output schema `LlmGateway` sekarang benar-benar `.strict()` untuk ranking dan management explanation boundary
 
 ## Pending
-- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 15
+- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 16
 - Gap yang masih tersisa sekarang lebih ke scope/surface:
   - `screeningWorker`
   - `reportingWorker`
@@ -329,7 +357,7 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 15: AI layer advisory di atas worker/operator foundation yang sekarang sudah ada
+- Batch 16: real adapters DLMM / swap / screening APIs
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -344,4 +372,5 @@ Status: Complete
 - Screening/scoring engine saat ini memakai policy dan candidate snapshot yang diberikan caller; ingestion real candidate details dan orchestration shortlist lintas gateway tetap ditunda ke batch worker screening berikutnya
 - Portfolio risk engine sekarang sudah di-inject ke management worker lewat `PortfolioStateBuilder` + `runManagementCycle()`, dengan valuation boundary tetap dipisah di `PriceGateway`
 - Operator interface Batch 14 sekarang berbagi parser/executor yang sama antara CLI dan Telegram agar manual request tetap konsisten dan tidak mem-bypass queue
-- `npm test` terakhir hijau dengan total `104` tests passed
+- Batch 15 menambahkan advisory AI tanpa mengubah write boundary: worker tetap dispatch berdasarkan hasil deterministic, sementara output AI hanya dipakai untuk ranking/explanation metadata dan selalu punya fallback
+- `npm test` terakhir hijau dengan total `109` tests passed

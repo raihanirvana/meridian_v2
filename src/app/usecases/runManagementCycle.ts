@@ -3,6 +3,7 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
+import type { LlmGateway } from "../../adapters/llm/LlmGateway.js";
 import type { Position } from "../../domain/entities/Position.js";
 import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
 import {
@@ -17,7 +18,9 @@ import {
   type PortfolioRiskPolicy,
 } from "../../domain/rules/riskRules.js";
 import type { Actor, ManagementAction } from "../../domain/types/enums.js";
+import type { UserConfig } from "../../infra/config/configSchema.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
+import { adviseManagementDecision } from "../services/AiAdvisoryService.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 
@@ -51,6 +54,10 @@ export interface ManagementCyclePositionResult {
   triggerReasons: string[];
   actionId: string | null;
   riskResult: PortfolioRiskEvaluationResult | null;
+  aiMode: UserConfig["ai"]["mode"];
+  aiSource: "DISABLED" | "DETERMINISTIC" | "AI" | "FALLBACK";
+  aiSuggestedAction: ManagementAction | null;
+  aiReasoning: string | null;
 }
 
 export interface RunManagementCycleInput {
@@ -63,6 +70,9 @@ export interface RunManagementCycleInput {
   priceGateway: PriceGateway;
   riskPolicy: PortfolioRiskPolicy;
   managementPolicy: ManagementPolicy;
+  aiMode?: UserConfig["ai"]["mode"];
+  llmGateway?: LlmGateway;
+  aiTimeoutMs?: number;
   signalProvider: (input: {
     position: Position;
     portfolio: PortfolioState;
@@ -110,11 +120,26 @@ async function appendJournalEvent(
   await journalRepository.append(event);
 }
 
+function advisoryBypassForDeterministicResult(
+  aiMode: UserConfig["ai"]["mode"],
+): {
+  source: "DISABLED" | "DETERMINISTIC";
+  aiSuggestedAction: null;
+  aiReasoning: null;
+} {
+  return {
+    source: aiMode === "disabled" ? "DISABLED" : "DETERMINISTIC",
+    aiSuggestedAction: null,
+    aiReasoning: null,
+  };
+}
+
 export async function runManagementCycle(
   input: RunManagementCycleInput,
 ): Promise<RunManagementCycleResult> {
   const now = input.now?.() ?? new Date().toISOString();
   const requestedBy = input.requestedBy ?? "system";
+  const aiMode = input.aiMode ?? "disabled";
   let previousPortfolioState = input.previousPortfolioState ?? null;
   const positions = (await input.stateRepository.list())
     .filter(
@@ -158,6 +183,7 @@ export async function runManagementCycle(
     });
 
     if (evaluation.action === "HOLD") {
+      const aiAdvisory = advisoryBypassForDeterministicResult(aiMode);
       positionResults.push({
         positionId: position.positionId,
         managementAction: evaluation.action,
@@ -166,11 +192,16 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
 
     if (evaluation.action === "RECONCILE_ONLY") {
+      const aiAdvisory = advisoryBypassForDeterministicResult(aiMode);
       positionResults.push({
         positionId: position.positionId,
         managementAction: evaluation.action,
@@ -179,9 +210,22 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
+
+    const aiAdvisory = await adviseManagementDecision({
+      aiMode,
+      evaluation,
+      position,
+      triggerReasons: evaluation.triggerReasons,
+      ...(input.llmGateway === undefined ? {} : { llmGateway: input.llmGateway }),
+      ...(input.aiTimeoutMs === undefined ? {} : { timeoutMs: input.aiTimeoutMs }),
+    });
 
     if (
       evaluation.action === "CLAIM_FEES" ||
@@ -213,6 +257,10 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
@@ -227,6 +275,10 @@ export async function runManagementCycle(
           triggerReasons: evaluation.triggerReasons,
           actionId: null,
           riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
         });
         continue;
       }
@@ -254,6 +306,10 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: action.actionId,
         riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
@@ -296,6 +352,10 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
@@ -321,6 +381,10 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
@@ -334,6 +398,10 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
     }
@@ -359,6 +427,10 @@ export async function runManagementCycle(
       triggerReasons: evaluation.triggerReasons,
       actionId: action.actionId,
       riskResult,
+      aiMode,
+      aiSource: aiAdvisory.source,
+      aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+      aiReasoning: aiAdvisory.aiReasoning,
     });
   }
 

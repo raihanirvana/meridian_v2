@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (Batch 14 operator interfaces applied)
+Last updated: 2026-04-21 (Batch 15 AI advisory applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -182,6 +182,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: worker Batch 13 sekarang masih sederhana dan gagal keras ketika enrichment signal gagal, sehingga satu posisi bermasalah bisa menggagalkan satu cycle penuh.
   Revisit: sebelum worker orchestration dipakai sebagai loop runtime utama atau dihubungkan ke reporter/operator surface.
 
+- `N39` AI advisory timeout saat ini hanya memutus promise lokal; underlying call belum bisa di-abort karena `LlmGateway` belum membawa `AbortSignal` atau cancellation contract di [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:70>)
+  Status: deferred
+  Kenapa ditunda: pada mock Batch 15 ini tidak memengaruhi correctness karena fallback tetap jalan, tetapi saat adapter LLM nyata dipasang, timeout tanpa abort bisa meninggalkan request HTTP menggantung dan menumpuk di background.
+  Revisit: saat Batch 16 memasang adapter LLM nyata; pertimbangkan menambah `AbortSignal` ke contract `LlmGateway`.
+
 - `T8` coverage gap risk engine setelah hardening Batch 12 di [riskRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/riskRules.test.ts:1>)
   Status: deferred
   Kenapa ditunda: core semantics Batch 12 sudah diregresikan, tetapi beberapa branch penting dan ambiguity cases belum diuji eksplisit.
@@ -284,6 +289,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - CLI dan Telegram operator surfaces Batch 14 berbagi parser/executor yang sama, dan manual command hanya boleh memanggil request use case yang masuk queue (`requestClose`, `requestDeploy`, `requestRebalance`) di [operatorCommands.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/operatorCommands.ts:1>)
   Rationale: ini menjaga DoD Batch 14 tetap tegas; surface operator boleh membaca state dan membuat request, tetapi tidak boleh bypass single-writer boundary.
   Tradeoff: format output saat ini masih text-first dan sengaja sederhana; jika nanti operator butuh UX lebih kaya, enhancement harus tetap duduk di atas parser/executor yang sama.
+
+- Batch 15 mempertahankan AI sebagai advisory layer; bahkan pada mode `constrained_action`, management worker tetap mengeksekusi hasil deterministic dan hanya membawa metadata AI (`aiSuggestedAction`, `aiReasoning`, `aiSource`) di [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:1>) dan [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:1>)
+  Rationale: prinsip produk tetap “AI advisory unless explicitly allowed”; Batch 15 menambah ranking/explanation terstruktur tanpa membuka write privilege atau memberi override langsung ke lifecycle inti.
+  Tradeoff: mode `constrained_action` saat ini baru membatasi bentuk saran AI, belum menjadi sumber aksi final. Override action baru layak dipertimbangkan setelah supervised/live governance lebih matang.
 
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
