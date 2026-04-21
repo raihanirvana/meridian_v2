@@ -1,14 +1,14 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 7 - Use case close + finalizer accounting
+Current batch: Batch 8 - Reconciliation worker
 Status: Complete
 
-## Scope Batch 7
-- Implement request close lewat queue
-- Implement queue-side close submission handler
-- Implement finalizer close sampai posisi `CLOSED` atau jalur reconcile-safe
-- Tambahkan tests untuk close success, timeout, dan accounting failure
+## Scope Batch 8
+- Implement `reconcilePortfolio.ts`
+- Implement `reconciliationWorker.ts`
+- Tambahkan detection untuk missing snapshot, pending confirmation recovery, dan startup recovery
+- Tambahkan tests untuk missing snapshot, waiting confirmation recovery, dan restart while close pending
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -117,9 +117,23 @@ Status: Complete
     - enqueue idempotency sekarang atomic, jadi request paralel dengan idempotency key yang sama tidak membuat duplicate action
     - deploy confirmation sekarang mengisi `outOfRangeSince` saat posisi confirmed langsung berada di luar range
     - close finalizer menjaga semantik `outOfRangeSince` tetap konsisten saat posisi masuk jalur `CLOSE_CONFIRMED -> RECONCILING -> CLOSED`
+- Batch 8 selesai:
+  - `reconcilePortfolio.ts` sekarang menangani recovery resmi untuk action `WAITING_CONFIRMATION`
+  - `reconciliationWorker.ts` sudah ditambahkan sebagai worker wrapper untuk use case reconciliation
+  - missing position dari wallet snapshot sekarang dipetakan ke `RECONCILIATION_REQUIRED`, bukan auto `CLOSED`
+  - startup recovery sekarang menangani action yang tertinggal di `WAITING_CONFIRMATION`
+  - startup recovery konservatif untuk action yang tertinggal di `RECONCILING`: action diturunkan ke `FAILED` dan posisi terkait dipaksa masuk `RECONCILIATION_REQUIRED`
+  - urutan reconciliation sekarang dipilih aman:
+    - recover `WAITING_CONFIRMATION` dulu
+    - recover leftover `RECONCILING` berikutnya
+    - cek missing snapshot terakhir
+  - integration tests Batch 8 sudah ditambahkan untuk:
+    - missing position snapshot
+    - deploy action stuck in `WAITING_CONFIRMATION`
+    - restart while close pending
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 7
+- Tidak ada blocker fungsional untuk Batch 8
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
@@ -141,9 +155,10 @@ Status: Complete
 - Di Batch 6, posisi pending deploy baru dimaterialisasi saat submit gateway sukses dan `positionId` canonical sudah diketahui; tidak ada posisi `OPEN` sebelum confirmation
 - Di Batch 7, close finalization memisahkan submit close dari accounting finalizer; posisi baru menjadi `CLOSED` setelah confirmation dan finalizer sama-sama sukses
 - Idempotency enqueue sekarang harus atomic di repository layer, bukan check-then-insert di `ActionQueue`
+- Di Batch 8, reconciliation worker memprioritaskan recovery action yang masih bisa dipulihkan (`WAITING_CONFIRMATION`) sebelum menilai posisi hilang dari snapshot agar lagging wallet snapshot tidak menimbulkan false escalation lebih awal
 
 ## Next Recommended Step
-- Batch 8: reconciliation worker
+- Batch 9: management rules engine
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -152,4 +167,5 @@ Status: Complete
 - Deploy/close use case di batch berikutnya sebaiknya langsung bergantung pada `ActionQueue` + `ActionRepository` + gateway interfaces yang sudah ada
 - Deploy flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` sebagai confirmation check pada mock/integration layer
 - Close flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` mengembalikan status `CLOSE_CONFIRMED` sebelum finalizer menutup posisi lokal
-- `npm test` terakhir hijau dengan total `55` tests passed
+- Reconciliation worker saat ini bisa recover `DEPLOY` dan `CLOSE`; action type lain yang nanti punya `WAITING_CONFIRMATION` perlu ditambahkan recovery path eksplisit saat batch terkait dibangun
+- `npm test` terakhir hijau dengan total `58` tests passed

@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (N14 added)
+Last updated: 2026-04-21 (N15/T4 added)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -53,10 +53,23 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: current schema sudah menangkap type mismatch, hanya saja belum ada regression test khusus.
   Revisit: saat hook ini mulai dipakai nyata atau sebelum Batch 13 operator/reporting observability.
 
+- `T4` coverage gap reconciliation worker untuk fase 2/error path di [reconciliationWorker.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/reconciliationWorker.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: skeleton utama Batch 8 sudah tercakup oleh test happy-path/high-signal, tetapi beberapa jalur penting belum diregresikan eksplisit.
+  Missing coverage:
+  `RECONCILING` action dengan `positionId` null atau local position hilang, multi-wallet cycle, `listPositionsForWallet()` throw -> `MANUAL_REVIEW_REQUIRED`, repeated reconciler runs, unsupported `WAITING_CONFIRMATION` action types.
+  Revisit: sebelum reconciliation worker dijadwalkan periodik atau saat Batch 13 observability/reporting mulai membaca hasil reconciliation lebih detail.
+
 - `N14` asimetri submit-path `processCloseAction` vs post-submit persist di [processCloseAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processCloseAction.ts:139>)
   Status: deferred
   Kenapa ditunda: kalau `ClosePositionResultSchema.parse()` gagal atau `closedPositionId` mismatch, action langsung dijatuhkan ke `FAILED` lewat jurnal `CLOSE_SUBMISSION_FAILED`. Padahal analog di Batch 6 (deploy) memilih reconcile-safe untuk scenario "on-chain mungkin sukses tapi response tidak bisa dipercaya". Mock sekarang well-formed jadi tidak memblokir Batch 8, tapi real adapter bisa menghasilkan orphan on-chain close tanpa jejak lokal.
-  Revisit: wajib sebelum atau saat Batch 16 real DLMM adapter, atau saat Batch 8 reconciliation worker mulai mencari signal untuk recover action `FAILED` yang sebenarnya sukses on-chain.
+  Revisit: wajib sebelum atau saat Batch 16 real DLMM adapter, atau saat reconciliation path mulai mencari signal untuk recover action `FAILED` yang sebenarnya sukses on-chain.
+  Dependency note: Batch 8 reconciliation worker sekarang masih bisa menurunkan action `RECONCILING` menjadi `FAILED` saat recovery startup konservatif, jadi semantik "action FAILED padahal close on-chain sukses" masih satu keluarga risiko dengan item ini.
+
+- `N15` fase snapshot reconciliation belum memakai `positionLock` di [reconcilePortfolio.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/reconcilePortfolio.ts:400>)
+  Status: deferred
+  Kenapa ditunda: pada pola pakai sekarang worker reconciliation dipanggil saat startup/recovery, jadi practical race dengan `ActionQueue` belum jadi blocker. Tetapi fase 3 masih melakukan read-then-write tanpa `positionLock`, sehingga saat nanti worker dijadwalkan periodik paralel dengan queue, snapshot stale bisa meng-overwrite commit action aktif menjadi `RECONCILIATION_REQUIRED`.
+  Revisit: wajib sebelum reconciliation worker dijadwalkan periodik atau dijalankan paralel dengan queue; idealnya paling lambat Batch 14/18.
 
 - `F5` duplicate `DEPLOY_REQUEST_ACCEPTED` journal di [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>)
   Status: deferred
@@ -94,6 +107,14 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Rationale: untuk sekarang close request dengan payload identik dianggap duplicate intent dan harus ditahan oleh idempotency guard.
   Tradeoff: dua request operator terpisah dengan reason yang sama akan collide.
   Revisit: saat Batch 14 operator interface/CLI mulai butuh explicit retry or override semantics.
+
+- Reconciliation worker memproses `WAITING_CONFIRMATION` lebih dulu baru missing snapshot di [reconcilePortfolio.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/reconcilePortfolio.ts:239>)
+  Rationale: jika wallet snapshot lagging, action deploy/close yang sebenarnya masih recoverable tidak boleh keburu dipaksa ke jalur missing-snapshot lebih kasar.
+  Tradeoff: snapshot drift detection sengaja sedikit ditunda demi memberi ruang recovery action yang lebih deterministik.
+
+- Startup recovery untuk action yang tertinggal di `RECONCILING` bersifat konservatif di [reconcilePortfolio.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/reconcilePortfolio.ts:141>)
+  Rationale: Batch 8 belum punya resumption logic granular untuk melanjutkan finalizer dari tengah; lebih aman menurunkannya ke `FAILED` + `RECONCILIATION_REQUIRED`.
+  Tradeoff: recovery tidak mencoba resume in-place, jadi follow-up tetap bergantung pada reconciliation/manual review berikutnya.
 
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.

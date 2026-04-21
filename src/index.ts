@@ -203,6 +203,16 @@ export {
   type PostCloseSwapInput,
 } from "./app/usecases/finalizeClose.js";
 export {
+  reconcilePortfolio,
+  type ReconcilePortfolioInput,
+  type ReconcilePortfolioResult,
+  type ReconciliationRecord,
+} from "./app/usecases/reconcilePortfolio.js";
+export {
+  runReconciliationWorker,
+  type ReconciliationWorkerInput,
+} from "./app/workers/reconciliationWorker.js";
+export {
   AiModeSchema,
   EnvSecretsSchema,
   ResolvedConfigSchema,
