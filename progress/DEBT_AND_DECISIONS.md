@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (N16/T5 added)
+Last updated: 2026-04-21 (N20/T6 added)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -76,6 +76,26 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: semantik ini memang sengaja mengikuti kontrak state saat ini, tetapi jika reset `outOfRangeSince` terlambat satu cycle sementara `activeBin` sudah kembali in-range, engine bisa tetap menganggap posisi invalid dan mendorong rebalance lebih cepat dari yang diinginkan.
   Revisit: saat Batch 11 rebalance flow resmi atau saat reconciliation/management sinkronisasi state range mulai diperketat lintas modul.
 
+- `N17` screening decision enum melebar dari PRD karena memakai `REJECTED_EXPOSURE` terpisah di [screeningRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/screeningRules.ts:137>) dan [enums.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/types/enums.ts:55>)
+  Status: deferred
+  Kenapa ditunda: implementasi sekarang masih deterministic dan aman, tetapi kontraknya tidak lagi persis sama dengan PRD §9.2 yang hanya menyebut `REJECTED_HARD_FILTER` / `PASSED_HARD_FILTER`. Ini bisa jadi ambigu saat AI advisory/shortlist consumer mulai membaca eligibility dari decision enum.
+  Revisit: wajib diputuskan eksplisit sebelum atau saat Batch 14 AI advisory; pilih antara melipat exposure reject ke `REJECTED_HARD_FILTER` atau merevisi PRD/spec resmi.
+
+- `N18` exposure reject saat ini short-circuit sehingga daftar rejection reason tidak lengkap di [screeningRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/screeningRules.ts:136>)
+  Status: deferred
+  Kenapa ditunda: tidak mengubah correctness hasil reject, tetapi observability menurun karena candidate yang gagal exposure + hard filter lain hanya membawa reason exposure.
+  Revisit: saat operator/reporting mulai membutuhkan penjelasan reject yang lengkap, idealnya sebelum Batch 13 atau 14.
+
+- `N19` risk flag `below_target_volume` terlalu sensitif karena menyala untuk deviasi kecil dari target di [candidateScore.ts](<c:/Users/PC/Desktop/refining-code/meridian_v2/src/domain/scoring/candidateScore.ts:223>)
+  Status: deferred
+  Kenapa ditunda: hanya mempengaruhi noise level risk flag, bukan shortlist correctness utama. Tetapi threshold sekarang lebih sensitif daripada flag risiko lain yang memakai ambang eksplisit.
+  Revisit: saat Batch 14 AI advisory mulai membaca riskFlags sebagai signal ranking/reasoning, atau saat reporting mulai menampilkan flags ke operator.
+
+- `N20` `launchpadPenaltyByName` bisa memakai key string kosong untuk candidate launchpad `null` di [candidateScore.ts](<c:/Users/PC/Desktop/refining-code/meridian_v2/src/domain/scoring/candidateScore.ts:144>)
+  Status: deferred
+  Kenapa ditunda: ini footgun konfigurasi kecil, bukan bug runtime umum. Tetapi config dengan key `""` bisa diam-diam memberi penalty ke candidate null-launchpad alih-alih fallback ke `narrativePenaltyScore`.
+  Revisit: sebelum config screening/scoring mulai dioperasikan lebih luas atau saat Batch 14/16 memperkenalkan config/operator surface yang lebih aktif.
+
 - `F5` duplicate `DEPLOY_REQUEST_ACCEPTED` journal di [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>)
   Status: deferred
   Kenapa ditunda: lebih ke keputusan audit semantics daripada correctness bug.
@@ -92,6 +112,13 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Missing coverage:
   emergency individual (`circuitBreakerState`, `severeTokenRisk`, `liquidityCollapse`, `forcedManualClose`), hard-exit individual (`maxHold`, `maxOutOfRange`, `severeNegativeYield`), rebalance gated-off cases, `partialCloseEnabled=false`, dan numeric `priorityScore` per priority.
   Revisit: sebelum worker management/orchestration mulai mengandalkan engine ini untuk auto-action di Batch 13.
+
+- `T6` coverage gap screening/scoring engine untuk branch individual dan deterministic edge cases di [screeningRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/screeningRules.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: Batch 10 sudah punya coverage untuk reject, exposure conflict, dan ordering dasar, jadi fondasi pipeline aman. Tetapi banyak branch individual dan deterministic edge case belum diregresikan eksplisit.
+  Missing coverage:
+  hard filter individual (market cap min/max, TVL, volume, fee/TVL, holder count, bin step, blocked launchpad/deployer/token, pair type, top holder/bot/bundle/wash caps), duplicate token exposure via `tokenYMint`, exposure toggles off, shortlist cutoff, score tie-breaker, numeric breakdown assertions, individual riskFlags, empty candidate list, all rejected list, dan schema reject `maxMarketCapUsd < minMarketCapUsd`.
+  Revisit: sebelum Batch 13/14 saat screening output mulai dipakai lebih luas oleh worker/advisory layer.
 
 ## Design Decisions
 - Deploy request tetap menulis via `ActionQueue`; `requestDeploy()` tidak boleh direct write ke state/action terminal.
@@ -131,6 +158,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - Management engine menempatkan `RECONCILE_ONLY` setelah hard-exit tetapi sebelum maintenance di [managementRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/managementRules.ts:175>)
   Rationale: jika snapshot belum layak untuk maintenance decision, engine harus menahan claim/partial-close/rebalance, tetapi emergency dan hard-exit tetap boleh menang lebih dulu.
   Tradeoff: maintenance opportunity yang valid bisa sengaja ditunda satu cycle demi menjaga deterministic safety.
+
+- Screening pipeline memaksa hard filter selesai sebelum scoring/shortlist di [screeningRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/screeningRules.ts:74>)
+  Rationale: kandidat yang gagal hard filter tidak boleh masuk ranking atau shortlist deterministic, sehingga AI layer nanti hanya bekerja pada kandidat yang memang sudah lolos boundary safety.
+  Tradeoff: candidate dengan skor potensial bagus tetap dibuang total jika gagal filter keras, walau margin gagalnya tipis.
 
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.

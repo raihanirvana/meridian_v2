@@ -1,14 +1,14 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 9 - Management rules engine
+Current batch: Batch 10 - Screening rules + scoring engine
 Status: Complete
 
-## Scope Batch 9
-- Implement `managementRules.ts`
-- Implement rule precedence dan evaluation result object
-- Implement `managementPriority.ts`
-- Tambahkan tests untuk collision rules dan hold path
+## Scope Batch 10
+- Implement `screeningRules.ts`
+- Implement `candidateScore.ts`
+- Implement hard filters, score breakdown, dan shortlist builder
+- Tambahkan tests untuk hard rejects, score ordering, dan exposure conflicts
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -158,12 +158,22 @@ Status: Complete
     - threshold `0` untuk stop loss, claim fees, dan partial close sekarang diperlakukan konsisten sebagai disabled
     - regression tests ditambahkan untuk:
       - `position.needsReconciliation = true`
-      - happy path `REBALANCE`
-      - zero-threshold semantics
-      - schema reject saat posisi bukan `OPEN`
+    - happy path `REBALANCE`
+    - zero-threshold semantics
+    - schema reject saat posisi bukan `OPEN`
+- Batch 10 selesai:
+  - `screeningRules.ts` sekarang menjalankan hard filters deterministic sebelum scoring
+  - `candidateScore.ts` sekarang menghasilkan `scoreTotal`, `scoreBreakdown`, dan `riskFlags`
+  - shortlist builder deterministic sekarang memilih top N kandidat yang lolos hard filter tanpa bantuan AI
+  - duplicate pool exposure dan duplicate token exposure sekarang bisa ditolak di hard-filter layer
+  - passed candidates yang tidak masuk shortlist tetap dibedakan dari candidate `SHORTLISTED`
+  - tests Batch 10 sudah ditambahkan untuk:
+    - hard filter reject cases
+    - exposure conflict reject
+    - deterministic shortlist ordering
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 9
+- Tidak ada blocker fungsional untuk Batch 10
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
@@ -187,9 +197,10 @@ Status: Complete
 - Idempotency enqueue sekarang harus atomic di repository layer, bukan check-then-insert di `ActionQueue`
 - Di Batch 8, reconciliation worker memprioritaskan recovery action yang masih bisa dipulihkan (`WAITING_CONFIRMATION`) sebelum menilai posisi hilang dari snapshot agar lagging wallet snapshot tidak menimbulkan false escalation lebih awal
 - Di Batch 9, management engine sengaja menerima snapshot + signals + policy statis tanpa IO, supaya collision rule mudah diuji dan batch worker/orchestrator berikutnya tinggal memberi input yang sudah diperkaya
+- Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 10: screening rules + scoring engine
+- Batch 11: rebalance flow resmi
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -200,4 +211,5 @@ Status: Complete
 - Close flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` mengembalikan status `CLOSE_CONFIRMED` sebelum finalizer menutup posisi lokal
 - Reconciliation worker saat ini bisa recover `DEPLOY` dan `CLOSE`; action type lain yang nanti punya `WAITING_CONFIRMATION` perlu ditambahkan recovery path eksplisit saat batch terkait dibangun
 - Management rules engine saat ini masih memakai input `signals`/`policy` yang diberikan caller; enrichment data dan orchestration evaluasi multi-posisi sengaja ditunda ke batch worker/risk berikutnya
-- `npm test` terakhir hijau dengan total `67` tests passed
+- Screening/scoring engine saat ini memakai policy dan candidate snapshot yang diberikan caller; ingestion real candidate details dan orchestration shortlist lintas gateway tetap ditunda ke batch worker screening berikutnya
+- `npm test` terakhir hijau dengan total `70` tests passed

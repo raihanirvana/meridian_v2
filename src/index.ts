@@ -63,10 +63,31 @@ export {
   type ManagementSignals,
 } from "./domain/rules/managementRules.js";
 export {
+  evaluateScreeningHardFilters,
+  HardFilterEvaluationSchema,
+  screenAndScoreCandidates,
+  ScreenAndScoreCandidatesResultSchema,
+  ScreeningPolicySchema,
+  type HardFilterEvaluation,
+  type ScreenAndScoreCandidatesResult,
+  type ScreeningPolicy,
+} from "./domain/rules/screeningRules.js";
+export {
   MANAGEMENT_PRIORITY_SCORES,
   ManagementPrioritySchema,
   type ManagementPriority,
 } from "./domain/scoring/managementPriority.js";
+export {
+  CandidateScoreBreakdownSchema,
+  CandidateScorePolicySchema,
+  CandidateScoreResultSchema,
+  scoreCandidate,
+  ScreeningCandidateInputSchema,
+  type CandidateScoreBreakdown,
+  type CandidateScorePolicy,
+  type CandidateScoreResult,
+  type ScreeningCandidateInput,
+} from "./domain/scoring/candidateScore.js";
 export {
   FileStore,
   type FileStoreOptions,
