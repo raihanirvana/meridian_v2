@@ -63,6 +63,26 @@ export {
   type ManagementSignals,
 } from "./domain/rules/managementRules.js";
 export {
+  buildPortfolioRiskStateSnapshot,
+  calculateCapitalUsage,
+  calculateDailyLossPct,
+  deriveCircuitBreakerState,
+  deriveDrawdownState,
+  evaluatePortfolioRisk,
+  PortfolioRiskActionSchema,
+  PortfolioRiskEvaluationInputSchema,
+  PortfolioRiskEvaluationResultSchema,
+  PortfolioRiskPolicySchema,
+  PortfolioRiskStateSnapshotSchema,
+  updatePortfolioDailyRiskState,
+  type CapitalUsageSnapshot,
+  type PortfolioRiskAction,
+  type PortfolioRiskEvaluationInput,
+  type PortfolioRiskEvaluationResult,
+  type PortfolioRiskPolicy,
+  type PortfolioRiskStateSnapshot,
+} from "./domain/rules/riskRules.js";
+export {
   evaluateScreeningHardFilters,
   HardFilterEvaluationSchema,
   screenAndScoreCandidates,

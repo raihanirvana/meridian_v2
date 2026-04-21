@@ -2,7 +2,7 @@
   "risk": {
     "maxConcurrentPositions": 3,
     "maxCapitalUsagePct": 70,
-    "minReserveSol": 0.5,
+    "minReserveUsd": 0.5,
     "maxTokenExposurePct": 35,
     "maxPoolExposurePct": 40,
     "maxRebalancesPerPosition": 2,

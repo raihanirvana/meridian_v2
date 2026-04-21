@@ -41,7 +41,7 @@ function writeFixtureFiles(directory: string, overrides?: { userConfig?: string;
           risk: {
             maxConcurrentPositions: 3,
             maxCapitalUsagePct: 70,
-            minReserveSol: 0.5,
+            minReserveUsd: 0.5,
             maxTokenExposurePct: 35,
             maxPoolExposurePct: 40,
             maxRebalancesPerPosition: 2,
@@ -145,7 +145,7 @@ describe("loadConfig", () => {
         risk: {
           maxConcurrentPositions: 3,
           maxCapitalUsagePct: 70,
-          minReserveSol: -1,
+          minReserveUsd: -1,
           maxTokenExposurePct: 35,
           maxPoolExposurePct: 40,
           maxRebalancesPerPosition: 2,
@@ -197,9 +197,9 @@ describe("loadConfig", () => {
       throw new Error("Expected ConfigValidationError");
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigValidationError);
-      expect((error as ConfigValidationError).details).toEqual(
-        expect.arrayContaining([
-          expect.stringMatching(/risk\.minReserveSol/i),
+        expect((error as ConfigValidationError).details).toEqual(
+          expect.arrayContaining([
+          expect.stringMatching(/risk\.minReserveUsd/i),
           expect.stringMatching(/screening\.unexpectedKey/i),
         ]),
       );

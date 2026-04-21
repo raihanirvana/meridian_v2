@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (Batch 11 audit follow-up applied)
+Last updated: 2026-04-21 (Batch 12 policy decisions N27/N31 resolved)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -137,6 +137,53 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   duplicate rebalance idempotency, submit-OK/persist-fail di `processRebalanceAction()`, redeploy persist-fail di `finalizeRebalance()`, redeploy confirmation non-`OPEN`, terminal re-entry `UNCHANGED`, request reject branches, rebalance from `HOLD`, dan re-entry dari phase `REDEPLOY_SUBMITTED`.
   Revisit: sebelum Batch 13 worker/reporting mulai lebih bergantung pada rebalance observability dan recovery semantics.
 
+- `N24` `circuitBreakerCooldownMin` belum dipakai untuk expiry/transisi `ON -> COOLDOWN -> OFF` di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:206>)
+  Status: deferred
+  Kenapa ditunda: Batch 12 baru membangun pure guardrail engine dasar; cooldown clock/state transition belum dibutuhkan sampai worker orchestration benar-benar mulai mengelola breaker lifecycle.
+  Revisit: wajib saat Batch 13/14 mulai mengoperasikan circuit breaker end-to-end.
+
+- `N25` risk engine masih bisa menghasilkan blocking reason yang redundant (`daily loss limit` + `circuit breaker`) di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:438>)
+  Status: deferred
+  Kenapa ditunda: tidak mengubah correctness keputusan block, hanya menambah noise observability.
+  Revisit: saat reporting/operator UI mulai menampilkan blocking reasons ke manusia.
+
+- `N26` `PortfolioRiskActionSchema` masih berdiri sendiri dan belum diturunkan dari enum action canonical di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:10>)
+  Status: deferred
+  Kenapa ditunda: whitelist action risk saat ini kecil dan eksplisit, tetapi ada drift risk jika enum action lifecycle bertambah di masa depan.
+  Revisit: saat Batch 13 mengintegrasikan risk engine ke worker/action execution surface yang lebih luas.
+
+- `N28` `maxConcurrentPositions` masih hanya membaca `openPositions`; ketergantungan pada `pendingActions` sebagai guard write terpisah belum terdokumentasi penuh di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:451>)
+  Status: deferred
+  Kenapa ditunda: perilaku sekarang aman karena `pendingActions >= 1` sudah memblok write baru, tetapi coupling kedua rule ini masih implisit.
+  Revisit: saat worker orchestration mulai menghitung kapasitas deploy secara real-time.
+
+- `N29` denominator `dailyLossPct` masih memakai `walletBalance` saat ini, belum start-of-day equity, di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:190>)
+  Status: deferred
+  Kenapa ditunda: PRD belum menulis eksplisit apakah limit dibaca terhadap equity awal hari atau equity saat ini. Mengubah denominator sekarang akan mengubah semantics drawdown/circuit-breaker lintas semua caller.
+  Revisit: putuskan sebelum worker/reporting mulai menjelaskan risk percentage ke operator.
+
+- `N30` reserve guard masih mengandalkan kontrak caller bahwa `reservedBalance` sudah merepresentasikan buffer yang dilindungi; schema belum mengekspresikan invariant itu secara eksplisit di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:479>)
+  Status: deferred
+  Kenapa ditunda: guard saat ini sudah memblok ketika reserve snapshot jatuh di bawah minimum, tetapi contract antara `walletBalance`, `availableBalance`, dan `reservedBalance` belum diformalisasi di schema. Perubahan penuh lebih aman dilakukan saat worker Batch 13 benar-benar menjadi producer utama snapshot portfolio.
+  Revisit: saat integrasi worker risk/orchestration sudah final, lalu kencangkan schema atau builder snapshot di boundary.
+
+- `N32` builder `PortfolioState` canonical belum ada; worker Batch 13 berisiko membentuk snapshot risk dengan logika yang tersebar di banyak tempat di [PortfolioState.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/entities/PortfolioState.ts:1>)
+  Status: deferred
+  Kenapa ditunda: evaluator risk sudah siap menerima snapshot, tetapi belum ada service/usecase tunggal yang mengagregasi wallet balance, reserve, pending actions, exposure, dan daily realized PnL menjadi `PortfolioState`. Tanpa builder resmi, tiap worker bisa membangun snapshot dengan invariant yang berbeda.
+  Revisit: wajib dikerjakan di Batch 13 sebelum risk engine dipakai lebih dari satu orchestration path.
+
+- `N33` sumber `recentNewDeploys` untuk window 1 jam belum dibakukan di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:60>)
+  Status: deferred
+  Kenapa ditunda: evaluator hanya menerima angka final, tetapi belum ada helper/query resmi yang menghitung deploy baru dari journal/action repo dalam sliding window. Tanpa definisi ini, worker Batch 13 bisa memakai sumber atau kriteria hitung yang saling berbeda.
+  Revisit: wajib diputuskan saat Batch 13 mulai meng-wire rule `maxNewDeploysPerHour`.
+
+- `T8` coverage gap risk engine setelah hardening Batch 12 di [riskRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/riskRules.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: core semantics Batch 12 sudah diregresikan, tetapi beberapa branch penting dan ambiguity cases belum diuji eksplisit.
+  Missing coverage:
+  `maxConcurrentPositions` on deploy, `pendingActions` block, `maxRebalancesPerPosition`, `maxNewDeploysPerHour`, rebalance shrink (`allocationDeltaUsd < 0`), pool-same-as-old rebalance projection, circuit breaker `COOLDOWN` pass-through/expiry semantics, recovery of loss back below limit, dan allow-assertion individual untuk `CLAIM_FEES`/`PARTIAL_CLOSE`.
+  Revisit: sebelum Batch 13 worker benar-benar mengonsumsi evaluator ini secara langsung.
+
 ## Design Decisions
 - Deploy request tetap menulis via `ActionQueue`; `requestDeploy()` tidak boleh direct write ke state/action terminal.
   Rationale: single-writer principle.
@@ -185,6 +232,27 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Tradeoff: action bisa tetap berada di `WAITING_CONFIRMATION` sambil `resultPayload.phase` berubah dari `CLOSE_SUBMITTED` ke `REDEPLOY_SUBMITTED`, sehingga consumer harus membaca phase payload, bukan hanya status action.
   Files: [processRebalanceAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processRebalanceAction.ts:1>), [finalizeRebalance.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeRebalance.ts:1>)
 
+- Drawdown warning di risk engine sekarang mulai menyala pada 50% dari `dailyLossLimitPct` di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:177>)
+  Rationale: memberi sinyal lebih dini sebelum limit penuh tercapai, tanpa harus menunggu circuit breaker menyala.
+  Tradeoff: threshold warning ini adalah pilihan desain internal, belum datang eksplisit dari PRD; jika operator nanti butuh sensitivitas berbeda, kemungkinan perlu dinaikkan ke config.
+
+- Portfolio risk engine sekarang memakai konvensi unit USD-equivalent untuk reserve guard (`minReserveUsd`) di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:19>) dan [configSchema.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/config/configSchema.ts:25>)
+  Rationale: evaluator risk sudah membandingkan allocation, capital usage, realized PnL, dan exposure terhadap snapshot nilai yang sama; menyamakan reserve ke unit yang sama menghindari drift SOL-vs-USD di boundary.
+  Tradeoff: nama ini sekarang menyimpang dari wording PRD lama (`minReserveSol`), sehingga integrasi/operator docs harus mengikuti naming baru.
+
+- Threshold `max` pada capital usage dan exposure di risk engine sekarang diperlakukan inclusive (`>=`) di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:461>)
+  Rationale: untuk guardrail risk, “menyentuh limit” dianggap sudah tidak aman untuk ekspansi posisi baru.
+  Tradeoff: perilaku ini lebih konservatif daripada interpretasi exclusive-cap.
+
+- `REBALANCE` tidak dihitung sebagai `maxNewDeploysPerHour` di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:497>) (resolves `N27`)
+  Rationale: limit hourly-new-deploys bertujuan menahan ekspansi eksposur baru (posisi baru, capital committed baru); rebalance hanya menggeser range posisi yang sudah ada dan sudah punya guard terpisah `maxRebalancesPerPosition`. Menghitungnya berarti double-regulate dan bisa memblok reposisi sah di market volatil.
+  Tradeoff: jika nanti operator ingin rate-limit total on-chain write (termasuk rebalance), perlu limit baru yang terpisah dari `maxNewDeploysPerHour`.
+
+- Unit bridge SOL↔USD dikerjakan di boundary worker lewat `PriceGateway` (konversi sekali di entry Batch 13), bukan disimpan sebagai rate di `PortfolioState` (resolves `N31`)
+  Rationale: harga = dependency eksternal yang berubah cepat, natural diletakkan sebagai adapter port. Menaruh rate di `PortfolioState` akan mencampur "apa isi portfolio" dengan "dengan rate berapa kita menilainya", dan membuat snapshot basi ketika rate berubah. Risk engine tetap pure USD tanpa perlu tahu soal konversi.
+  Tradeoff: tiap worker yang menyuplai snapshot ke evaluator wajib melewati `PriceGateway` terlebih dulu; belum ada adapter price yang tersedia sampai Batch 13 dikerjakan.
+  Implementation note: Batch 13 harus memperkenalkan `PriceGateway` port + adapter mock, lalu `PortfolioState` builder (`N32`) memakainya untuk memproduksi semua nilai USD-equivalent sebelum evaluator dipanggil.
+
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
 - `F2` gateway position hanya dianggap confirmed jika status benar-benar `OPEN`.
@@ -198,6 +266,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `N11` `outOfRangeSince` sekarang dinormalisasi saat deploy confirmed out-of-range dan dipertahankan konsisten saat close finalization.
 - `F8` enqueue idempotency sekarang atomic; duplicate action tidak lagi muncul pada request paralel dengan idempotency key yang sama.
 - `N23` reconciliation worker sekarang memetakan outcome terminal (`TIMED_OUT`, aborted, failed-finalization) ke `MANUAL_REVIEW_REQUIRED`, bukan `REQUIRES_RETRY`, sehingga observability tidak lagi mengisyaratkan auto-retry palsu.
+- `N24a` rebalance risk projection tidak lagi double-count capital/exposure; evaluator sekarang men-net-out posisi lama saat action `REBALANCE`.
+- `N24b` risk engine/config reserve unit drift sudah ditutup dengan konvensi `minReserveUsd`.
+- `N24c` threshold `max` di capital usage dan exposure sekarang konsisten inclusive.
+- `N29a` rebalance token exposure release sekarang aman terhadap perbedaan ordering `tokenX/tokenY` vs `base/quote`; evaluator melepas exposure dari union mint position yang sudah dide-dupe.
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.

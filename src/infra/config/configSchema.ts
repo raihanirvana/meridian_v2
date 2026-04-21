@@ -23,12 +23,12 @@ export const EnvSecretsSchema = z.object({
 export const UserConfigSchema = z
   .object({
     risk: z
-      .object({
-        maxConcurrentPositions: z.number().int().positive(),
-        maxCapitalUsagePct: PercentNumber,
-        minReserveSol: PositiveNumber,
-        maxTokenExposurePct: PercentNumber,
-        maxPoolExposurePct: PercentNumber,
+        .object({
+          maxConcurrentPositions: z.number().int().positive(),
+          maxCapitalUsagePct: PercentNumber,
+          minReserveUsd: PositiveNumber,
+          maxTokenExposurePct: PercentNumber,
+          maxPoolExposurePct: PercentNumber,
         maxRebalancesPerPosition: z.number().int().min(0),
         dailyLossLimitPct: PositiveNumber,
         circuitBreakerCooldownMin: z.number().int().positive(),

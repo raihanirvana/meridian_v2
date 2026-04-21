@@ -1,14 +1,13 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 11 - Rebalance flow resmi
+Current batch: Batch 12 - Portfolio risk engine
 Status: Complete
 
-## Scope Batch 11
-- Implement `requestRebalance.ts`
-- Implement `processRebalanceAction.ts`
-- Implement `finalizeRebalance.ts`
-- Tambahkan tests untuk rebalance success, close-timeout, validation fail, dan redeploy abort
+## Scope Batch 12
+- Implement `riskRules.ts`
+- Implement capital usage / exposure / drawdown / circuit-breaker calculators
+- Tambahkan tests untuk daily loss limit, reserve guard, exposure caps, dan safe close/reconcile allowance
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -191,9 +190,50 @@ Status: Complete
   - hardening pasca-audit Batch 11 sudah masuk:
     - reconciliation worker sekarang memetakan outcome terminal (`TIMED_OUT`, aborted, failed-finalization) ke `MANUAL_REVIEW_REQUIRED`, bukan `REQUIRES_RETRY`
     - regression test ditambahkan untuk recovery worker pada rebalance timeout path
+- Batch 12 selesai:
+  - `riskRules.ts` sekarang menyediakan portfolio risk engine yang pure dan reusable
+  - calculator resmi sekarang tersedia untuk:
+    - capital usage
+    - daily loss percent
+    - drawdown state
+    - circuit breaker state
+    - projected exposure by pool/token
+  - `evaluatePortfolioRisk()` sekarang memvalidasi action global:
+    - `DEPLOY`
+    - `REBALANCE`
+    - `CLOSE`
+    - `CLAIM_FEES`
+    - `PARTIAL_CLOSE`
+    - `RECONCILE_ONLY`
+  - deploy/rebalance sekarang bisa diblokir secara deterministic oleh:
+    - circuit breaker
+    - daily loss limit
+    - active write action
+    - max concurrent positions
+    - max capital usage
+    - reserve guard
+    - pool/token exposure cap
+    - max new deploys per hour
+    - max rebalance per position
+  - close/claim/partial-close/reconcile-only tetap diizinkan sebagai action yang mereduksi risiko
+  - `updatePortfolioDailyRiskState()` sekarang bisa dipakai untuk tracking daily realized PnL + flip drawdown/circuit breaker state
+  - tests Batch 12 sudah ditambahkan untuk:
+    - daily loss limit blocks deploy but still allows close/reconcile
+    - pool exposure reject
+    - token exposure reject
+    - reserve guard works
+    - circuit breaker blocks deploy
+    - capital usage + daily risk snapshot deterministic
+    - daily realized pnl tracker flips circuit breaker on limit breach
+  - hardening pasca-audit Batch 12 sudah masuk:
+    - rebalance sekarang dihitung sebagai replacement, bukan additive exposure/capital, dengan net-out dari posisi lama saat evaluasi risk
+    - rebalance token exposure release sekarang aman terhadap perbedaan ordering `tokenX/tokenY` vs `base/quote`, jadi projection tidak bocor saat caller memakai konvensi mint yang berbeda
+    - risk policy/config reserve sekarang dikunci sebagai `minReserveUsd` agar unit convention konsisten dengan allocation/equity snapshot yang dipakai evaluator
+    - threshold `max` untuk capital usage dan exposure sekarang konsisten inclusive (`>=`)
+    - regression tests ditambahkan untuk rebalance replacement semantic, token-ordering safety, exact-max boundary, helper projection pure, dan config rename coverage
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 11
+- Tidak ada blocker fungsional untuk Batch 12
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
@@ -220,7 +260,7 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 12: portfolio risk engine
+- Batch 13: workers orchestration tanpa AI
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -233,4 +273,5 @@ Status: Complete
 - Reconciliation worker sekarang juga bisa recover `REBALANCE`, dengan phase action disimpan di `resultPayload`
 - Management rules engine saat ini masih memakai input `signals`/`policy` yang diberikan caller; enrichment data dan orchestration evaluasi multi-posisi sengaja ditunda ke batch worker/risk berikutnya
 - Screening/scoring engine saat ini memakai policy dan candidate snapshot yang diberikan caller; ingestion real candidate details dan orchestration shortlist lintas gateway tetap ditunda ke batch worker screening berikutnya
-- `npm test` terakhir hijau dengan total `75` tests passed
+- Portfolio risk engine saat ini sudah reusable sebagai pure validator/calculator, tetapi belum di-inject ke worker/action orchestration; integrasinya natural dikerjakan di Batch 13
+- `npm test` terakhir hijau dengan total `86` tests passed
