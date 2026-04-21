@@ -22,6 +22,11 @@ import {
 } from "../../src/app/usecases/requestDeploy.js";
 import { processCloseAction } from "../../src/app/usecases/processCloseAction.js";
 import { requestClose } from "../../src/app/usecases/requestClose.js";
+import { processRebalanceAction } from "../../src/app/usecases/processRebalanceAction.js";
+import {
+  requestRebalance,
+  type RebalanceActionRequestPayload,
+} from "../../src/app/usecases/requestRebalance.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 
 const tempDirs: string[] = [];
@@ -47,6 +52,24 @@ const deployPayload: DeployActionRequestPayload = {
   rangeUpperBin: 20,
   initialActiveBin: 15,
   estimatedValueUsd: 100,
+};
+
+const rebalancePayload: RebalanceActionRequestPayload = {
+  reason: "range drift",
+  redeploy: {
+    poolAddress: "pool_002",
+    tokenXMint: "mint_x",
+    tokenYMint: "mint_y",
+    baseMint: "mint_base",
+    quoteMint: "mint_quote",
+    amountBase: 0.8,
+    amountQuote: 0.4,
+    strategy: "bid_ask",
+    rangeLowerBin: 20,
+    rangeUpperBin: 30,
+    initialActiveBin: 24,
+    estimatedValueUsd: 80,
+  },
 };
 
 function buildOpenPosition(positionId: string): Position {
@@ -281,7 +304,7 @@ describe("reconciliation worker", () => {
         expect.objectContaining({
           scope: "ACTION",
           entityId: action.actionId,
-          outcome: "REQUIRES_RETRY",
+          outcome: "MANUAL_REVIEW_REQUIRED",
         }),
       ]),
     );
@@ -375,6 +398,93 @@ describe("reconciliation worker", () => {
           scope: "ACTION",
           entityId: action.actionId,
           outcome: "RECONCILED_OK",
+        }),
+      ]),
+    );
+  });
+
+  it("marks rebalance timeout recovery as MANUAL_REVIEW_REQUIRED because the action is already terminal", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_rebalance_pending"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_rebalance_pending",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_rebalance_pending",
+              txIds: ["tx_rebalance_pending"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: { type: "success", value: null },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_rebalance_pending",
+            txIds: ["tx_rebalance_pending"],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get("pos_rebalance_pending");
+
+    expect(persistedAction?.status).toBe("TIMED_OUT");
+    expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "ACTION",
+          entityId: action.actionId,
+          outcome: "MANUAL_REVIEW_REQUIRED",
         }),
       ]),
     );

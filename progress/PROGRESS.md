@@ -1,14 +1,14 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 10 - Screening rules + scoring engine
+Current batch: Batch 11 - Rebalance flow resmi
 Status: Complete
 
-## Scope Batch 10
-- Implement `screeningRules.ts`
-- Implement `candidateScore.ts`
-- Implement hard filters, score breakdown, dan shortlist builder
-- Tambahkan tests untuk hard rejects, score ordering, dan exposure conflicts
+## Scope Batch 11
+- Implement `requestRebalance.ts`
+- Implement `processRebalanceAction.ts`
+- Implement `finalizeRebalance.ts`
+- Tambahkan tests untuk rebalance success, close-timeout, validation fail, dan redeploy abort
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -171,9 +171,29 @@ Status: Complete
     - hard filter reject cases
     - exposure conflict reject
     - deterministic shortlist ordering
+- Batch 11 selesai:
+  - `requestRebalance.ts` sekarang membuat rebalance request via `ActionQueue`, bukan direct write
+  - `processRebalanceAction.ts` sekarang submit close leg lama ke gateway dan memindahkan posisi lama ke `CLOSING_FOR_REBALANCE`
+  - `finalizeRebalance.ts` sekarang menjalankan flow dua fase resmi:
+    - finalize close leg lama sampai `CLOSED`
+    - validasi modal hasil close
+    - submit redeploy leg baru
+    - tunggu confirmation sampai posisi baru `OPEN`
+  - tidak ada deploy baru sebelum close lama finalized
+  - jika close leg lama tidak confirm, action menjadi `TIMED_OUT` dan posisi lama masuk `RECONCILIATION_REQUIRED`
+  - jika validasi modal gagal atau redeploy submit gagal, action menjadi `FAILED`, posisi lama tetap `CLOSED`, dan journal menulis `REBALANCE_ABORTED`
+  - reconciliation worker sekarang bisa recover action `REBALANCE` yang masih `WAITING_CONFIRMATION`
+  - integration tests Batch 11 sudah ditambahkan untuk:
+    - rebalance success
+    - close old leg timeout
+    - validation fail
+    - redeploy fail permanen
+  - hardening pasca-audit Batch 11 sudah masuk:
+    - reconciliation worker sekarang memetakan outcome terminal (`TIMED_OUT`, aborted, failed-finalization) ke `MANUAL_REVIEW_REQUIRED`, bukan `REQUIRES_RETRY`
+    - regression test ditambahkan untuk recovery worker pada rebalance timeout path
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 10
+- Tidak ada blocker fungsional untuk Batch 11
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
@@ -200,7 +220,7 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 11: rebalance flow resmi
+- Batch 12: portfolio risk engine
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -210,6 +230,7 @@ Status: Complete
 - Deploy flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` sebagai confirmation check pada mock/integration layer
 - Close flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` mengembalikan status `CLOSE_CONFIRMED` sebelum finalizer menutup posisi lokal
 - Reconciliation worker saat ini bisa recover `DEPLOY` dan `CLOSE`; action type lain yang nanti punya `WAITING_CONFIRMATION` perlu ditambahkan recovery path eksplisit saat batch terkait dibangun
+- Reconciliation worker sekarang juga bisa recover `REBALANCE`, dengan phase action disimpan di `resultPayload`
 - Management rules engine saat ini masih memakai input `signals`/`policy` yang diberikan caller; enrichment data dan orchestration evaluasi multi-posisi sengaja ditunda ke batch worker/risk berikutnya
 - Screening/scoring engine saat ini memakai policy dan candidate snapshot yang diberikan caller; ingestion real candidate details dan orchestration shortlist lintas gateway tetap ditunda ke batch worker screening berikutnya
-- `npm test` terakhir hijau dengan total `70` tests passed
+- `npm test` terakhir hijau dengan total `75` tests passed

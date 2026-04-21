@@ -14,6 +14,10 @@ import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
 
 import {
+  finalizeRebalance,
+  type FinalizeRebalanceResult,
+} from "./finalizeRebalance.js";
+import {
   finalizeClose,
   type PostCloseSwapHook,
 } from "./finalizeClose.js";
@@ -151,6 +155,46 @@ function getActionPositionId(action: Action): string | null {
   return action.positionId;
 }
 
+function mapRebalanceReconciliationOutcome(
+  result: FinalizeRebalanceResult,
+): ReconciliationOutcome {
+  switch (result.outcome) {
+    case "FINALIZED":
+    case "UNCHANGED":
+      return "RECONCILED_OK";
+    case "REDEPLOY_SUBMITTED":
+      return "REQUIRES_RETRY";
+    case "TIMED_OUT":
+    case "REBALANCE_ABORTED":
+      return "MANUAL_REVIEW_REQUIRED";
+  }
+}
+
+function mapDeployReconciliationOutcome(
+  outcome: "CONFIRMED" | "TIMED_OUT" | "UNCHANGED",
+): ReconciliationOutcome {
+  switch (outcome) {
+    case "CONFIRMED":
+    case "UNCHANGED":
+      return "RECONCILED_OK";
+    case "TIMED_OUT":
+      return "MANUAL_REVIEW_REQUIRED";
+  }
+}
+
+function mapCloseReconciliationOutcome(
+  outcome: "FINALIZED" | "TIMED_OUT" | "RECONCILIATION_REQUIRED" | "UNCHANGED",
+): ReconciliationOutcome {
+  switch (outcome) {
+    case "FINALIZED":
+    case "UNCHANGED":
+      return "RECONCILED_OK";
+    case "TIMED_OUT":
+    case "RECONCILIATION_REQUIRED":
+      return "MANUAL_REVIEW_REQUIRED";
+  }
+}
+
 async function recoverReconcilingAction(
   input: RecoverReconcilingActionInput,
 ): Promise<ReconciliationRecord> {
@@ -283,10 +327,7 @@ export async function reconcilePortfolio(
             wallet: result.action.wallet,
             positionId: result.position?.positionId ?? getDeployPositionId(result.action),
             actionId: result.action.actionId,
-            outcome:
-              result.outcome === "CONFIRMED" || result.outcome === "UNCHANGED"
-                ? "RECONCILED_OK"
-                : "REQUIRES_RETRY",
+            outcome: mapDeployReconciliationOutcome(result.outcome),
             detail: `Deploy confirmation recovery finished with ${result.outcome}`,
           }),
         );
@@ -317,11 +358,39 @@ export async function reconcilePortfolio(
             wallet: result.action.wallet,
             positionId: result.position?.positionId ?? result.action.positionId,
             actionId: result.action.actionId,
-            outcome:
-              result.outcome === "FINALIZED" || result.outcome === "UNCHANGED"
-                ? "RECONCILED_OK"
-                : "REQUIRES_RETRY",
+            outcome: mapCloseReconciliationOutcome(result.outcome),
             detail: `Close confirmation recovery finished with ${result.outcome}`,
+          }),
+        );
+        continue;
+      }
+
+      if (action.type === "REBALANCE") {
+        const result = await finalizeRebalance({
+          actionId: action.actionId,
+          actionRepository: input.actionRepository,
+          stateRepository: input.stateRepository,
+          dlmmGateway: input.dlmmGateway,
+          walletLock,
+          positionLock,
+          now: () => now,
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+        });
+
+        records.push(
+          createRecord({
+            scope: "ACTION",
+            entityId: result.action.actionId,
+            wallet: result.action.wallet,
+            positionId:
+              result.newPosition?.positionId ??
+              result.oldPosition?.positionId ??
+              result.action.positionId,
+            actionId: result.action.actionId,
+            outcome: mapRebalanceReconciliationOutcome(result),
+            detail: `Rebalance recovery finished with ${result.outcome}`,
           }),
         );
         continue;

@@ -228,9 +228,21 @@ export {
   type RequestCloseInput,
 } from "./app/usecases/requestClose.js";
 export {
+  RebalanceActionRequestPayloadSchema,
+  requestRebalance,
+  type RebalanceActionRequestPayload,
+  type RequestRebalanceInput,
+} from "./app/usecases/requestRebalance.js";
+export {
   processCloseAction,
   type ProcessCloseActionInput,
 } from "./app/usecases/processCloseAction.js";
+export {
+  processRebalanceAction,
+  RebalanceCloseSubmittedPayloadSchema,
+  type ProcessRebalanceActionInput,
+  type RebalanceCloseSubmittedPayload,
+} from "./app/usecases/processRebalanceAction.js";
 export {
   finalizeClose,
   PostCloseSwapInputSchema,
@@ -239,6 +251,15 @@ export {
   type PostCloseSwapHook,
   type PostCloseSwapInput,
 } from "./app/usecases/finalizeClose.js";
+export {
+  finalizeRebalance,
+  RebalanceAbortedPayloadSchema,
+  RebalanceActionResultPayloadSchema,
+  RebalanceCompletedPayloadSchema,
+  RebalanceRedeploySubmittedPayloadSchema,
+  type FinalizeRebalanceInput,
+  type FinalizeRebalanceResult,
+} from "./app/usecases/finalizeRebalance.js";
 export {
   reconcilePortfolio,
   type ReconcilePortfolioInput,

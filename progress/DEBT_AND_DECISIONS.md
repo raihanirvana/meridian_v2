@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (N20/T6 added)
+Last updated: 2026-04-21 (Batch 11 audit follow-up applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -96,12 +96,12 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: ini footgun konfigurasi kecil, bukan bug runtime umum. Tetapi config dengan key `""` bisa diam-diam memberi penalty ke candidate null-launchpad alih-alih fallback ke `narrativePenaltyScore`.
   Revisit: sebelum config screening/scoring mulai dioperasikan lebih luas atau saat Batch 14/16 memperkenalkan config/operator surface yang lebih aktif.
 
-- `F5` duplicate `DEPLOY_REQUEST_ACCEPTED` journal di [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>)
+- `F5` duplicate request-accepted journal pattern (`*_REQUEST_ACCEPTED` + `ACTION_ENQUEUED`) di [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>) dan [requestRebalance.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestRebalance.ts:1>)
   Status: deferred
   Kenapa ditunda: lebih ke keputusan audit semantics daripada correctness bug.
   Revisit: saat operator/reporting mulai membaca journal untuk counting request volume vs unique action volume.
 
-- `F6` double event `DEPLOY_SUBMISSION_FAILED` + `ACTION_FAILED`
+- `F6` double event submission-failed + `ACTION_FAILED` pattern pada deploy/rebalance
   Status: deferred
   Kenapa ditunda: redundant, tapi tidak merusak state.
   Revisit: saat format observability/journal sudah distabilkan, mungkin Batch 13 atau 18.
@@ -119,6 +119,23 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Missing coverage:
   hard filter individual (market cap min/max, TVL, volume, fee/TVL, holder count, bin step, blocked launchpad/deployer/token, pair type, top holder/bot/bundle/wash caps), duplicate token exposure via `tokenYMint`, exposure toggles off, shortlist cutoff, score tie-breaker, numeric breakdown assertions, individual riskFlags, empty candidate list, all rejected list, dan schema reject `maxMarketCapUsd < minMarketCapUsd`.
   Revisit: sebelum Batch 13/14 saat screening output mulai dipakai lebih luas oleh worker/advisory layer.
+
+- `N21` asimetri submit-path `processRebalanceAction` saat close leg pertama gagal parse/mismatch/throw di [processRebalanceAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processRebalanceAction.ts:159>)
+  Status: deferred
+  Kenapa ditunda: polanya sama dengan `N14`; jika adapter real mengembalikan response buruk setelah close on-chain sebenarnya sukses, action bisa jatuh ke `FAILED` dan meninggalkan orphan close leg tanpa jalur reconcile-safe.
+  Revisit: wajib bersama `N14` sebelum atau saat Batch 16 real DLMM adapter.
+
+- `N22` crash gap antara `deployLiquidity()` sukses dan persist phase `REDEPLOY_SUBMITTED` action di [finalizeRebalance.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeRebalance.ts:694>)
+  Status: deferred
+  Kenapa ditunda: kalau proses mati setelah redeploy submit sukses tetapi sebelum payload/action phase baru tersimpan, restart bisa membaca action masih `CLOSE_SUBMITTED` dan salah menurunkan old leg ke `RECONCILIATION_REQUIRED`, sementara new leg on-chain sudah ada tanpa local state.
+  Revisit: sebelum recovery/reconciliation rebalance dianggap production-ready; kemungkinan perlu intermediate commit marker atau journal-based resume strategy.
+
+- `T7` coverage gap rebalance flow di [rebalanceFlow.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/rebalanceFlow.test.ts:1>) dan [reconciliationWorker.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/reconciliationWorker.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: skeleton rebalance success/timeout/abort sudah tercakup, tetapi banyak branch recovery-safe dan idempotency edge belum diregresikan eksplisit.
+  Missing coverage:
+  duplicate rebalance idempotency, submit-OK/persist-fail di `processRebalanceAction()`, redeploy persist-fail di `finalizeRebalance()`, redeploy confirmation non-`OPEN`, terminal re-entry `UNCHANGED`, request reject branches, rebalance from `HOLD`, dan re-entry dari phase `REDEPLOY_SUBMITTED`.
+  Revisit: sebelum Batch 13 worker/reporting mulai lebih bergantung pada rebalance observability dan recovery semantics.
 
 ## Design Decisions
 - Deploy request tetap menulis via `ActionQueue`; `requestDeploy()` tidak boleh direct write ke state/action terminal.
@@ -163,6 +180,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Rationale: kandidat yang gagal hard filter tidak boleh masuk ranking atau shortlist deterministic, sehingga AI layer nanti hanya bekerja pada kandidat yang memang sudah lolos boundary safety.
   Tradeoff: candidate dengan skor potensial bagus tetap dibuang total jika gagal filter keras, walau margin gagalnya tipis.
 
+- Rebalance resmi dipertahankan sebagai satu action `REBALANCE` dengan phase eksplisit di `resultPayload`, bukan dipecah menjadi action `CLOSE` + `DEPLOY` terpisah di queue.
+  Rationale: satu action memudahkan idempotency, observability, dan recovery path untuk dua leg yang secara bisnis adalah satu intent rebalance.
+  Tradeoff: action bisa tetap berada di `WAITING_CONFIRMATION` sambil `resultPayload.phase` berubah dari `CLOSE_SUBMITTED` ke `REDEPLOY_SUBMITTED`, sehingga consumer harus membaca phase payload, bukan hanya status action.
+  Files: [processRebalanceAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processRebalanceAction.ts:1>), [finalizeRebalance.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeRebalance.ts:1>)
+
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
 - `F2` gateway position hanya dianggap confirmed jika status benar-benar `OPEN`.
@@ -175,6 +197,7 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `N5` cross-validation `Action.positionId` vs `Action.type` sekarang ditegakkan di schema `Action`.
 - `N11` `outOfRangeSince` sekarang dinormalisasi saat deploy confirmed out-of-range dan dipertahankan konsisten saat close finalization.
 - `F8` enqueue idempotency sekarang atomic; duplicate action tidak lagi muncul pada request paralel dengan idempotency key yang sama.
+- `N23` reconciliation worker sekarang memetakan outcome terminal (`TIMED_OUT`, aborted, failed-finalization) ke `MANUAL_REVIEW_REQUIRED`, bukan `REQUIRES_RETRY`, sehingga observability tidak lagi mengisyaratkan auto-retry palsu.
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.
