@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (N15/T4 added)
+Last updated: 2026-04-21 (N16/T5 added)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -71,6 +71,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: pada pola pakai sekarang worker reconciliation dipanggil saat startup/recovery, jadi practical race dengan `ActionQueue` belum jadi blocker. Tetapi fase 3 masih melakukan read-then-write tanpa `positionLock`, sehingga saat nanti worker dijadwalkan periodik paralel dengan queue, snapshot stale bisa meng-overwrite commit action aktif menjadi `RECONCILIATION_REQUIRED`.
   Revisit: wajib sebelum reconciliation worker dijadwalkan periodik atau dijalankan paralel dengan queue; idealnya paling lambat Batch 14/18.
 
+- `N16` management engine menganggap `outOfRangeSince` non-null sebagai source of truth range invalid di [managementRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/managementRules.ts:91>)
+  Status: deferred
+  Kenapa ditunda: semantik ini memang sengaja mengikuti kontrak state saat ini, tetapi jika reset `outOfRangeSince` terlambat satu cycle sementara `activeBin` sudah kembali in-range, engine bisa tetap menganggap posisi invalid dan mendorong rebalance lebih cepat dari yang diinginkan.
+  Revisit: saat Batch 11 rebalance flow resmi atau saat reconciliation/management sinkronisasi state range mulai diperketat lintas modul.
+
 - `F5` duplicate `DEPLOY_REQUEST_ACCEPTED` journal di [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>)
   Status: deferred
   Kenapa ditunda: lebih ke keputusan audit semantics daripada correctness bug.
@@ -80,6 +85,13 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Status: deferred
   Kenapa ditunda: redundant, tapi tidak merusak state.
   Revisit: saat format observability/journal sudah distabilkan, mungkin Batch 13 atau 18.
+
+- `T5` coverage gap management rules untuk branch individu dan gating detail di [managementRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/managementRules.test.ts:1>)
+  Status: deferred
+  Kenapa ditunda: precedence utama Batch 9 sudah tercakup dan engine bersifat pure, jadi sisa branch coverage belum memblokir batch berikutnya.
+  Missing coverage:
+  emergency individual (`circuitBreakerState`, `severeTokenRisk`, `liquidityCollapse`, `forcedManualClose`), hard-exit individual (`maxHold`, `maxOutOfRange`, `severeNegativeYield`), rebalance gated-off cases, `partialCloseEnabled=false`, dan numeric `priorityScore` per priority.
+  Revisit: sebelum worker management/orchestration mulai mengandalkan engine ini untuk auto-action di Batch 13.
 
 ## Design Decisions
 - Deploy request tetap menulis via `ActionQueue`; `requestDeploy()` tidak boleh direct write ke state/action terminal.
@@ -115,6 +127,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - Startup recovery untuk action yang tertinggal di `RECONCILING` bersifat konservatif di [reconcilePortfolio.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/reconcilePortfolio.ts:141>)
   Rationale: Batch 8 belum punya resumption logic granular untuk melanjutkan finalizer dari tengah; lebih aman menurunkannya ke `FAILED` + `RECONCILIATION_REQUIRED`.
   Tradeoff: recovery tidak mencoba resume in-place, jadi follow-up tetap bergantung pada reconciliation/manual review berikutnya.
+
+- Management engine menempatkan `RECONCILE_ONLY` setelah hard-exit tetapi sebelum maintenance di [managementRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/managementRules.ts:175>)
+  Rationale: jika snapshot belum layak untuk maintenance decision, engine harus menahan claim/partial-close/rebalance, tetapi emergency dan hard-exit tetap boleh menang lebih dulu.
+  Tradeoff: maintenance opportunity yang valid bisa sengaja ditunda satu cycle demi menjaga deterministic safety.
 
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.

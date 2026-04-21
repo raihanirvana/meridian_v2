@@ -52,6 +52,22 @@ export {
   transitionPositionStatus,
 } from "./domain/stateMachines/positionLifecycle.js";
 export {
+  evaluateManagementAction,
+  ManagementEvaluationInputSchema,
+  ManagementEvaluationResultSchema,
+  ManagementPolicySchema,
+  ManagementSignalsSchema,
+  type ManagementEvaluationInput,
+  type ManagementEvaluationResult,
+  type ManagementPolicy,
+  type ManagementSignals,
+} from "./domain/rules/managementRules.js";
+export {
+  MANAGEMENT_PRIORITY_SCORES,
+  ManagementPrioritySchema,
+  type ManagementPriority,
+} from "./domain/scoring/managementPriority.js";
+export {
   FileStore,
   type FileStoreOptions,
   type FileSystemAdapter,

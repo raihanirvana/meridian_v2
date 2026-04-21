@@ -1,14 +1,14 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-21
-Current batch: Batch 8 - Reconciliation worker
+Current batch: Batch 9 - Management rules engine
 Status: Complete
 
-## Scope Batch 8
-- Implement `reconcilePortfolio.ts`
-- Implement `reconciliationWorker.ts`
-- Tambahkan detection untuk missing snapshot, pending confirmation recovery, dan startup recovery
-- Tambahkan tests untuk missing snapshot, waiting confirmation recovery, dan restart while close pending
+## Scope Batch 9
+- Implement `managementRules.ts`
+- Implement rule precedence dan evaluation result object
+- Implement `managementPriority.ts`
+- Tambahkan tests untuk collision rules dan hold path
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -131,9 +131,39 @@ Status: Complete
     - missing position snapshot
     - deploy action stuck in `WAITING_CONFIRMATION`
     - restart while close pending
+- Batch 9 selesai:
+  - `managementRules.ts` sekarang menyediakan engine management yang pure dan deterministic untuk snapshot posisi `OPEN`
+  - `managementPriority.ts` sekarang mendefinisikan priority resmi untuk hasil evaluasi management
+  - output engine selalu tepat satu action resmi dari enum:
+    - `HOLD`
+    - `CLAIM_FEES`
+    - `PARTIAL_CLOSE`
+    - `REBALANCE`
+    - `CLOSE`
+    - `RECONCILE_ONLY`
+  - precedence PRD sudah ditegakkan eksplisit:
+    - emergency
+    - hard exit
+    - reconcile-only
+    - maintenance
+    - hold
+  - tests Batch 9 sudah ditambahkan untuk:
+    - stop loss mengalahkan claim fees
+    - hard exit mengalahkan rebalance
+    - hold jika semua aman
+    - partial close mengalahkan rebalance saat keduanya sama-sama eligible
+    - reconcile-only saat snapshot management incomplete
+  - hardening pasca-audit Batch 9 sudah masuk:
+    - `elapsedMinutes()` sekarang defensive terhadap timestamp parse invalid walau boundary schema saat ini sudah ketat
+    - threshold `0` untuk stop loss, claim fees, dan partial close sekarang diperlakukan konsisten sebagai disabled
+    - regression tests ditambahkan untuk:
+      - `position.needsReconciliation = true`
+      - happy path `REBALANCE`
+      - zero-threshold semantics
+      - schema reject saat posisi bukan `OPEN`
 
 ## Pending
-- Tidak ada blocker fungsional untuk Batch 8
+- Tidak ada blocker fungsional untuk Batch 9
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
@@ -156,9 +186,10 @@ Status: Complete
 - Di Batch 7, close finalization memisahkan submit close dari accounting finalizer; posisi baru menjadi `CLOSED` setelah confirmation dan finalizer sama-sama sukses
 - Idempotency enqueue sekarang harus atomic di repository layer, bukan check-then-insert di `ActionQueue`
 - Di Batch 8, reconciliation worker memprioritaskan recovery action yang masih bisa dipulihkan (`WAITING_CONFIRMATION`) sebelum menilai posisi hilang dari snapshot agar lagging wallet snapshot tidak menimbulkan false escalation lebih awal
+- Di Batch 9, management engine sengaja menerima snapshot + signals + policy statis tanpa IO, supaya collision rule mudah diuji dan batch worker/orchestrator berikutnya tinggal memberi input yang sudah diperkaya
 
 ## Next Recommended Step
-- Batch 9: management rules engine
+- Batch 10: screening rules + scoring engine
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -168,4 +199,5 @@ Status: Complete
 - Deploy flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` sebagai confirmation check pada mock/integration layer
 - Close flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` mengembalikan status `CLOSE_CONFIRMED` sebelum finalizer menutup posisi lokal
 - Reconciliation worker saat ini bisa recover `DEPLOY` dan `CLOSE`; action type lain yang nanti punya `WAITING_CONFIRMATION` perlu ditambahkan recovery path eksplisit saat batch terkait dibangun
-- `npm test` terakhir hijau dengan total `58` tests passed
+- Management rules engine saat ini masih memakai input `signals`/`policy` yang diberikan caller; enrichment data dan orchestration evaluasi multi-posisi sengaja ditunda ke batch worker/risk berikutnya
+- `npm test` terakhir hijau dengan total `67` tests passed
