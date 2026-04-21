@@ -246,6 +246,42 @@ describe("ActionQueue", () => {
     expect(persisted?.error).toMatch(/handler exploded/i);
   });
 
+  it("falls back to a safe error message when the handler throws an empty Error", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    const enqueued = await actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_001",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+      requestedBy: "system",
+    });
+
+    const processed = await actionQueue.processNext(async () => {
+      throw new Error("");
+    });
+
+    const persisted = await actionRepository.get(enqueued.actionId);
+
+    expect(processed?.status).toBe("FAILED");
+    expect(processed?.error).toBe("unknown handler error");
+    expect(persisted?.error).toBe("unknown handler error");
+  });
+
   it("writes journal events for enqueue, running, and finalize when a journal repository is provided", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

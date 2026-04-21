@@ -43,6 +43,17 @@ const TERMINAL_STATUSES = new Set<ActionStatus>([
   "TIMED_OUT",
 ]);
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message.trim().length > 0
+      ? error.message
+      : "unknown handler error";
+  }
+
+  const value = String(error).trim();
+  return value.length > 0 ? value : "unknown handler error";
+}
+
 export class ActionQueue {
   private readonly actionRepository: ActionRepository;
   private readonly journalRepository: JournalRepository | null;
@@ -231,7 +242,7 @@ export class ActionQueue {
     const failedAction: Action = {
       ...runningAction,
       status: failedStatus,
-      error: error instanceof Error ? error.message : String(error),
+      error: toSafeErrorMessage(error),
       completedAt: new Date().toISOString(),
     };
 

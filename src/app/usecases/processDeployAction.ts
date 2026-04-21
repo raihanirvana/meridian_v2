@@ -48,6 +48,15 @@ export interface ConfirmDeployActionResult {
   outcome: "CONFIRMED" | "TIMED_OUT" | "UNCHANGED";
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return error.message.trim().length > 0 ? error.message : fallback;
+  }
+
+  const value = String(error).trim();
+  return value.length > 0 ? value : fallback;
+}
+
 function nowTimestamp(now?: () => string): string {
   return now?.() ?? new Date().toISOString();
 }
@@ -214,7 +223,7 @@ export async function processDeployAction(
       after: null,
       txIds: [],
       resultStatus: "FAILED",
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error, "deploy submission failed"),
     });
     throw error;
   }
@@ -284,17 +293,17 @@ export async function processDeployAction(
       }),
       txIds: deployResult.txIds,
       resultStatus: "WAITING_CONFIRMATION",
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error, "deploy submission requires reconciliation"),
     });
 
     return {
       nextStatus: "WAITING_CONFIRMATION",
       txIds: deployResult.txIds,
       resultPayload: toJournalRecord(deployResult),
-      error:
-        error instanceof Error
-          ? `Deploy submitted but local persistence requires reconciliation: ${error.message}`
-          : `Deploy submitted but local persistence requires reconciliation: ${String(error)}`,
+      error: `Deploy submitted but local persistence requires reconciliation: ${errorMessage(
+        error,
+        "unknown local persistence error",
+      )}`,
     };
   }
 }
@@ -379,6 +388,15 @@ export async function confirmDeployAction(
         confirmedPosition === null ||
         confirmedPosition.status !== "OPEN"
       ) {
+        const nextPosition = buildReconciliationRequiredPositionFromDeployData({
+          action: latestAction,
+          payload,
+          positionId: deployResult.positionId,
+          now,
+          sourcePosition: pendingPosition ?? confirmedPosition,
+        });
+        await input.stateRepository.upsert(nextPosition);
+
         const timedOutAction = {
           ...latestAction,
           status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
@@ -394,15 +412,6 @@ export async function confirmDeployAction(
         } satisfies Action;
 
         await input.actionRepository.upsert(timedOutAction);
-
-        const nextPosition = buildReconciliationRequiredPositionFromDeployData({
-          action: latestAction,
-          payload,
-          positionId: deployResult.positionId,
-          now,
-          sourcePosition: pendingPosition ?? confirmedPosition,
-        });
-        await input.stateRepository.upsert(nextPosition);
 
         await appendJournalEvent(input.journalRepository, {
           timestamp: now,
@@ -431,12 +440,6 @@ export async function confirmDeployAction(
         };
       }
 
-      const reconcilingAction = {
-        ...latestAction,
-        status: transitionActionStatus(latestAction.status, "RECONCILING"),
-      } satisfies Action;
-      await input.actionRepository.upsert(reconcilingAction);
-
       const openPosition = buildOpenPosition({
         confirmedPosition,
         pendingPosition,
@@ -444,6 +447,12 @@ export async function confirmDeployAction(
         now,
       });
       await input.stateRepository.upsert(openPosition);
+
+      const reconcilingAction = {
+        ...latestAction,
+        status: transitionActionStatus(latestAction.status, "RECONCILING"),
+      } satisfies Action;
+      await input.actionRepository.upsert(reconcilingAction);
 
       const doneAction = {
         ...reconcilingAction,

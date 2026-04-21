@@ -99,9 +99,14 @@ Status: Complete
     - gateway `getPosition()` hanya dianggap confirmed jika status benar-benar `OPEN`
     - jika submit on-chain sukses tetapi persist lokal gagal, action tidak jatuh ke `FAILED`; flow dinaikkan ke jalur reconcile-safe
     - regression test ditambahkan untuk non-OPEN confirmation, repeat confirmation idempotent, dan post-submit local write failure
+    - confirmation commit ordering sekarang lebih aman:
+      - happy path membangun dan menyimpan `OPEN` position dulu sebelum action dipindah ke `RECONCILING`
+      - timeout path membangun dan menyimpan `RECONCILIATION_REQUIRED` position dulu sebelum action ditutup ke `TIMED_OUT`
+      - regression test ditambahkan untuk malformed confirmed payload dan failure saat timeout reconciliation write
 
 ## Pending
 - Tidak ada blocker fungsional untuk Batch 6
+- Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
   - N5 cross-validation `Action.positionId` vs `Action.type`
@@ -129,4 +134,4 @@ Status: Complete
 - Jangan pakai repo lama sebagai source implementasi; pakai hanya untuk parity/spec bila diperlukan
 - Deploy/close use case di batch berikutnya sebaiknya langsung bergantung pada `ActionQueue` + `ActionRepository` + gateway interfaces yang sudah ada
 - Deploy flow saat ini mengandalkan `DlmmGateway.getPosition(positionId)` sebagai confirmation check pada mock/integration layer
-- `npm test` terakhir hijau dengan total `42` tests passed
+- `npm test` terakhir hijau dengan total `45` tests passed

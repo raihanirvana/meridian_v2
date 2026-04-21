@@ -534,6 +534,116 @@ describe("deploy flow", () => {
     expect(secondConfirmation.position?.status).toBe("OPEN");
   });
 
+  it("keeps action in WAITING_CONFIRMATION if confirmed position payload cannot be normalized into OPEN state", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const invalidGatewayPosition = {
+      ...buildConfirmedPosition("pos_invalid_confirm"),
+      rangeLowerBin: 20,
+      rangeUpperBin: 10,
+    } as unknown as Position;
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: invalidGatewayPosition,
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_invalid_confirm",
+          txIds: ["tx_invalid_confirm"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+      }),
+    );
+
+    await expect(
+      confirmDeployAction({
+        actionId: action.actionId,
+        actionRepository,
+        stateRepository,
+        dlmmGateway,
+        journalRepository,
+      }),
+    ).rejects.toThrow();
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get("pos_invalid_confirm");
+
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(persistedPosition?.status).toBe("DEPLOYING");
+  });
+
   it("marks deploy as FAILED when submit fails and does not create a position", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -756,6 +866,133 @@ describe("deploy flow", () => {
     expect(confirmation.outcome).toBe("TIMED_OUT");
     expect(confirmation.action.status).toBe("TIMED_OUT");
     expect(confirmation.position?.status).toBe("RECONCILIATION_REQUIRED");
+  });
+
+  it("does not mark action TIMED_OUT if reconciliation position write fails during timeout handling", async () => {
+    const directory = await makeTempDir();
+    const actionsPath = path.join(directory, "actions.json");
+    const positionsPath = path.join(directory, "positions.json");
+    const journalPath = path.join(directory, "journal.jsonl");
+
+    let positionWriteCount = 0;
+    const flakyFs: FileSystemAdapter = {
+      access: (filePath) => fs.access(filePath),
+      appendFile: (filePath, data, encoding) => fs.appendFile(filePath, data, encoding),
+      mkdir: (dirPath, options) => fs.mkdir(dirPath, options),
+      readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
+      rename: (fromPath, toPath) => fs.rename(fromPath, toPath),
+      rm: (targetPath, options) => fs.rm(targetPath, options),
+      writeFile: async (filePath, data, encoding) => {
+        if (filePath.includes("positions.json")) {
+          positionWriteCount += 1;
+          if (positionWriteCount >= 2) {
+            throw new Error("simulated timeout reconciliation write failure");
+          }
+        }
+
+        await fs.writeFile(filePath, data, encoding);
+      },
+    };
+
+    const actionRepository = new ActionRepository({
+      filePath: actionsPath,
+    });
+    const stateRepository = new StateRepository({
+      filePath: positionsPath,
+      fs: flakyFs,
+    });
+    const journalRepository = new JournalRepository({
+      filePath: journalPath,
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_timeout_write_fail",
+          txIds: ["tx_timeout_write_fail"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+      }),
+    );
+
+    await expect(
+      confirmDeployAction({
+        actionId: action.actionId,
+        actionRepository,
+        stateRepository,
+        dlmmGateway,
+        journalRepository,
+      }),
+    ).rejects.toThrow(/simulated timeout reconciliation write failure/i);
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get("pos_timeout_write_fail");
+
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(persistedPosition?.status).toBe("DEPLOYING");
   });
 
   it("reuses the same queued action for duplicate deploy requests with the same idempotency key", async () => {
