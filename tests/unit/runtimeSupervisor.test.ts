@@ -124,6 +124,8 @@ describe("runtime supervisor", () => {
         claim: {
           autoSwapAfterClaim: false,
           swapOutputMint: "So11111111111111111111111111111111111111112",
+          autoCompoundFees: false,
+          compoundToSide: "quote",
         },
         runtime: {
           dryRun: true,

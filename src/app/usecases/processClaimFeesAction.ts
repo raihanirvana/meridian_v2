@@ -16,8 +16,41 @@ import {
   ClaimFeesActionRequestPayloadSchema,
   assertClaimFeesRequestablePosition,
 } from "./requestClaimFees.js";
+import { PositionEntryMetadataSchema } from "../../domain/entities/Position.js";
 
 const ClaimFeesActionResultPayloadSchema = ClaimFeesResultSchema;
+
+const CompoundDeployTemplateSchema = z
+  .object({
+    poolAddress: z.string().min(1),
+    tokenXMint: z.string().min(1),
+    tokenYMint: z.string().min(1),
+    baseMint: z.string().min(1),
+    quoteMint: z.string().min(1),
+    strategy: z.string().min(1),
+    rangeLowerBin: z.number().int(),
+    rangeUpperBin: z.number().int(),
+    initialActiveBin: z.number().int().nullable(),
+    entryMetadata: PositionEntryMetadataSchema.optional(),
+  })
+  .strict();
+
+function buildCompoundDeployTemplate(position: Position) {
+  return CompoundDeployTemplateSchema.parse({
+    poolAddress: position.poolAddress,
+    tokenXMint: position.tokenXMint,
+    tokenYMint: position.tokenYMint,
+    baseMint: position.baseMint,
+    quoteMint: position.quoteMint,
+    strategy: position.strategy,
+    rangeLowerBin: position.rangeLowerBin,
+    rangeUpperBin: position.rangeUpperBin,
+    initialActiveBin: position.activeBin,
+    ...(position.entryMetadata === undefined
+      ? {}
+      : { entryMetadata: position.entryMetadata }),
+  });
+}
 
 export interface ProcessClaimFeesActionInput {
   action: Action;
@@ -199,6 +232,14 @@ export async function processClaimFeesAction(
         ...claimResult,
         reason: payload.reason,
         autoSwapOutputMint: payload.autoSwapOutputMint ?? null,
+        autoCompound:
+          payload.autoCompound === undefined || payload.autoCompound === null
+            ? null
+            : {
+                outputMint: payload.autoCompound.outputMint,
+                phase: "PENDING_SWAP",
+                deployTemplate: buildCompoundDeployTemplate(currentPosition),
+              },
       }),
       error: null,
     };
@@ -242,6 +283,14 @@ export async function processClaimFeesAction(
         ...claimResult,
         reason: payload.reason,
         autoSwapOutputMint: payload.autoSwapOutputMint ?? null,
+        autoCompound:
+          payload.autoCompound === undefined || payload.autoCompound === null
+            ? null
+            : {
+                outputMint: payload.autoCompound.outputMint,
+                phase: "PENDING_SWAP",
+                deployTemplate: buildCompoundDeployTemplate(currentPosition),
+              },
       }),
       error: `Claim submitted but local persistence requires reconciliation: ${errorMessage(
         error,

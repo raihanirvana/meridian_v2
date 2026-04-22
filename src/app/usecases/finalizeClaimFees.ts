@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { DlmmGateway } from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
@@ -11,6 +12,45 @@ import { transitionActionStatus } from "../../domain/stateMachines/actionLifecyc
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
+import type { ActionQueue } from "../services/ActionQueue.js";
+
+import {
+  DeployActionRequestPayloadSchema,
+  requestDeploy,
+} from "./requestDeploy.js";
+
+const CompoundDeployTemplateSchema = z
+  .object({
+    poolAddress: z.string().min(1),
+    tokenXMint: z.string().min(1),
+    tokenYMint: z.string().min(1),
+    baseMint: z.string().min(1),
+    quoteMint: z.string().min(1),
+    strategy: z.string().min(1),
+    rangeLowerBin: z.number().int(),
+    rangeUpperBin: z.number().int(),
+    initialActiveBin: z.number().int().nullable(),
+    entryMetadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+const ClaimAutoCompoundStateSchema = z
+  .object({
+    outputMint: z.string().min(1),
+    phase: z.enum([
+      "PENDING_SWAP",
+      "SWAP_IN_PROGRESS",
+      "SWAP_DONE",
+      "DEPLOY_QUEUED",
+      "FAILED",
+      "MANUAL_REVIEW_REQUIRED",
+    ]),
+    deployTemplate: CompoundDeployTemplateSchema,
+    swap: z.record(z.string(), z.unknown()).nullable().optional(),
+    deployActionId: z.string().min(1).nullable().optional(),
+    error: z.string().min(1).nullable().optional(),
+  })
+  .strict();
 
 const ClaimConfirmationPayloadSchema = z
   .object({
@@ -19,6 +59,8 @@ const ClaimConfirmationPayloadSchema = z
     txIds: z.array(z.string().min(1)),
     reason: z.string().min(1),
     autoSwapOutputMint: z.string().min(1).nullable().optional(),
+    autoCompound: ClaimAutoCompoundStateSchema.nullable().optional(),
+    swap: z.record(z.string(), z.unknown()).nullable().optional(),
   })
   .strict();
 
@@ -45,6 +87,8 @@ export interface FinalizeClaimFeesInput {
   journalRepository?: JournalRepository;
   walletLock?: WalletLock;
   positionLock?: PositionLock;
+  actionQueue?: ActionQueue;
+  runtimeControlStore?: RuntimeControlStore;
   now?: () => string;
   postClaimSwapHook?: PostClaimSwapHook;
 }
@@ -126,7 +170,10 @@ function buildReconcilingPosition(
 ): Position {
   return PositionSchema.parse({
     ...claimConfirmedPosition,
-    status: transitionPositionStatus(claimConfirmedPosition.status, "RECONCILING"),
+    status:
+      claimConfirmedPosition.status === "RECONCILING"
+        ? "RECONCILING"
+        : transitionPositionStatus(claimConfirmedPosition.status, "RECONCILING"),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: false,
@@ -140,7 +187,10 @@ function buildOpenPosition(
 ): Position {
   return PositionSchema.parse({
     ...reconcilingPosition,
-    status: transitionPositionStatus(reconcilingPosition.status, "OPEN"),
+    status:
+      reconcilingPosition.status === "OPEN"
+        ? "OPEN"
+        : transitionPositionStatus(reconcilingPosition.status, "OPEN"),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: false,
@@ -159,6 +209,330 @@ function buildReconciliationRequiredPosition(
     lastWriteActionId: actionId,
     needsReconciliation: true,
   });
+}
+
+function buildCompoundDeployPayload(input: {
+  template: z.infer<typeof CompoundDeployTemplateSchema>;
+  outputMint: string;
+  outputAmount: number;
+}): z.infer<typeof DeployActionRequestPayloadSchema> {
+  const amountBase = input.outputMint === input.template.baseMint
+    ? input.outputAmount
+    : 0;
+  const amountQuote = input.outputMint === input.template.quoteMint
+    ? input.outputAmount
+    : 0;
+  if (amountBase <= 0 && amountQuote <= 0) {
+    throw new Error("compound output mint must match pool baseMint or quoteMint");
+  }
+
+  return DeployActionRequestPayloadSchema.parse({
+    poolAddress: input.template.poolAddress,
+    tokenXMint: input.template.tokenXMint,
+    tokenYMint: input.template.tokenYMint,
+    baseMint: input.template.baseMint,
+    quoteMint: input.template.quoteMint,
+    amountBase,
+    amountQuote,
+    strategy: input.template.strategy,
+    rangeLowerBin: input.template.rangeLowerBin,
+    rangeUpperBin: input.template.rangeUpperBin,
+    initialActiveBin: input.template.initialActiveBin,
+    estimatedValueUsd: input.outputAmount,
+    ...(input.template.entryMetadata === undefined
+      ? {}
+      : { entryMetadata: input.template.entryMetadata }),
+  });
+}
+
+async function persistReconcilingAction(input: {
+  actionRepository: ActionRepository;
+  action: Action;
+  resultPayload: z.infer<typeof ClaimConfirmationPayloadSchema>;
+}): Promise<Action> {
+  const nextAction = {
+    ...input.action,
+    resultPayload: toJournalRecord(input.resultPayload),
+  } satisfies Action;
+  await input.actionRepository.upsert(nextAction);
+  return nextAction;
+}
+
+async function runClaimPostProcessing(input: {
+  latestAction: Action;
+  claimResult: z.infer<typeof ClaimConfirmationPayloadSchema>;
+  reconcilingPosition: Position;
+  actionRepository: ActionRepository;
+  stateRepository: StateRepository;
+  journalRepository: JournalRepository | undefined;
+  actionQueue: ActionQueue | undefined;
+  runtimeControlStore: RuntimeControlStore | undefined;
+  postClaimSwapHook: PostClaimSwapHook | undefined;
+  now: string;
+}): Promise<{
+  action: Action;
+  openPosition: Position;
+}> {
+  let workingAction = input.latestAction;
+  let claimResult = input.claimResult;
+
+  let simpleSwapResult = claimResult.swap ?? null;
+  if (
+    claimResult.autoCompound === null ||
+    claimResult.autoCompound === undefined
+  ) {
+    if (
+      input.postClaimSwapHook !== undefined &&
+      claimResult.autoSwapOutputMint !== null &&
+      claimResult.autoSwapOutputMint !== undefined &&
+      claimResult.claimedBaseAmount > 0 &&
+      simpleSwapResult === null
+    ) {
+      try {
+        simpleSwapResult =
+          await input.postClaimSwapHook(
+            PostClaimSwapInputSchema.parse({
+              actionId: workingAction.actionId,
+              wallet: workingAction.wallet,
+              position: input.reconcilingPosition,
+              claimedBaseAmount: claimResult.claimedBaseAmount,
+              outputMint: claimResult.autoSwapOutputMint,
+            }),
+          );
+      } catch (error) {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: input.now,
+          eventType: "CLAIM_AUTO_SWAP_FAILED",
+          actor: workingAction.requestedBy,
+          wallet: workingAction.wallet,
+          positionId: workingAction.positionId,
+          actionId: workingAction.actionId,
+          before: null,
+          after: null,
+          txIds: [],
+          resultStatus: "FAILED",
+          error: errorMessage(error, "claim auto swap failed"),
+        });
+        simpleSwapResult = {
+          status: "FAILED",
+          error: errorMessage(error, "claim auto swap failed"),
+        };
+      }
+
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        swap: simpleSwapResult,
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+    }
+  } else {
+    let compound = claimResult.autoCompound;
+
+    if (compound.phase === "PENDING_SWAP") {
+      compound = ClaimAutoCompoundStateSchema.parse({
+        ...compound,
+        phase: "SWAP_IN_PROGRESS",
+        error: null,
+      });
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        autoCompound: compound,
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+
+      if (input.postClaimSwapHook === undefined) {
+        compound = ClaimAutoCompoundStateSchema.parse({
+          ...compound,
+          phase: "FAILED",
+          error: "post claim swap hook unavailable for auto-compound",
+        });
+      } else {
+        try {
+          const swapResult = await input.postClaimSwapHook(
+            PostClaimSwapInputSchema.parse({
+              actionId: workingAction.actionId,
+              wallet: workingAction.wallet,
+              position: input.reconcilingPosition,
+              claimedBaseAmount: claimResult.claimedBaseAmount,
+              outputMint: compound.outputMint,
+            }),
+          );
+          compound = ClaimAutoCompoundStateSchema.parse({
+            ...compound,
+            phase: "SWAP_DONE",
+            swap: swapResult,
+            error: null,
+          });
+        } catch (error) {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: input.now,
+            eventType: "CLAIM_AUTO_COMPOUND_FAILED",
+            actor: workingAction.requestedBy,
+            wallet: workingAction.wallet,
+            positionId: workingAction.positionId,
+            actionId: workingAction.actionId,
+            before: null,
+            after: null,
+            txIds: [],
+            resultStatus: "FAILED",
+            error: errorMessage(error, "claim auto-compound swap failed"),
+          });
+          compound = ClaimAutoCompoundStateSchema.parse({
+            ...compound,
+            phase: "FAILED",
+            error: errorMessage(error, "claim auto-compound swap failed"),
+          });
+        }
+      }
+
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        autoCompound: compound,
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+    } else if (compound.phase === "SWAP_IN_PROGRESS") {
+      compound = ClaimAutoCompoundStateSchema.parse({
+        ...compound,
+        phase: "MANUAL_REVIEW_REQUIRED",
+        error: "compound swap status was left in progress after interruption",
+      });
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        autoCompound: compound,
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+    }
+
+    if (compound.phase === "SWAP_DONE") {
+      if (input.actionQueue === undefined) {
+        compound = ClaimAutoCompoundStateSchema.parse({
+          ...compound,
+          phase: "FAILED",
+          error: "action queue unavailable for auto-compound redeploy",
+        });
+      } else {
+        try {
+          const swapResult = z.record(z.string(), z.unknown()).parse(
+            compound.swap ?? {},
+          );
+          const outputAmount = z.number().nonnegative().parse(
+            swapResult.outputAmount,
+          );
+          const deployPayload = buildCompoundDeployPayload({
+            template: compound.deployTemplate,
+            outputMint: compound.outputMint,
+            outputAmount,
+          });
+          const deployAction = await requestDeploy({
+            actionQueue: input.actionQueue,
+            wallet: workingAction.wallet,
+            payload: deployPayload,
+            requestedBy: workingAction.requestedBy,
+            requestedAt: input.now,
+            idempotencyKey: `${workingAction.actionId}:AUTO_COMPOUND_DEPLOY`,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            ...(input.runtimeControlStore === undefined
+              ? {}
+              : { runtimeControlStore: input.runtimeControlStore }),
+          });
+          compound = ClaimAutoCompoundStateSchema.parse({
+            ...compound,
+            phase: "DEPLOY_QUEUED",
+            deployActionId: deployAction.actionId,
+            error: null,
+          });
+        } catch (error) {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: input.now,
+            eventType: "CLAIM_AUTO_COMPOUND_FAILED",
+            actor: workingAction.requestedBy,
+            wallet: workingAction.wallet,
+            positionId: workingAction.positionId,
+            actionId: workingAction.actionId,
+            before: null,
+            after: null,
+            txIds: [],
+            resultStatus: "FAILED",
+            error: errorMessage(error, "claim auto-compound deploy enqueue failed"),
+          });
+          compound = ClaimAutoCompoundStateSchema.parse({
+            ...compound,
+            phase: "FAILED",
+            error: errorMessage(error, "claim auto-compound deploy enqueue failed"),
+          });
+        }
+      }
+
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        autoCompound: compound,
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+    }
+  }
+
+  const openPosition = buildOpenPosition(
+    input.reconcilingPosition,
+    workingAction.actionId,
+    input.now,
+  );
+  await input.stateRepository.upsert(openPosition);
+
+  const doneAction = {
+    ...workingAction,
+    status: transitionActionStatus(workingAction.status, "DONE"),
+    resultPayload: toJournalRecord(claimResult),
+    completedAt: input.now,
+    error: null,
+  } satisfies Action;
+  await input.actionRepository.upsert(doneAction);
+
+  await appendJournalEvent(input.journalRepository, {
+    timestamp: input.now,
+    eventType: "CLAIM_FINALIZED",
+    actor: workingAction.requestedBy,
+    wallet: workingAction.wallet,
+    positionId: workingAction.positionId,
+    actionId: workingAction.actionId,
+    before: toJournalRecord({
+      action: workingAction,
+      position: input.reconcilingPosition,
+    }),
+    after: toJournalRecord({
+      action: doneAction,
+      position: openPosition,
+    }),
+    txIds: doneAction.txIds,
+    resultStatus: doneAction.status,
+    error: null,
+  });
+
+  return {
+    action: doneAction,
+    openPosition,
+  };
 }
 
 export async function finalizeClaimFees(
@@ -187,13 +561,14 @@ export async function finalizeClaimFees(
     };
   }
 
-  if (action.status !== "WAITING_CONFIRMATION") {
+  if (
+    action.status !== "WAITING_CONFIRMATION" &&
+    action.status !== "RECONCILING"
+  ) {
     throw new Error(
-      `Claim finalization expected WAITING_CONFIRMATION, received ${action.status}`,
+      `Claim finalization expected WAITING_CONFIRMATION or RECONCILING, received ${action.status}`,
     );
   }
-
-  const claimResult = ClaimConfirmationPayloadSchema.parse(action.resultPayload);
 
   return walletLock.withLock(action.wallet, () =>
     positionLock.withLock(action.positionId, async () => {
@@ -217,199 +592,180 @@ export async function finalizeClaimFees(
         };
       }
 
-      if (latestAction.status !== "WAITING_CONFIRMATION") {
+      if (
+        latestAction.status !== "WAITING_CONFIRMATION" &&
+        latestAction.status !== "RECONCILING"
+      ) {
         throw new Error(
-          `Claim finalization expected WAITING_CONFIRMATION, received ${latestAction.status}`,
+          `Claim finalization expected WAITING_CONFIRMATION or RECONCILING, received ${latestAction.status}`,
         );
       }
 
-      const claimingPosition = await input.stateRepository.get(latestAction.positionId);
-      const confirmedPosition = await input.dlmmGateway.getPosition(latestAction.positionId);
+      const claimResult = ClaimConfirmationPayloadSchema.parse(latestAction.resultPayload);
+      let reconcilingPosition: Position;
 
-      if (
-        claimingPosition !== null &&
-        claimingPosition.status === "OPEN" &&
-        confirmedPosition !== null &&
-        confirmedPosition.status === "OPEN"
-      ) {
-        const doneAction = {
-          ...latestAction,
-          status: transitionActionStatus(latestAction.status, "DONE"),
-          completedAt: now,
-          error: null,
-        } satisfies Action;
-        await input.actionRepository.upsert(doneAction);
-        return {
-          action: doneAction,
-          position: claimingPosition,
-          outcome: "FINALIZED",
-        };
-      }
+      if (latestAction.status === "WAITING_CONFIRMATION") {
+        const claimingPosition = await input.stateRepository.get(latestAction.positionId);
+        const confirmedPosition = await input.dlmmGateway.getPosition(latestAction.positionId);
 
-      if (
-        claimingPosition === null ||
-        claimingPosition.status !== "CLAIMING" ||
-        confirmedPosition === null ||
-        confirmedPosition.status !== "CLAIM_CONFIRMED"
-      ) {
-        const sourcePosition = claimingPosition ?? confirmedPosition;
-        if (sourcePosition === null) {
-          throw new Error(
-            `Claim finalization cannot build reconciliation state for ${latestAction.positionId}`,
-          );
+        if (
+          claimingPosition !== null &&
+          claimingPosition.status === "OPEN" &&
+          confirmedPosition !== null &&
+          confirmedPosition.status === "OPEN"
+        ) {
+          const reconcilingAction = {
+            ...latestAction,
+            status: transitionActionStatus(latestAction.status, "RECONCILING"),
+          } satisfies Action;
+          await input.actionRepository.upsert(reconcilingAction);
+          const resumed = await runClaimPostProcessing({
+            latestAction: reconcilingAction,
+            claimResult,
+            reconcilingPosition: claimingPosition,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            journalRepository: input.journalRepository,
+            actionQueue: input.actionQueue,
+            runtimeControlStore: input.runtimeControlStore,
+            postClaimSwapHook: input.postClaimSwapHook,
+            now,
+          });
+          return {
+            action: resumed.action,
+            position: resumed.openPosition,
+            outcome: "FINALIZED" as const,
+          };
         }
 
-        const reconciliationPosition = buildReconciliationRequiredPosition(
-          sourcePosition,
-          latestAction.actionId,
-          now,
-        );
-        await input.stateRepository.upsert(reconciliationPosition);
-
-        const timedOutAction = {
-          ...latestAction,
-          status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
-          error:
-            claimingPosition === null
-              ? `Claim finalization requires reconciliation because local claiming position is missing for ${latestAction.positionId}`
-              : claimingPosition.status !== "CLAIMING"
-                ? `Claim finalization requires reconciliation because local position status is ${claimingPosition.status} for ${latestAction.positionId}`
-                : confirmedPosition === null
-                  ? `Claim confirmation not found for position ${latestAction.positionId}`
-                  : `Claim confirmation returned non-claim-confirmed status ${confirmedPosition.status} for ${latestAction.positionId}`,
-          completedAt: now,
-        } satisfies Action;
-        await input.actionRepository.upsert(timedOutAction);
-
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "CLAIM_TIMED_OUT",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestAction.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: claimingPosition,
-          }),
-          after: toJournalRecord({
-            action: timedOutAction,
-            position: reconciliationPosition,
-          }),
-          txIds: latestAction.txIds,
-          resultStatus: timedOutAction.status,
-          error: timedOutAction.error,
-        });
-
-        return {
-          action: timedOutAction,
-          position: reconciliationPosition,
-          outcome: "TIMED_OUT",
-        };
-      }
-
-      const claimConfirmedPosition = buildClaimConfirmedPosition({
-        confirmedPosition,
-        claimingPosition,
-        actionId: latestAction.actionId,
-        reason: claimResult.reason,
-        now,
-      });
-      const reconcilingPosition = buildReconcilingPosition(
-        claimConfirmedPosition,
-        latestAction.actionId,
-        now,
-      );
-      const reconcilingAction = {
-        ...latestAction,
-        status: transitionActionStatus(latestAction.status, "RECONCILING"),
-      } satisfies Action;
-
-      await input.stateRepository.upsert(reconcilingPosition);
-      await input.actionRepository.upsert(reconcilingAction);
-
-      let swapResult: Record<string, unknown> | null = null;
-      if (
-        input.postClaimSwapHook !== undefined &&
-        claimResult.autoSwapOutputMint !== null &&
-        claimResult.autoSwapOutputMint !== undefined &&
-        claimResult.claimedBaseAmount > 0
-      ) {
-        try {
-          swapResult =
-            await input.postClaimSwapHook(
-              PostClaimSwapInputSchema.parse({
-                actionId: reconcilingAction.actionId,
-                wallet: reconcilingAction.wallet,
-                position: reconcilingPosition,
-                claimedBaseAmount: claimResult.claimedBaseAmount,
-                outputMint: claimResult.autoSwapOutputMint,
-              }),
+        if (
+          claimingPosition === null ||
+          claimingPosition.status !== "CLAIMING" ||
+          confirmedPosition === null ||
+          confirmedPosition.status !== "CLAIM_CONFIRMED"
+        ) {
+          const sourcePosition = claimingPosition ?? confirmedPosition;
+          if (sourcePosition === null) {
+            throw new Error(
+              `Claim finalization cannot build reconciliation state for ${latestAction.positionId}`,
             );
-        } catch (error) {
+          }
+
+          const reconciliationPosition = buildReconciliationRequiredPosition(
+            sourcePosition,
+            latestAction.actionId,
+            now,
+          );
+          await input.stateRepository.upsert(reconciliationPosition);
+
+          const timedOutAction = {
+            ...latestAction,
+            status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
+            error:
+              claimingPosition === null
+                ? `Claim finalization requires reconciliation because local claiming position is missing for ${latestAction.positionId}`
+                : claimingPosition.status !== "CLAIMING"
+                  ? `Claim finalization requires reconciliation because local position status is ${claimingPosition.status} for ${latestAction.positionId}`
+                  : confirmedPosition === null
+                    ? `Claim confirmation not found for position ${latestAction.positionId}`
+                    : `Claim confirmation returned non-claim-confirmed status ${confirmedPosition.status} for ${latestAction.positionId}`,
+            completedAt: now,
+          } satisfies Action;
+          await input.actionRepository.upsert(timedOutAction);
+
           await appendJournalEvent(input.journalRepository, {
             timestamp: now,
-            eventType: "CLAIM_AUTO_SWAP_FAILED",
+            eventType: "CLAIM_TIMED_OUT",
             actor: latestAction.requestedBy,
             wallet: latestAction.wallet,
             positionId: latestAction.positionId,
             actionId: latestAction.actionId,
-            before: null,
-            after: null,
-            txIds: [],
-            resultStatus: "FAILED",
-            error: errorMessage(error, "claim auto swap failed"),
+            before: toJournalRecord({
+              action: latestAction,
+              position: claimingPosition,
+            }),
+            after: toJournalRecord({
+              action: timedOutAction,
+              position: reconciliationPosition,
+            }),
+            txIds: latestAction.txIds,
+            resultStatus: timedOutAction.status,
+            error: timedOutAction.error,
           });
-          swapResult = {
-            status: "FAILED",
-            error: errorMessage(error, "claim auto swap failed"),
+
+          return {
+            action: timedOutAction,
+            position: reconciliationPosition,
+            outcome: "TIMED_OUT",
           };
         }
+
+        const claimConfirmedPosition = buildClaimConfirmedPosition({
+          confirmedPosition,
+          claimingPosition,
+          actionId: latestAction.actionId,
+          reason: claimResult.reason,
+          now,
+        });
+        reconcilingPosition = buildReconcilingPosition(
+          claimConfirmedPosition,
+          latestAction.actionId,
+          now,
+        );
+        const reconcilingAction = {
+          ...latestAction,
+          status: transitionActionStatus(latestAction.status, "RECONCILING"),
+        } satisfies Action;
+        await input.stateRepository.upsert(reconcilingPosition);
+        await input.actionRepository.upsert(reconcilingAction);
+        const finalized = await runClaimPostProcessing({
+          latestAction: reconcilingAction,
+          claimResult,
+          reconcilingPosition,
+          actionRepository: input.actionRepository,
+          stateRepository: input.stateRepository,
+          journalRepository: input.journalRepository,
+          actionQueue: input.actionQueue,
+          runtimeControlStore: input.runtimeControlStore,
+          postClaimSwapHook: input.postClaimSwapHook,
+          now,
+        });
+        return {
+          action: finalized.action,
+          position: finalized.openPosition,
+          outcome: "FINALIZED",
+        };
       }
 
-      const openPosition = buildOpenPosition(
+      const currentPosition = await input.stateRepository.get(latestAction.positionId);
+      if (currentPosition === null) {
+        throw new Error(`Claim reconciling position missing for ${latestAction.positionId}`);
+      }
+      reconcilingPosition = currentPosition;
+      if (
+        reconcilingPosition.status !== "RECONCILING" &&
+        reconcilingPosition.status !== "OPEN"
+      ) {
+        throw new Error(
+          `Claim reconciliation resume expected RECONCILING/OPEN position, received ${reconcilingPosition.status}`,
+        );
+      }
+
+      const resumed = await runClaimPostProcessing({
+        latestAction,
+        claimResult,
         reconcilingPosition,
-        latestAction.actionId,
+        actionRepository: input.actionRepository,
+        stateRepository: input.stateRepository,
+        journalRepository: input.journalRepository,
+        actionQueue: input.actionQueue,
+        runtimeControlStore: input.runtimeControlStore,
+        postClaimSwapHook: input.postClaimSwapHook,
         now,
-      );
-      await input.stateRepository.upsert(openPosition);
-
-      const doneAction = {
-        ...reconcilingAction,
-        status: transitionActionStatus(reconcilingAction.status, "DONE"),
-        resultPayload: toJournalRecord({
-          ...claimResult,
-          swap: swapResult,
-        }),
-        completedAt: now,
-        error: null,
-      } satisfies Action;
-      await input.actionRepository.upsert(doneAction);
-
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "CLAIM_FINALIZED",
-        actor: latestAction.requestedBy,
-        wallet: latestAction.wallet,
-        positionId: latestAction.positionId,
-        actionId: latestAction.actionId,
-        before: toJournalRecord({
-          action: latestAction,
-          position: claimingPosition,
-        }),
-        after: toJournalRecord({
-          action: doneAction,
-          position: openPosition,
-          swap: swapResult,
-        }),
-        txIds: doneAction.txIds,
-        resultStatus: doneAction.status,
-        error: null,
       });
-
       return {
-        action: doneAction,
-        position: openPosition,
+        action: resumed.action,
+        position: resumed.openPosition,
         outcome: "FINALIZED",
       };
     }),

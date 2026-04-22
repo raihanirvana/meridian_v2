@@ -111,10 +111,14 @@ export const UserConfigSchema = z
         swapOutputMint: z.string().min(1).default(
           "So11111111111111111111111111111111111111112",
         ),
+        autoCompoundFees: z.boolean().default(false),
+        compoundToSide: z.enum(["base", "quote"]).default("quote"),
       })
       .default({
         autoSwapAfterClaim: false,
         swapOutputMint: "So11111111111111111111111111111111111111112",
+        autoCompoundFees: false,
+        compoundToSide: "quote",
       }),
     poolMemory: z
       .object({
@@ -189,6 +193,14 @@ export const UserConfigSchema = z
           message: "peak hour windows must use valid 24h HH:MM values",
         });
       }
+    }
+
+    if (config.claim.autoSwapAfterClaim && config.claim.autoCompoundFees) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["claim", "autoCompoundFees"],
+        message: "cannot be enabled together with autoSwapAfterClaim",
+      });
     }
   });
 

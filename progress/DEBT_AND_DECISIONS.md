@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-22 (Batch 20 enrichment, screening runtime, and claim auto-swap applied)
+Last updated: 2026-04-23 (Batch 21 trailing take-profit and claim auto-compound applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -275,6 +275,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Revisit: saat operator/manual timestamp surface diperluas atau sebelum ULID helper dipakai lebih luas.
 
 ## Design Decisions
+- Batch 21 memilih `claim succeeded, compound failed` sebagai outcome yang sah; kegagalan swap/enqueue deploy tidak membatalkan finalisasi claim yang sudah confirmed on-chain
+  Rationale: setelah claim on-chain confirmed, mencoba memaksa seluruh action menjadi `FAILED` justru mengaburkan fakta bahwa fee sebenarnya sudah berhasil diklaim. V2 lebih memilih claim ditutup `DONE` dengan metadata compound `FAILED` atau `MANUAL_REVIEW_REQUIRED`, lalu follow-up compound ditangani terpisah.
+  Tradeoff: operator harus membaca result payload/journal untuk tahu bahwa claim selesai tetapi compound tidak ikut selesai, karena status action induk sendiri tetap `DONE`.
+
 - Batch 17.2 menstandarkan naming screening threshold ke istilah PRD yang baru: `minFeeActiveTvlRatio` dan `minOrganic`
   Rationale: spec 17.2 dan heuristik repo lama memakai istilah itu secara eksplisit; menyelaraskan naming sekarang lebih murah daripada membawa alias lama (`minFeeToTvlRatio` / `minOrganicScore`) ke runtime policy store dan evolution layer.
   Tradeoff: config fixture, tests, dan operator docs harus ikut bergerak ke naming baru, tetapi surface screening menjadi lebih konsisten dengan PRD 17.2+.

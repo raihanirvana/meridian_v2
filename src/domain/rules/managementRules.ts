@@ -28,6 +28,9 @@ export const ManagementPolicySchema = z
     stopLossUsd: z.number().nonnegative(),
     maxHoldMinutes: z.number().int().nonnegative(),
     maxOutOfRangeMinutes: z.number().int().nonnegative(),
+    trailingTakeProfitEnabled: z.boolean().optional(),
+    trailingTriggerPct: z.number().nonnegative().optional(),
+    trailingDropPct: z.number().nonnegative().optional(),
     claimFeesThresholdUsd: z.number().nonnegative(),
     partialCloseEnabled: z.boolean(),
     partialCloseProfitTargetUsd: z.number().nonnegative(),
@@ -116,6 +119,36 @@ function buildResult(input: {
   });
 }
 
+function trailingTakeProfitTriggered(input: ManagementEvaluationInput): boolean {
+  if (input.policy.trailingTakeProfitEnabled !== true) {
+    return false;
+  }
+
+  const triggerPct = input.policy.trailingTriggerPct ?? 0;
+  const dropPct = input.policy.trailingDropPct ?? 0;
+  if (triggerPct <= 0 || dropPct <= 0) {
+    return false;
+  }
+
+  const estimatedInitialValueUsd = Math.max(
+    input.position.currentValueUsd - input.position.unrealizedPnlUsd,
+    0,
+  );
+  if (estimatedInitialValueUsd <= 0) {
+    return false;
+  }
+
+  const currentPnlPct =
+    (input.position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
+  const peakPnlPct = input.position.peakPnlPct ?? currentPnlPct;
+
+  if (peakPnlPct < triggerPct) {
+    return false;
+  }
+
+  return currentPnlPct <= peakPnlPct - dropPct;
+}
+
 export function evaluateManagementAction(
   rawInput: ManagementEvaluationInput,
 ): ManagementEvaluationResult {
@@ -199,6 +232,27 @@ export function evaluateManagementAction(
       triggerReasons: input.position.needsReconciliation
         ? ["position.needsReconciliation is true"]
         : ["management snapshot is incomplete"],
+    });
+  }
+
+  if (trailingTakeProfitTriggered(input)) {
+    const estimatedInitialValueUsd = Math.max(
+      input.position.currentValueUsd - input.position.unrealizedPnlUsd,
+      0,
+    );
+    const currentPnlPct =
+      estimatedInitialValueUsd <= 0
+        ? 0
+        : (input.position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
+    const peakPnlPct = input.position.peakPnlPct ?? currentPnlPct;
+    return buildResult({
+      action: "CLOSE",
+      priority: "HARD_EXIT",
+      reason: "Trailing take profit exit triggered",
+      triggerReasons: [
+        `peak pnl reached ${peakPnlPct.toFixed(2)}%`,
+        `current pnl retraced to ${currentPnlPct.toFixed(2)}%`,
+      ],
     });
   }
 

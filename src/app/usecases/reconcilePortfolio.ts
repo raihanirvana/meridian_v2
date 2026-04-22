@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DeployLiquidityResultSchema, type DlmmGateway } from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
@@ -26,6 +27,7 @@ import {
   type PostClaimSwapHook,
 } from "./finalizeClaimFees.js";
 import { confirmDeployAction } from "./processDeployAction.js";
+import type { ActionQueue } from "../services/ActionQueue.js";
 
 const TRACKED_SNAPSHOT_STATUSES = new Set<Position["status"]>([
   "DEPLOY_REQUESTED",
@@ -63,7 +65,9 @@ export interface ReconcilePortfolioInput {
   actionRepository: ActionRepository;
   stateRepository: StateRepository;
   dlmmGateway: DlmmGateway;
+  actionQueue?: ActionQueue;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
   walletLock?: WalletLock;
   positionLock?: PositionLock;
   now?: () => string;
@@ -80,7 +84,11 @@ interface RecoverReconcilingActionInput {
   action: Action;
   actionRepository: ActionRepository;
   stateRepository: StateRepository;
+  dlmmGateway: DlmmGateway;
+  actionQueue?: ActionQueue;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
+  postClaimSwapHook?: PostClaimSwapHook;
   walletLock: WalletLock;
   positionLock: PositionLock;
   now: string;
@@ -240,6 +248,40 @@ async function recoverReconcilingAction(
         actionId: latestAction.actionId,
         outcome: "RECONCILED_OK",
         detail: `Action already moved to ${latestAction.status} before startup recovery ran`,
+      });
+    }
+
+    if (latestAction.type === "CLAIM_FEES") {
+      const result = await finalizeClaimFees({
+        actionId: latestAction.actionId,
+        actionRepository: input.actionRepository,
+        stateRepository: input.stateRepository,
+        dlmmGateway: input.dlmmGateway,
+        walletLock: input.walletLock,
+        positionLock: input.positionLock,
+        now: () => input.now,
+        ...(input.actionQueue === undefined
+          ? {}
+          : { actionQueue: input.actionQueue }),
+        ...(input.runtimeControlStore === undefined
+          ? {}
+          : { runtimeControlStore: input.runtimeControlStore }),
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        ...(input.postClaimSwapHook === undefined
+          ? {}
+          : { postClaimSwapHook: input.postClaimSwapHook }),
+      });
+
+      return createRecord({
+        scope: "ACTION",
+        entityId: result.action.actionId,
+        wallet: result.action.wallet,
+        positionId: result.position?.positionId ?? result.action.positionId,
+        actionId: result.action.actionId,
+        outcome: mapClaimReconciliationOutcome(result.outcome),
+        detail: `Claim-fees reconciling recovery finished with ${result.outcome}`,
       });
     }
 
@@ -422,6 +464,12 @@ export async function reconcilePortfolio(
           walletLock,
           positionLock,
           now: () => now,
+          ...(input.actionQueue === undefined
+            ? {}
+            : { actionQueue: input.actionQueue }),
+          ...(input.runtimeControlStore === undefined
+            ? {}
+            : { runtimeControlStore: input.runtimeControlStore }),
           ...(input.journalRepository === undefined
             ? {}
             : { journalRepository: input.journalRepository }),
@@ -484,12 +532,22 @@ export async function reconcilePortfolio(
           action,
           actionRepository: input.actionRepository,
           stateRepository: input.stateRepository,
+          dlmmGateway: input.dlmmGateway,
+          ...(input.actionQueue === undefined
+            ? {}
+            : { actionQueue: input.actionQueue }),
           walletLock,
           positionLock,
           now,
           ...(input.journalRepository === undefined
             ? {}
             : { journalRepository: input.journalRepository }),
+          ...(input.runtimeControlStore === undefined
+            ? {}
+            : { runtimeControlStore: input.runtimeControlStore }),
+          ...(input.postClaimSwapHook === undefined
+            ? {}
+            : { postClaimSwapHook: input.postClaimSwapHook }),
         }),
       );
     } catch (error) {

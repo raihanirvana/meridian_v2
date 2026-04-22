@@ -78,6 +78,28 @@ function deriveSnapshotPnlPct(position: Position): number {
   return (position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
 }
 
+function maybeRefreshPeakPnl(input: {
+  position: Position;
+  now: string;
+  policy: ManagementPolicy;
+}): Position {
+  if (input.policy.trailingTakeProfitEnabled !== true) {
+    return input.position;
+  }
+
+  const currentPnlPct = deriveSnapshotPnlPct(input.position);
+  const previousPeak = input.position.peakPnlPct ?? null;
+  if (previousPeak !== null && currentPnlPct <= previousPeak) {
+    return input.position;
+  }
+
+  return {
+    ...input.position,
+    peakPnlPct: currentPnlPct,
+    peakPnlRecordedAt: input.now,
+  };
+}
+
 export type ManagementCycleResultStatus =
   | "NO_ACTION"
   | "RECONCILE_ONLY"
@@ -137,6 +159,8 @@ export interface RunManagementCycleInput {
   claimConfig?: {
     autoSwapAfterClaim: boolean;
     swapOutputMint: string;
+    autoCompoundFees: boolean;
+    compoundToSide: "base" | "quote";
   };
   previousPortfolioState?: PortfolioState | null;
   now?: () => string;
@@ -204,6 +228,15 @@ export async function runManagementCycle(
   const positionResults: ManagementCyclePositionResult[] = [];
 
   for (const position of positions) {
+    const managedPosition = maybeRefreshPeakPnl({
+      position,
+      now,
+      policy: input.managementPolicy,
+    });
+    if (managedPosition !== position) {
+      await input.stateRepository.upsert(managedPosition);
+    }
+
     const portfolio = await buildPortfolioState({
       wallet: input.wallet,
       minReserveUsd: input.riskPolicy.minReserveUsd,
@@ -224,7 +257,7 @@ export async function runManagementCycle(
       now,
     });
     const signals = await input.signalProvider({
-      position,
+      position: managedPosition,
       portfolio,
       now,
     });
@@ -237,24 +270,24 @@ export async function runManagementCycle(
         ...(input.journalRepository === undefined
           ? {}
           : { journalRepository: input.journalRepository }),
-        poolAddress: position.poolAddress,
-        name: position.poolAddress,
-        baseMint: position.baseMint,
+        poolAddress: managedPosition.poolAddress,
+        name: managedPosition.poolAddress,
+        baseMint: managedPosition.baseMint,
         snapshot: {
           ts: now,
-          positionId: position.positionId,
-          pnlPct: deriveSnapshotPnlPct(position),
-          pnlUsd: position.unrealizedPnlUsd,
-          inRange: isPositionInRange(position),
+          positionId: managedPosition.positionId,
+          pnlPct: deriveSnapshotPnlPct(managedPosition),
+          pnlUsd: managedPosition.unrealizedPnlUsd,
+          inRange: isPositionInRange(managedPosition),
           unclaimedFeesUsd: signals.claimableFeesUsd,
-          minutesOutOfRange: diffMinutes(position.outOfRangeSince, now),
-          ageMinutes: diffMinutes(position.openedAt, now),
+          minutesOutOfRange: diffMinutes(managedPosition.outOfRangeSince, now),
+          ageMinutes: diffMinutes(managedPosition.openedAt, now),
         },
       });
     }
     const evaluation = evaluateManagementAction({
       now,
-      position,
+      position: managedPosition,
       portfolio,
       signals,
       policy: input.managementPolicy,
@@ -263,7 +296,7 @@ export async function runManagementCycle(
     if (evaluation.action === "HOLD") {
       const aiAdvisory = advisoryBypassForDeterministicResult(aiMode);
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "NO_ACTION",
         reason: evaluation.reason,
@@ -281,7 +314,7 @@ export async function runManagementCycle(
     if (evaluation.action === "RECONCILE_ONLY") {
       const aiAdvisory = advisoryBypassForDeterministicResult(aiMode);
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "RECONCILE_ONLY",
         reason: evaluation.reason,
@@ -299,7 +332,7 @@ export async function runManagementCycle(
     const aiAdvisory = await adviseManagementDecision({
       aiMode,
       evaluation,
-      position,
+      position: managedPosition,
       triggerReasons: evaluation.triggerReasons,
       lessonPromptService:
         input.lessonPromptService ?? missingLessonPromptService,
@@ -313,7 +346,7 @@ export async function runManagementCycle(
         eventType: "MANAGEMENT_ACTION_UNSUPPORTED",
         actor: requestedBy,
         wallet: input.wallet,
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         actionId: null,
         before: null,
         after: {
@@ -327,7 +360,7 @@ export async function runManagementCycle(
       });
 
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "SKIPPED_UNSUPPORTED",
         reason: evaluation.reason,
@@ -345,7 +378,7 @@ export async function runManagementCycle(
     if (evaluation.action === "CLAIM_FEES") {
       if (input.dryRun) {
         positionResults.push({
-          positionId: position.positionId,
+          positionId: managedPosition.positionId,
           managementAction: evaluation.action,
           status: "DRY_RUN",
           reason: evaluation.reason,
@@ -364,10 +397,21 @@ export async function runManagementCycle(
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
         wallet: input.wallet,
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         payload: {
           reason: evaluation.reason,
-          ...(input.claimConfig?.autoSwapAfterClaim === true
+          ...(input.claimConfig?.autoCompoundFees === true
+            ? {
+                autoCompound: {
+                  outputMint:
+                    input.claimConfig.compoundToSide === "base"
+                      ? managedPosition.baseMint
+                      : managedPosition.quoteMint,
+                },
+              }
+            : {}),
+          ...(input.claimConfig?.autoCompoundFees !== true &&
+          input.claimConfig?.autoSwapAfterClaim === true
             ? { autoSwapOutputMint: input.claimConfig.swapOutputMint }
             : {}),
         },
@@ -379,7 +423,7 @@ export async function runManagementCycle(
       });
 
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "DISPATCHED",
         reason: evaluation.reason,
@@ -397,7 +441,7 @@ export async function runManagementCycle(
     if (evaluation.action === "CLOSE") {
       if (input.dryRun) {
         positionResults.push({
-          positionId: position.positionId,
+          positionId: managedPosition.positionId,
           managementAction: evaluation.action,
           status: "DRY_RUN",
           reason: evaluation.reason,
@@ -416,7 +460,7 @@ export async function runManagementCycle(
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
         wallet: input.wallet,
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         payload: {
           reason: evaluation.reason,
         },
@@ -428,7 +472,7 @@ export async function runManagementCycle(
       });
 
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "DISPATCHED",
         reason: evaluation.reason,
@@ -447,7 +491,7 @@ export async function runManagementCycle(
       input.rebalancePlanner === undefined
         ? null
         : await input.rebalancePlanner({
-            position,
+            position: managedPosition,
             portfolio,
             now,
             evaluation,
@@ -460,7 +504,7 @@ export async function runManagementCycle(
         eventType: "MANAGEMENT_REBALANCE_SKIPPED",
         actor: requestedBy,
         wallet: input.wallet,
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         actionId: null,
         before: null,
         after: {
@@ -474,7 +518,7 @@ export async function runManagementCycle(
       });
 
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "SKIPPED_UNSUPPORTED",
         reason: evaluation.reason,
@@ -502,7 +546,7 @@ export async function runManagementCycle(
         proposedPoolAddress: rebalancePayload.redeploy.poolAddress,
         proposedTokenMints: proposedTokenMints(rebalancePayload),
         recentNewDeploys,
-        position,
+        position: managedPosition,
       });
       const riskResult: PortfolioRiskEvaluationResult = {
         ...baseRiskResult,
@@ -512,7 +556,7 @@ export async function runManagementCycle(
         blockingRules: ["manual circuit breaker is active"],
       };
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "BLOCKED_BY_RISK",
         reason: evaluation.reason,
@@ -536,12 +580,12 @@ export async function runManagementCycle(
       proposedPoolAddress: rebalancePayload.redeploy.poolAddress,
       proposedTokenMints: proposedTokenMints(rebalancePayload),
       recentNewDeploys,
-      position,
+      position: managedPosition,
     });
 
     if (!riskResult.allowed) {
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "BLOCKED_BY_RISK",
         reason: evaluation.reason,
@@ -558,7 +602,7 @@ export async function runManagementCycle(
 
     if (input.dryRun) {
       positionResults.push({
-        positionId: position.positionId,
+        positionId: managedPosition.positionId,
         managementAction: evaluation.action,
         status: "DRY_RUN",
         reason: evaluation.reason,
@@ -577,7 +621,7 @@ export async function runManagementCycle(
       actionQueue: input.actionQueue,
       stateRepository: input.stateRepository,
       wallet: input.wallet,
-      positionId: position.positionId,
+      positionId: managedPosition.positionId,
       payload: rebalancePayload,
       requestedBy,
       requestedAt: now,
@@ -587,7 +631,7 @@ export async function runManagementCycle(
     });
 
     positionResults.push({
-      positionId: position.positionId,
+      positionId: managedPosition.positionId,
       managementAction: evaluation.action,
       status: "DISPATCHED",
       reason: evaluation.reason,

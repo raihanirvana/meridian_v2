@@ -38,6 +38,8 @@ export const PositionSchema = z
     realizedPnlUsd: z.number(),
     unrealizedPnlBase: z.number(),
     unrealizedPnlUsd: z.number(),
+    peakPnlPct: z.number().nullable().optional(),
+    peakPnlRecordedAt: TimestampSchema.nullable().optional(),
     rebalanceCount: z.number().int().nonnegative(),
     partialCloseCount: z.number().int().nonnegative(),
     strategy: z.string().min(1),
@@ -85,6 +87,18 @@ export const PositionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["outOfRangeSince"],
         message: "must be null when activeBin is inside the current range",
+      });
+    }
+
+    if (
+      position.peakPnlPct !== undefined &&
+      position.peakPnlPct !== null &&
+      position.peakPnlRecordedAt === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["peakPnlRecordedAt"],
+        message: "must be present when peakPnlPct is set",
       });
     }
   })

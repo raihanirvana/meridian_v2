@@ -11,6 +11,13 @@ export const ClaimFeesActionRequestPayloadSchema = z
   .object({
     reason: z.string().min(1),
     autoSwapOutputMint: z.string().min(1).nullable().optional(),
+    autoCompound: z
+      .object({
+        outputMint: z.string().min(1),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 

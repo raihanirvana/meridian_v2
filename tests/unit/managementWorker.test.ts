@@ -109,6 +109,9 @@ function buildManagementPolicy(
     stopLossUsd: 50,
     maxHoldMinutes: 1440,
     maxOutOfRangeMinutes: 240,
+    trailingTakeProfitEnabled: false,
+    trailingTriggerPct: 3,
+    trailingDropPct: 1.5,
     claimFeesThresholdUsd: 20,
     partialCloseEnabled: false,
     partialCloseProfitTargetUsd: 100,
@@ -432,6 +435,8 @@ describe("management worker", () => {
       claimConfig: {
         autoSwapAfterClaim: false,
         swapOutputMint: "So11111111111111111111111111111111111111112",
+        autoCompoundFees: false,
+        compoundToSide: "quote",
       },
       signalProvider: () => ({
         forcedManualClose: false,
@@ -452,5 +457,134 @@ describe("management worker", () => {
     const actions = await actionRepository.list();
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("CLAIM_FEES");
+  });
+
+  it("persists peak pnl state and later closes on trailing retrace", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(
+      buildPosition({
+        currentValueUsd: 110,
+        unrealizedPnlUsd: 10,
+      }),
+    );
+
+    await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        trailingTakeProfitEnabled: true,
+        trailingTriggerPct: 8,
+        trailingDropPct: 2,
+        claimFeesThresholdUsd: 999,
+      }),
+      signalProvider: () => ({
+        forcedManualClose: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      journalRepository,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    const persistedPeak = await stateRepository.get("pos_001");
+    expect(persistedPeak?.peakPnlPct).toBe(10);
+
+    await stateRepository.upsert({
+      ...buildPosition({
+        currentValueUsd: 107,
+        unrealizedPnlUsd: 7,
+      }),
+      peakPnlPct: persistedPeak?.peakPnlPct ?? null,
+      peakPnlRecordedAt: persistedPeak?.peakPnlRecordedAt ?? null,
+    });
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:05:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:05:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        trailingTakeProfitEnabled: true,
+        trailingTriggerPct: 8,
+        trailingDropPct: 2,
+        claimFeesThresholdUsd: 999,
+      }),
+      signalProvider: () => ({
+        forcedManualClose: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      journalRepository,
+      now: () => "2026-04-21T12:05:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.managementAction).toBe("CLOSE");
+    expect(result.positionResults[0]?.status).toBe("DISPATCHED");
   });
 });

@@ -117,6 +117,8 @@ function buildPendingDeployPosition(input: {
     realizedPnlUsd: 0,
     unrealizedPnlBase: 0,
     unrealizedPnlUsd: 0,
+    peakPnlPct: null,
+    peakPnlRecordedAt: null,
     rebalanceCount: 0,
     partialCloseCount: 0,
     strategy: input.payload.strategy,

@@ -1,14 +1,13 @@
 # Meridian V2 Progress
 
-Last updated: 2026-04-22
-Current batch: Batch 20 - Enrichment, scheduling, and operator UX
+Last updated: 2026-04-23
+Current batch: Batch 21 - Advanced exits and compounding automation
 Status: Complete
 
-## Scope Batch 20
-- Add adaptive screening intervals from configurable peak-hour windows and timezone-aware evaluation
-- Add `minVolumeTrendPct` and token narrative enrichment to screening context
-- Add briefing text rendering with optional emoji in reporting worker
-- Add queue-safe `CLAIM_FEES -> optional swap` orchestration without breaking lifecycle legality
+## Scope Batch 21
+- Add trailing take profit with persisted peak-PnL state on positions
+- Add queue-safe auto-compound on claim finalization (`CLAIM_FEES -> swap -> enqueue DEPLOY same pool`)
+- Make claim finalization/reconciliation able to resume compounding safely after interruption
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -598,16 +597,11 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 20 — enrichment + UX
+- Batch 22 — portfolio/operator polish atau parity lanjutan
 - Prioritas implementasi berikutnya:
-  - adaptive screening interval yang configurable, bukan hardcoded WIB
-  - volume trend filter
-  - token narrative enrichment
-  - briefing harian dengan emoji optional
-  - auto-swap after claim
-- Batch 21 disiapkan untuk advanced exit:
-  - trailing take profit
-  - auto-compound fees
+  - partial-close pipeline resmi agar `N34` bisa ditutup
+  - observability/hardening debt yang masih deferred
+  - parity knob/UX tambahan yang sudah masuk roadmap setelah Batch 21
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -646,4 +640,9 @@ Status: Complete
   - briefing harian stabil dengan `reporting.briefingEmoji` optional
   - flow `CLAIM_FEES -> optional auto swap` resmi lewat request/process/finalize + swap hook di atas `SwapGateway`
   - runtime supervisor dan bootstrap live sekarang bisa me-wire screening/intel/swap gateway bila env tersedia
-- `npm test` terakhir hijau dengan total `209` tests passed
+- Batch 21 sekarang juga sudah masuk:
+  - state posisi menyimpan `peakPnlPct` dan `peakPnlRecordedAt` agar trailing take-profit tidak bergantung pada memori ephemeral
+  - management worker sekarang mem-refresh peak PnL sebelum evaluasi, sehingga peak state survive restart dan bisa dipakai untuk close saat retrace
+  - flow `CLAIM_FEES` sekarang bisa membawa `autoCompound` plan; finalizer mengeksekusi swap, lalu enqueue `DEPLOY` child action resmi dengan idempotency stabil
+  - recovery `CLAIM_FEES` sekarang juga bisa resume dari status `RECONCILING`, termasuk saat chain compound terputus di tengah
+- `npm test` terakhir hijau dengan total `214` tests passed
