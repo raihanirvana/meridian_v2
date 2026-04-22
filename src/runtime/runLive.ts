@@ -6,6 +6,7 @@ import { HttpTokenIntelGateway } from "../adapters/analytics/HttpTokenIntelGatew
 import { HttpDlmmGateway } from "../adapters/dlmm/HttpDlmmGateway.js";
 import { JupiterApiSwapGateway } from "../adapters/jupiter/JupiterApiSwapGateway.js";
 import { HttpLlmGateway } from "../adapters/llm/HttpLlmGateway.js";
+import { HttpTelegramNotifierGateway } from "../adapters/telegram/HttpTelegramNotifierGateway.js";
 import {
   type SolPriceQuote,
   type PriceGateway,
@@ -255,6 +256,15 @@ async function main() {
       ),
       ...(swapGateway === undefined ? {} : { swapGateway }),
       ...(liveLlmGateway === undefined ? {} : { llmGateway: liveLlmGateway }),
+      ...(config.user.notifications.telegramEnabled &&
+      config.secrets.TELEGRAM_BOT_TOKEN !== undefined &&
+      config.user.notifications.alertChatId !== undefined
+        ? {
+            notifierGateway: new HttpTelegramNotifierGateway({
+              botToken: config.secrets.TELEGRAM_BOT_TOKEN,
+            }),
+          }
+        : {}),
     },
     signalProvider: createConservativeSignalProvider(),
     rebalancePlanner: async () => null,
@@ -271,9 +281,32 @@ async function main() {
     now,
   });
 
-  if (config.user.notifications.telegramEnabled) {
+  if (
+    config.user.notifications.telegramEnabled &&
+    (
+      config.secrets.TELEGRAM_BOT_TOKEN === undefined ||
+      config.user.notifications.alertChatId === undefined
+    )
+  ) {
     logger.warn(
-      "telegramEnabled=true but no live NotifierGateway is wired in runLive.ts yet; alerts stay in logs/report only",
+      {
+        hasTelegramBotToken: config.secrets.TELEGRAM_BOT_TOKEN !== undefined,
+        hasAlertChatId: config.user.notifications.alertChatId !== undefined,
+      },
+      "telegramEnabled=true but Telegram notifier is not fully configured; alerts stay in logs/report only",
+    );
+  }
+
+  if (
+    config.user.notifications.telegramEnabled &&
+    config.secrets.TELEGRAM_BOT_TOKEN !== undefined &&
+    config.user.notifications.alertChatId !== undefined
+  ) {
+    logger.info(
+      {
+        alertChatId: config.user.notifications.alertChatId,
+      },
+      "live Telegram notifier configured",
     );
   }
 

@@ -343,6 +343,10 @@ export {
   type SendMessageInput,
 } from "./adapters/telegram/NotifierGateway.js";
 export {
+  HttpTelegramNotifierGateway,
+  type HttpTelegramNotifierGatewayOptions,
+} from "./adapters/telegram/HttpTelegramNotifierGateway.js";
+export {
   ActionRepository,
   type ActionRepositoryOptions,
 } from "./adapters/storage/ActionRepository.js";
