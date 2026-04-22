@@ -19,6 +19,7 @@ export interface SchedulerMetadataStoreOptions extends FileStoreOptions {
 export interface SchedulerMetadataStore {
   snapshot(): Promise<SchedulerMetadata>;
   get(worker: SchedulerWorkerName): Promise<SchedulerWorkerState>;
+  recoverStaleRunningWorkers(recoveredAt: string): Promise<SchedulerWorkerState[]>;
   tryStartRun(input: {
     worker: SchedulerWorkerName;
     triggerSource: SchedulerTriggerSource;
@@ -106,6 +107,45 @@ export class FileSchedulerMetadataStore implements SchedulerMetadataStore {
   public async get(worker: SchedulerWorkerName): Promise<SchedulerWorkerState> {
     const store = await this.snapshot();
     return SchedulerWorkerStateSchema.parse(store.workers[worker]);
+  }
+
+  public async recoverStaleRunningWorkers(
+    recoveredAt: string,
+  ): Promise<SchedulerWorkerState[]> {
+    let recovered: SchedulerWorkerState[] = [];
+
+    await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
+      const store = parseStore(raw, this.filePath);
+      const nextWorkers = { ...store.workers };
+      recovered = [];
+
+      for (const worker of Object.keys(nextWorkers) as SchedulerWorkerName[]) {
+        const currentState = nextWorkers[worker];
+        if (currentState.status !== "RUNNING") {
+          continue;
+        }
+
+        const recoveredState = SchedulerWorkerStateSchema.parse({
+          ...currentState,
+          status: "FAILED",
+          lastCompletedAt: recoveredAt,
+          lastError: "stale RUNNING state recovered at startup",
+          nextDueAt: nextDueAt(recoveredAt, currentState.intervalSec),
+        });
+        nextWorkers[worker] = recoveredState;
+        recovered.push(recoveredState);
+      }
+
+      return JSON.stringify(
+        SchedulerMetadataSchema.parse({
+          workers: nextWorkers,
+        }),
+        null,
+        2,
+      );
+    });
+
+    return recovered;
   }
 
   public async tryStartRun(input: {

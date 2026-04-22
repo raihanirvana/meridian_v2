@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-22 (Batch 18 hardening applied)
+Last updated: 2026-04-22 (Batch 18 audit hardening applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -241,6 +241,41 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: repo inti sekarang sudah menyediakan `createRuntimeStores()` + `createRuntimeSupervisor()`, tetapi belum punya adapter live native untuk semua boundary runtime yang dibutuhkan supervised-live penuh. Tanpa wiring environment itu, supervisor tetap berjalan sebagai composition root yang DI-first, bukan executable live node yang self-contained.
   Revisit: sebelum supervised live run pertama; putuskan source wallet publik, adapter balance/price live, dan notifier delivery nyata.
 
+- `N51` `JournalRepository.list()` masih menelan line malformed di tengah file tanpa sinyal apa pun; toleransi audit-friendly seharusnya minimal memberi warning atau dibatasi ke trailing line di [JournalRepository.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/storage/JournalRepository.ts:1>)
+  Status: deferred
+  Kenapa ditunda: behavior sekarang masih fail-soft dan tidak merusak startup, tetapi observability audit menurun karena corruption parsial bisa hilang diam-diam.
+  Revisit: saat journal inspection/reporting operator mulai dipakai lebih aktif.
+
+- `N52` `runManagementCycle()` masih membangun `PortfolioState` penuh per posisi, sehingga IO/gateway cost bertumbuh linear dengan jumlah posisi dan scan journal harian ikut terulang di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:1>) dan [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:1>)
+  Status: deferred
+  Kenapa ditunda: correctness worker saat ini tetap aman, tetapi cycle runtime akan makin mahal saat journal append-only membesar dan posisi aktif bertambah.
+  Revisit: sebelum supervised live loop dinaikkan frekuensinya atau jumlah posisi aktif bertambah signifikan; pertimbangkan snapshot sekali per cycle + delta pending action / daily PnL.
+
+- `N53` `HttpJsonClient.request()` belum menormalisasi kegagalan saat membaca `response.text()`, sehingga stream/body read error bisa lolos sebagai error mentah, bukan `AdapterTransportError`, di [HttpJsonClient.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/http/HttpJsonClient.ts:1>)
+  Status: deferred
+  Kenapa ditunda: jalur ini jarang, dan transport error utama sudah tertutup untuk fetch/timeout, tetapi boundary adapter idealnya tetap konsisten menormalkan body-read failure.
+  Revisit: saat adapter live mulai sering dipakai terhadap upstream yang lebih noisy.
+
+- `N54` `ActionRepository.upsertByIdempotencyKey()` masih melakukan rewrite file walau hit idempotency tidak mengubah data di [ActionRepository.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/storage/ActionRepository.ts:1>)
+  Status: deferred
+  Kenapa ditunda: correctness tetap aman dan data idempotent, tetapi no-op hit masih membayar atomic write + temp artifact churn yang tidak perlu.
+  Revisit: saat profiling I/O repository mulai penting atau idempotent request volume meningkat.
+
+- `N55` race guard `ActionQueue.claimedActionIds` masih hanya in-process; dua proses yang berbagi `dataDir` masih bisa melihat action yang sama sebelum salah satunya menulis barrier status di [ActionQueue.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/ActionQueue.ts:1>)
+  Status: deferred
+  Kenapa ditunda: mode operasi sekarang memang single-process supervised live, jadi belum menjadi blocker praktis. Tetapi guard ini belum cukup bila queue suatu hari dipanggil dari dua proses berbeda.
+  Revisit: sebelum multi-process tooling/runtime terhadap `dataDir` yang sama diizinkan.
+
+- `N56` `KeyedLock.withLock()` masih sensitif jika tail promise sebelumnya pernah reject; await chain defensif (`catch(() => undefined)`) belum diterapkan di [KeyedLock.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/locks/KeyedLock.ts:1>)
+  Status: deferred
+  Kenapa ditunda: test/runtime sekarang belum menemukan previous-tail rejection yang merusak chain, tetapi guard tambahan akan membuat lock lebih tahan terhadap future regression.
+  Revisit: saat lock primitive disentuh lagi atau sebelum concurrency pressure dinaikkan.
+
+- `N57` `createUlid()` belum memvalidasi timestamp non-finite; input `NaN` bisa menghasilkan ID rusak sebelum schema downstream menolaknya di [createUlid.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/id/createUlid.ts:1>)
+  Status: deferred
+  Kenapa ditunda: caller current path umumnya memakai timestamp valid, jadi ini lebih ke defensive hardening. Namun operator/manual path yang mem-parse timestamp bebas tetap berpotensi memicu ID jelek.
+  Revisit: saat operator/manual timestamp surface diperluas atau sebelum ULID helper dipakai lebih luas.
+
 ## Design Decisions
 - Batch 17.2 menstandarkan naming screening threshold ke istilah PRD yang baru: `minFeeActiveTvlRatio` dan `minOrganic`
   Rationale: spec 17.2 dan heuristik repo lama memakai istilah itu secara eksplisit; menyelaraskan naming sekarang lebih murah daripada membawa alias lama (`minFeeToTvlRatio` / `minOrganicScore`) ke runtime policy store dan evolution layer.
@@ -404,6 +439,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `N45` close performance metadata sekarang dibawa lewat `entryMetadata` pada payload deploy/redeploy -> posisi -> `buildPerformanceRecordFromClose()`, sehingga field seperti `poolName`, `binStep`, `volatility`, `feeTvlRatio`, `organicScore`, dan `amountSol` tidak lagi hardcoded placeholder saat metadata entry tersedia.
 - `N46` `maybeEvolvePolicy()` sekarang sudah di-wire otomatis dari `createRecordPositionPerformanceLessonHook()`, sehingga close finalization yang berhasil bisa langsung memicu evolusi policy setelah performance tercatat.
 - `N47` `recordPoolSnapshot()` sekarang sudah di-wire ke `runManagementCycle()` secara opt-in lewat `poolMemorySnapshotsEnabled` + `poolMemoryRepository`, sehingga snapshot pool bisa direkam selama management cycle aktif.
+- `F9` confirmation/finalization recovery sekarang bisa melanjutkan commit yang sudah setengah selesai tanpa menjatuhkan posisi sehat ke `RECONCILIATION_REQUIRED`; deploy, close, dan rebalance redeploy leg sekarang punya resume path saat posisi final lokal sudah ter-commit tetapi action belum sempat ditutup.
+- `F10` close performance reconstruction sekarang memakai snapshot posisi pre-close (`performanceSnapshotPosition`) sehingga `initialValueUsd`, `finalValueUsd`, dan `pnlPct` tidak lagi dihitung dari posisi lokal yang sudah di-zero-kan saat `CLOSED`.
+- `F11` startup recovery checklist sekarang otomatis menurunkan stale scheduler worker state `RUNNING` menjadi `FAILED` dengan error recovery, sehingga crash sebelumnya tidak membuat worker deadlock permanen.
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.

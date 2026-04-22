@@ -147,7 +147,10 @@ function buildOpenPosition(input: {
   return PositionSchema.parse({
     ...input.pendingPosition,
     ...input.confirmedPosition,
-    status: transitionPositionStatus(input.pendingPosition.status, "OPEN"),
+    status:
+      input.pendingPosition.status === "OPEN"
+        ? "OPEN"
+        : transitionPositionStatus(input.pendingPosition.status, "OPEN"),
     openedAt:
       input.confirmedPosition.openedAt ??
       input.pendingPosition.openedAt ??
@@ -403,6 +406,65 @@ export async function confirmDeployAction(
       const confirmedPosition = await input.dlmmGateway.getPosition(
         deployResult.positionId,
       );
+
+      if (
+        pendingPosition !== null &&
+        pendingPosition.status === "OPEN" &&
+        confirmedPosition !== null &&
+        confirmedPosition.status === "OPEN"
+      ) {
+        const openPosition = buildOpenPosition({
+          confirmedPosition,
+          pendingPosition,
+          actionId: latestAction.actionId,
+          now,
+        });
+        await input.stateRepository.upsert(openPosition);
+
+        const reconcilingAction = {
+          ...latestAction,
+          status: transitionActionStatus(latestAction.status, "RECONCILING"),
+        } satisfies Action;
+        await input.actionRepository.upsert(reconcilingAction);
+
+        const doneAction = {
+          ...reconcilingAction,
+          status: transitionActionStatus(reconcilingAction.status, "DONE"),
+          resultPayload: toJournalRecord({
+            ...deployResult,
+            confirmedPositionId: openPosition.positionId,
+          }),
+          completedAt: now,
+          error: null,
+        } satisfies Action;
+        await input.actionRepository.upsert(doneAction);
+
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "DEPLOY_CONFIRMED",
+          actor: latestAction.requestedBy,
+          wallet: latestAction.wallet,
+          positionId: openPosition.positionId,
+          actionId: latestAction.actionId,
+          before: toJournalRecord({
+            action: latestAction,
+            position: pendingPosition,
+          }),
+          after: toJournalRecord({
+            action: doneAction,
+            position: openPosition,
+          }),
+          txIds: doneAction.txIds,
+          resultStatus: doneAction.status,
+          error: null,
+        });
+
+        return {
+          action: doneAction,
+          position: openPosition,
+          outcome: "CONFIRMED",
+        };
+      }
 
       if (
         pendingPosition === null ||

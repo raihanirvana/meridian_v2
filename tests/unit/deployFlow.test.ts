@@ -755,6 +755,123 @@ describe("deploy flow", () => {
     expect(secondConfirmation.position?.status).toBe("OPEN");
   });
 
+  it("resumes deploy confirmation when the local OPEN position was committed before the action finished", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const confirmedPosition = buildConfirmedPosition("pos_resume");
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: confirmedPosition,
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_resume",
+          txIds: ["tx_resume"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [confirmedPosition],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T01:00:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    // Simulate a crash after the position commit but before the action finished.
+    await stateRepository.upsert({
+      ...confirmedPosition,
+      lastWriteActionId: action.actionId,
+    });
+
+    const resumed = await confirmDeployAction({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway,
+      journalRepository,
+      now: () => "2026-04-20T01:05:00.000Z",
+    });
+
+    expect(resumed.outcome).toBe("CONFIRMED");
+    expect(resumed.action.status).toBe("DONE");
+    expect(resumed.position?.status).toBe("OPEN");
+    expect(resumed.position?.needsReconciliation).toBe(false);
+    expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
+    expect((await stateRepository.get("pos_resume"))?.status).toBe("OPEN");
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "DEPLOY_CONFIRMED",
+    );
+  });
+
   it("keeps action in WAITING_CONFIRMATION if confirmed position payload cannot be normalized into OPEN state", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

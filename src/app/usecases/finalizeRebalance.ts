@@ -315,7 +315,10 @@ function buildOpenRedeployedPosition(input: {
   return PositionSchema.parse({
     ...input.pendingPosition,
     ...input.confirmedPosition,
-    status: transitionPositionStatus(input.pendingPosition.status, "OPEN"),
+    status:
+      input.pendingPosition.status === "OPEN"
+        ? "OPEN"
+        : transitionPositionStatus(input.pendingPosition.status, "OPEN"),
     openedAt:
       input.confirmedPosition.openedAt ??
       input.pendingPosition.openedAt ??
@@ -896,6 +899,72 @@ export async function finalizeRebalance(
           const oldPosition = await input.stateRepository.get(
             latestActionAfterRedeployLock.positionId,
           );
+
+          if (
+            pendingPosition !== null &&
+            pendingPosition.status === "OPEN" &&
+            confirmedPosition !== null &&
+            confirmedPosition.status === "OPEN"
+          ) {
+            const openPosition = buildOpenRedeployedPosition({
+              pendingPosition,
+              confirmedPosition,
+              actionId: latestActionAfterRedeployLock.actionId,
+              now,
+            });
+            await input.stateRepository.upsert(openPosition);
+
+            const reconcilingAction = {
+              ...latestActionAfterRedeployLock,
+              status: transitionActionStatus(
+                latestActionAfterRedeployLock.status,
+                "RECONCILING",
+              ),
+            } satisfies Action;
+            await input.actionRepository.upsert(reconcilingAction);
+
+            const completedPayload = buildCompletedPayload({
+              redeploySubmitted: latestPayload,
+              confirmedPositionId: openPosition.positionId,
+            });
+            const doneAction = {
+              ...reconcilingAction,
+              status: transitionActionStatus(reconcilingAction.status, "DONE"),
+              resultPayload: toJournalRecord(completedPayload),
+              completedAt: now,
+              error: null,
+            } satisfies Action;
+            await input.actionRepository.upsert(doneAction);
+
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "REBALANCE_FINALIZED",
+              actor: latestActionAfterRedeployLock.requestedBy,
+              wallet: latestActionAfterRedeployLock.wallet,
+              positionId: openPosition.positionId,
+              actionId: latestActionAfterRedeployLock.actionId,
+              before: toJournalRecord({
+                action: latestActionAfterRedeployLock,
+                oldPosition,
+                newPosition: pendingPosition,
+              }),
+              after: toJournalRecord({
+                action: doneAction,
+                oldPosition,
+                newPosition: openPosition,
+              }),
+              txIds: doneAction.txIds,
+              resultStatus: doneAction.status,
+              error: null,
+            });
+
+            return {
+              action: doneAction,
+              oldPosition,
+              newPosition: openPosition,
+              outcome: "FINALIZED" as const,
+            };
+          }
 
           if (
             pendingPosition === null ||

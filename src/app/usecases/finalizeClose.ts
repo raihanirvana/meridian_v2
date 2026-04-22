@@ -42,6 +42,7 @@ export type PostCloseSwapHook = (
 
 export interface LessonHookInput {
   position: Position;
+  performanceSnapshotPosition?: Position;
   closedAction: Action;
   reason: string;
   now: string;
@@ -270,8 +271,68 @@ export async function finalizeClose(
       );
 
       if (
+        closingPosition !== null &&
+        closingPosition.status === "CLOSED" &&
+        confirmedPosition !== null &&
+        confirmedPosition.status === "CLOSE_CONFIRMED"
+      ) {
+        const accounting = buildCloseAccountingSummary(closingPosition, null);
+        const reconcilingAction = {
+          ...latestAction,
+          status: transitionActionStatus(latestAction.status, "RECONCILING"),
+        } satisfies Action;
+        await input.actionRepository.upsert(reconcilingAction);
+
+        const doneAction = {
+          ...reconcilingAction,
+          status: transitionActionStatus(reconcilingAction.status, "DONE"),
+          resultPayload: toJournalRecord({
+            ...closeResult,
+            accounting,
+          }),
+          completedAt: now,
+          error: null,
+        } satisfies Action;
+        await input.actionRepository.upsert(doneAction);
+
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "CLOSE_FINALIZED",
+          actor: latestAction.requestedBy,
+          wallet: latestAction.wallet,
+          positionId: latestAction.positionId,
+          actionId: latestAction.actionId,
+          before: toJournalRecord({
+            action: latestAction,
+            position: closingPosition,
+          }),
+          after: toJournalRecord({
+            action: doneAction,
+            position: closingPosition,
+          }),
+          txIds: doneAction.txIds,
+          resultStatus: doneAction.status,
+          error: null,
+        });
+
+        return {
+          action: doneAction,
+          position: closingPosition,
+          outcome: "FINALIZED",
+        };
+      }
+
+      const resumeReconcilingPosition =
+        closingPosition !== null &&
+        closingPosition.status === "RECONCILING" &&
+        confirmedPosition !== null &&
+        confirmedPosition.status === "CLOSE_CONFIRMED"
+          ? closingPosition
+          : null;
+
+      if (
         closingPosition === null ||
-        closingPosition.status !== "CLOSING" ||
+        (closingPosition.status !== "CLOSING" && resumeReconcilingPosition === null) ||
         confirmedPosition === null ||
         confirmedPosition.status !== "CLOSE_CONFIRMED"
       ) {
@@ -333,13 +394,13 @@ export async function finalizeClose(
         };
       }
 
-      const closeConfirmedPosition = buildCloseConfirmedPosition({
+      const closeConfirmedPosition = resumeReconcilingPosition ?? buildCloseConfirmedPosition({
         confirmedPosition,
         closingPosition,
         actionId: latestAction.actionId,
         now,
       });
-      const reconcilingPosition = buildReconcilingPosition(
+      const reconcilingPosition = resumeReconcilingPosition ?? buildReconcilingPosition(
         closeConfirmedPosition,
         latestAction.actionId,
         now,
@@ -407,6 +468,7 @@ export async function finalizeClose(
           try {
             await input.lessonHook({
               position: closedPosition,
+              performanceSnapshotPosition: closeConfirmedPosition,
               closedAction: doneAction,
               reason: payload.reason,
               now,

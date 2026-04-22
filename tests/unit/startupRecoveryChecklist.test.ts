@@ -9,6 +9,7 @@ import { JournalRepository } from "../../src/adapters/storage/JournalRepository.
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { runStartupRecoveryChecklist } from "../../src/app/usecases/runStartupRecoveryChecklist.js";
 import { type Action } from "../../src/domain/entities/Action.js";
+import { FileSchedulerMetadataStore } from "../../src/infra/scheduler/SchedulerMetadataStore.js";
 
 const tempDirs: string[] = [];
 
@@ -72,5 +73,49 @@ describe("startup recovery checklist", () => {
     expect(result.report.actionsByStatus.QUEUED).toBe(1);
     expect(result.checklist.find((item) => item.item === "actions_store")?.ok).toBe(true);
     await expect(fs.readFile(actionsPath, "utf8")).resolves.toContain("act_recovered");
+  });
+
+  it("recovers stale RUNNING scheduler state left behind by a previous crash", async () => {
+    const directory = await makeTempDir();
+    const schedulerMetadataStore = new FileSchedulerMetadataStore({
+      filePath: path.join(directory, "scheduler-metadata.json"),
+    });
+
+    await schedulerMetadataStore.tryStartRun({
+      worker: "management",
+      triggerSource: "startup",
+      startedAt: "2026-04-22T10:00:00.000Z",
+      intervalSec: 300,
+    });
+
+    const result = await runStartupRecoveryChecklist({
+      wallet: "wallet_001",
+      stateRepository: new StateRepository({
+        filePath: path.join(directory, "positions.json"),
+      }),
+      actionRepository: new ActionRepository({
+        filePath: path.join(directory, "actions.json"),
+      }),
+      journalRepository: new JournalRepository({
+        filePath: path.join(directory, "journal.jsonl"),
+      }),
+      schedulerMetadataStore,
+      now: "2026-04-22T10:05:00.000Z",
+    });
+
+    const recoveredState = await schedulerMetadataStore.get("management");
+
+    expect(result.status).toBe("HEALTHY");
+    expect(
+      result.checklist.find((item) => item.item === "scheduler_running_recovery"),
+    ).toMatchObject({
+      ok: true,
+      detail: "recovered 1 stale running worker state(s)",
+    });
+    expect(recoveredState.status).toBe("FAILED");
+    expect(recoveredState.lastError).toBe(
+      "stale RUNNING state recovered at startup",
+    );
+    expect(recoveredState.lastCompletedAt).toBe("2026-04-22T10:05:00.000Z");
   });
 });

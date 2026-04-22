@@ -77,26 +77,28 @@ function resolveEntryMetadata(position: Position): PositionEntryMetadata {
 
 export function buildPerformanceRecordFromClose(input: {
   position: Position;
+  performanceSnapshotPosition?: Position;
   reason: string;
   now: string;
 }): PerformanceRecord {
+  const snapshotPosition = input.performanceSnapshotPosition ?? input.position;
   const entryMetadata = resolveEntryMetadata(input.position);
-  const minutesHeld = diffMinutes(input.position.openedAt, input.position.closedAt ?? input.now);
+  const minutesHeld = diffMinutes(snapshotPosition.openedAt, input.position.closedAt ?? input.now);
   const minutesOutOfRange = diffMinutes(
-    input.position.outOfRangeSince,
+    snapshotPosition.outOfRangeSince,
     input.position.closedAt ?? input.now,
   );
   const minutesInRange = Math.max(minutesHeld - minutesOutOfRange, 0);
   const rangeEfficiencyPct =
     minutesHeld === 0 ? 100 : Math.min((minutesInRange / minutesHeld) * 100, 100);
   const recoveredFinalValueUsd = Math.max(
-    input.position.currentValueUsd +
-      input.position.realizedPnlUsd +
-      input.position.feesClaimedUsd,
+    snapshotPosition.currentValueUsd +
+      snapshotPosition.realizedPnlUsd +
+      snapshotPosition.feesClaimedUsd,
     0,
   );
   const recoveredInitialValueUsd = Math.max(
-    recoveredFinalValueUsd - input.position.realizedPnlUsd,
+    recoveredFinalValueUsd - snapshotPosition.realizedPnlUsd,
     0,
   );
 
@@ -118,17 +120,17 @@ export function buildPerformanceRecordFromClose(input: {
     amountSol: entryMetadata.amountSol ?? 0,
     initialValueUsd: recoveredInitialValueUsd,
     finalValueUsd: recoveredFinalValueUsd,
-    feesEarnedUsd: input.position.feesClaimedUsd,
-    pnlUsd: input.position.realizedPnlUsd,
+    feesEarnedUsd: snapshotPosition.feesClaimedUsd,
+    pnlUsd: snapshotPosition.realizedPnlUsd,
     pnlPct:
       recoveredInitialValueUsd <= 0
         ? 0
-        : (input.position.realizedPnlUsd / recoveredInitialValueUsd) * 100,
+        : (snapshotPosition.realizedPnlUsd / recoveredInitialValueUsd) * 100,
     rangeEfficiencyPct,
     minutesHeld,
     minutesInRange,
     closeReason: mapCloseReason(input.reason),
-    deployedAt: input.position.openedAt ?? input.now,
+    deployedAt: snapshotPosition.openedAt ?? input.now,
     closedAt: input.position.closedAt ?? input.now,
     recordedAt: input.now,
   };
@@ -141,11 +143,15 @@ export function createRecordPositionPerformanceLessonHook(
 
   return async (hookInput: {
     position: Position;
+    performanceSnapshotPosition?: Position;
     reason: string;
     now: string;
   }): Promise<PerformanceRecord | void> => {
     const performance = buildPerformanceRecordFromClose({
       position: hookInput.position,
+      ...(hookInput.performanceSnapshotPosition === undefined
+        ? {}
+        : { performanceSnapshotPosition: hookInput.performanceSnapshotPosition }),
       reason: hookInput.reason,
       now: hookInput.now,
     });

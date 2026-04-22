@@ -443,6 +443,9 @@ describe("close flow", () => {
       organicScore: 78,
       amountSol: 1.5,
     });
+    expect(performance[0]?.initialValueUsd).toBe(30);
+    expect(performance[0]?.finalValueUsd).toBe(60);
+    expect(performance[0]?.pnlPct).toBe(100);
     expect((await lessonRepository.list())).toHaveLength(1);
     expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
       "LESSON_RECORDED",
@@ -839,5 +842,95 @@ describe("close flow", () => {
     expect(secondResult.outcome).toBe("UNCHANGED");
     expect(secondResult.action.status).toBe("DONE");
     expect(secondResult.position?.status).toBe("CLOSED");
+  });
+
+  it("resumes close finalization when the local CLOSED position was committed before the action finished", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_resume_close"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_resume_close",
+      payload: {
+        reason: "resume close test",
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_resume_close",
+              txIds: ["tx_resume_close"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    await stateRepository.upsert({
+      ...buildCloseConfirmedPosition("pos_resume_close"),
+      status: "CLOSED",
+      currentValueBase: 0,
+      currentValueUsd: 0,
+      lastWriteActionId: action.actionId,
+    });
+
+    const resumed = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_resume_close"),
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_resume_close",
+            txIds: ["tx_resume_close"],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(resumed.outcome).toBe("FINALIZED");
+    expect(resumed.action.status).toBe("DONE");
+    expect(resumed.position?.status).toBe("CLOSED");
+    expect(resumed.position?.needsReconciliation).toBe(false);
+    expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
+    expect((await stateRepository.get("pos_resume_close"))?.status).toBe("CLOSED");
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "CLOSE_FINALIZED",
+    );
   });
 });

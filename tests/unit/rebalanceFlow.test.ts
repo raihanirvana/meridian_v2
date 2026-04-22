@@ -365,6 +365,94 @@ describe("rebalance flow", () => {
     expect(finalized.newPosition).toBeNull();
   });
 
+  it("resumes rebalance redeploy confirmation when the new OPEN leg was committed before the action finished", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old_resume"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_old_resume",
+      txIds: ["tx_close_resume"],
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old_resume",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_old_resume",
+      buildCloseConfirmedPosition("pos_old_resume"),
+    );
+
+    const firstFinalize = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(firstFinalize.outcome).toBe("REDEPLOY_SUBMITTED");
+
+    const confirmedNewPosition = buildRedeployedOpenPosition("pos_new");
+    gateway.positions.set("pos_new", confirmedNewPosition);
+
+    await stateRepository.upsert({
+      ...confirmedNewPosition,
+      lastWriteActionId: action.actionId,
+    });
+
+    const resumed = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      now: () => "2026-04-20T00:08:00.000Z",
+    });
+
+    expect(resumed.outcome).toBe("FINALIZED");
+    expect(resumed.action.status).toBe("DONE");
+    expect(resumed.newPosition?.status).toBe("OPEN");
+    expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
+    expect((await stateRepository.get("pos_new"))?.status).toBe("OPEN");
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "REBALANCE_FINALIZED",
+    );
+  });
+
   it("aborts rebalance if closed capital is below the redeploy requirement", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

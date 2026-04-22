@@ -115,6 +115,15 @@ export async function runStartupRecoveryChecklist(
   }
 
   if (input.schedulerMetadataStore !== undefined) {
+    checklist.push(await checkItem("scheduler_running_recovery", async () => {
+      const recovered = await input.schedulerMetadataStore!.recoverStaleRunningWorkers(
+        checkedAt,
+      );
+      return recovered.length === 0
+        ? "no stale running worker state found"
+        : `recovered ${recovered.length} stale running worker state(s)`;
+    }));
+
     checklist.push(await checkItem("scheduler_metadata_store", async () => {
       const snapshot = await input.schedulerMetadataStore!.snapshot();
       return `${Object.keys(snapshot.workers).length} worker state(s) readable`;

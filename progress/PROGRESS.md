@@ -625,4 +625,8 @@ Status: Complete
 - Batch 17.4 Darwinian signal weights sekarang sudah ada di level entity/store/rule/usecase/provider; screening scorer juga sudah bisa membaca `signalWeights` terinjeksi tanpa mutasi global
 - Batch 18 menambahkan reporting worker, startup recovery checklist, runtime alerts, dan scheduler metadata shared state; management/reconciliation workers juga sekarang bisa dibungkus metadata yang sama secara opsional
 - Runtime supervisor/composition-root factory sekarang juga tersedia lewat `createRuntimeStores()` + `createRuntimeSupervisor()`, tetapi concrete gateway live tetap masih tanggung jawab wiring environment di luar repo inti
-- `npm test` terakhir hijau dengan total `190` tests passed
+- Audit hardening pasca-Batch 18 sudah masuk:
+  - confirmation/finalization recovery sekarang bisa resume bila posisi final lokal sudah ter-commit tetapi action belum sempat ditutup
+  - close performance hook sekarang memakai snapshot pre-close agar `pnlPct` dan nilai awal/akhir tidak bias dari posisi `CLOSED` yang sudah di-zero-kan
+  - startup checklist sekarang memulihkan stale scheduler state `RUNNING` yang tertinggal setelah crash
+- `npm test` terakhir hijau dengan total `194` tests passed
