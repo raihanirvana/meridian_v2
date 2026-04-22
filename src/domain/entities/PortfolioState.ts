@@ -13,6 +13,7 @@ export const PortfolioStateSchema = z
     openPositions: z.number().int().nonnegative(),
     pendingActions: z.number().int().nonnegative(),
     dailyRealizedPnl: z.number(),
+    solPriceUsd: z.number().positive().optional(),
     drawdownState: DrawdownStateSchema,
     circuitBreakerState: CircuitBreakerStateSchema,
     circuitBreakerActivatedAt: z.string().datetime().nullable().optional(),

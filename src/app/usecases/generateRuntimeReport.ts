@@ -2,6 +2,7 @@ import type { ActionRepository } from "../../adapters/storage/ActionRepository.j
 import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
 import type { PerformanceRepositoryInterface, PerformanceSummary } from "../../adapters/storage/PerformanceRepository.js";
 import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
+import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { SchedulerMetadata } from "../../domain/entities/SchedulerMetadata.js";
 import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
@@ -15,6 +16,8 @@ export interface RuntimeReport {
   wallet: string;
   generatedAt: string;
   health: "HEALTHY" | "UNSAFE";
+  displayMode: "USD" | "SOL";
+  solPriceUsd: number | null;
   positionsByStatus: Record<string, number>;
   actionsByStatus: Record<string, number>;
   actionsByType: Record<string, number>;
@@ -25,6 +28,10 @@ export interface RuntimeReport {
   poolsTracked: number | null;
   cooldownPools: number | null;
   performanceSummary: PerformanceSummary | null;
+  dailyPnlUsd: number | null;
+  dailyPnlSol: number | null;
+  dailyProfitTargetSol: number | null;
+  dailyProfitTargetReached: boolean;
   scheduler: SchedulerMetadata | null;
   issues: string[];
   alerts: RuntimeAlert[];
@@ -37,7 +44,10 @@ export interface GenerateRuntimeReportInput {
   lessonRepository?: LessonRepositoryInterface;
   performanceRepository?: PerformanceRepositoryInterface;
   poolMemoryRepository?: PoolMemoryRepository;
+  priceGateway?: PriceGateway;
   schedulerMetadataStore?: SchedulerMetadataStore;
+  dailyProfitTargetSol?: number;
+  solMode?: boolean;
   now?: string;
   stuckActionThresholdMinutes?: number;
   runningWorkerThresholdMinutes?: number;
@@ -50,6 +60,10 @@ function countBy<T extends string>(
     counts[value] = (counts[value] ?? 0) + 1;
     return counts;
   }, {});
+}
+
+function startOfUtcDay(iso: string): string {
+  return `${iso.slice(0, 10)}T00:00:00.000Z`;
 }
 
 export async function generateRuntimeReport(
@@ -80,12 +94,20 @@ export async function generateRuntimeReport(
   const performanceSummary = input.performanceRepository === undefined
     ? null
     : await input.performanceRepository.summary();
+  const dailyPerformance = input.performanceRepository === undefined
+    ? null
+    : await input.performanceRepository.list({
+        sinceIso: startOfUtcDay(generatedAt),
+      });
   const lessons = input.lessonRepository === undefined
     ? null
     : await input.lessonRepository.list();
   const poolMemory = input.poolMemoryRepository === undefined
     ? null
     : await input.poolMemoryRepository.listAll();
+  const solPriceQuote = input.priceGateway === undefined
+    ? null
+    : await input.priceGateway.getSolPriceUsd();
   const scheduler = input.schedulerMetadataStore === undefined
     ? null
     : await input.schedulerMetadataStore.snapshot();
@@ -106,6 +128,29 @@ export async function generateRuntimeReport(
   const cooldownPools = poolMemory === null
     ? null
     : poolMemory.filter((entry) => entry.cooldownUntil !== undefined).length;
+  const dailyPnlUsd = dailyPerformance === null
+    ? null
+    : dailyPerformance.reduce((sum, record) => sum + record.pnlUsd, 0);
+  const dailyPnlSol =
+    dailyPnlUsd === null || solPriceQuote === null || solPriceQuote.priceUsd <= 0
+      ? null
+      : dailyPnlUsd / solPriceQuote.priceUsd;
+  const dailyProfitTargetReached =
+    input.dailyProfitTargetSol !== undefined &&
+    dailyPnlSol !== null &&
+    dailyPnlSol >= input.dailyProfitTargetSol;
+  const profitTargetAlerts = dailyProfitTargetReached
+    ? [
+        {
+          kind: "DAILY_PROFIT_TARGET" as const,
+          severity: "WARN" as const,
+          title: "Daily profit target reached",
+          body:
+            `Daily realized pnl reached ${dailyPnlSol!.toFixed(4)} SOL` +
+            ` against target ${input.dailyProfitTargetSol!.toFixed(4)} SOL.`,
+        },
+      ]
+    : [];
 
   const issues = [
     ...(pendingReconciliationPositions > 0
@@ -120,6 +165,8 @@ export async function generateRuntimeReport(
     wallet: input.wallet,
     generatedAt,
     health: issues.length === 0 ? "HEALTHY" : "UNSAFE",
+    displayMode: input.solMode === true ? "SOL" : "USD",
+    solPriceUsd: solPriceQuote?.priceUsd ?? null,
     positionsByStatus,
     actionsByStatus,
     actionsByType,
@@ -130,8 +177,12 @@ export async function generateRuntimeReport(
     poolsTracked: poolMemory?.length ?? null,
     cooldownPools,
     performanceSummary,
+    dailyPnlUsd,
+    dailyPnlSol,
+    dailyProfitTargetSol: input.dailyProfitTargetSol ?? null,
+    dailyProfitTargetReached,
     scheduler,
     issues,
-    alerts,
+    alerts: [...alerts, ...profitTargetAlerts],
   };
 }

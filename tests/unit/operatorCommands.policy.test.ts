@@ -23,11 +23,13 @@ async function makeTempDir(): Promise<string> {
 }
 
 const basePolicy = {
+  timeframe: "5m",
   minMarketCapUsd: 150_000,
   maxMarketCapUsd: 10_000_000,
   minTvlUsd: 10_000,
   minVolumeUsd: 5_000,
   minFeeActiveTvlRatio: 0.05,
+  minFeePerTvl24h: 0.01,
   minOrganic: 60,
   minHolderCount: 500,
   allowedBinSteps: [80, 100, 125],

@@ -67,6 +67,7 @@ function buildCandidate(overrides: Partial<ScreeningCandidateInput> = {}): Scree
     volumeUsd: 25_000,
     volumeConsistencyScore: 75,
     feeToTvlRatio: 0.09,
+    feePerTvl24h: 0.03,
     organicScore: 80,
     holderCount: 1_200,
     binStep: 100,
@@ -98,11 +99,13 @@ describe("screening uses evolved policy", () => {
   it("rejects a candidate that previously passed after evolved fee floor is applied", async () => {
     const directory = await makeTempDir();
     const basePolicy = {
+      timeframe: "5m",
       minMarketCapUsd: 150_000,
       maxMarketCapUsd: 10_000_000,
       minTvlUsd: 10_000,
       minVolumeUsd: 5_000,
       minFeeActiveTvlRatio: 0.05,
+      minFeePerTvl24h: 0.01,
       minOrganic: 60,
       minHolderCount: 500,
       allowedBinSteps: [80, 100, 125],

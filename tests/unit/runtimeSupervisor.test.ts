@@ -28,11 +28,13 @@ afterEach(async () => {
 
 function buildScreeningPolicy() {
   return {
+    timeframe: "5m",
     minMarketCapUsd: 100_000,
     maxMarketCapUsd: 10_000_000,
     minTvlUsd: 10_000,
     minVolumeUsd: 500,
     minFeeActiveTvlRatio: 0.05,
+    minFeePerTvl24h: 0.01,
     minOrganic: 60,
     minHolderCount: 500,
     allowedBinSteps: [80],
@@ -99,6 +101,9 @@ describe("runtime supervisor", () => {
         },
         notifications: {
           telegramEnabled: false,
+        },
+        reporting: {
+          solMode: false,
         },
         runtime: {
           dryRun: true,

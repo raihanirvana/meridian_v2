@@ -33,18 +33,25 @@ export const UserConfigSchema = z
           maxPoolExposurePct: PercentNumber,
         maxRebalancesPerPosition: z.number().int().min(0),
         dailyLossLimitPct: PositiveNumber,
+        maxDailyLossSol: PositiveNumber.optional(),
+        dailyProfitTargetSol: PositiveNumber.optional(),
         circuitBreakerCooldownMin: z.number().int().positive(),
         maxNewDeploysPerHour: z.number().int().positive(),
       })
       .strict(),
     screening: z
       .object({
+        timeframe: z.enum(["5m", "1h", "24h"]),
         minMarketCapUsd: PositiveNumber,
         maxMarketCapUsd: PositiveNumber,
         minTvlUsd: PositiveNumber,
         minVolumeUsd: PositiveNumber,
         minFeeActiveTvlRatio: PositiveNumber,
+        minFeePerTvl24h: PositiveNumber,
         minOrganic: PercentNumber,
+        minTokenAgeHours: z.number().nonnegative().optional(),
+        maxTokenAgeHours: z.number().nonnegative().optional(),
+        athFilterPct: z.number().min(-100).max(0).optional(),
         minHolderCount: z.number().int().positive(),
         allowedBinSteps: z.array(z.number().int().positive()).min(1),
         blockedLaunchpads: z.array(z.string().min(1)),
@@ -82,6 +89,11 @@ export const UserConfigSchema = z
         alertChatId: z.string().min(1).optional(),
       })
       .strict(),
+    reporting: z
+      .object({
+        solMode: z.boolean(),
+      })
+      .strict(),
     poolMemory: z
       .object({
         snapshotsEnabled: z.boolean(),
@@ -114,6 +126,18 @@ export const UserConfigSchema = z
         code: z.ZodIssueCode.custom,
         path: ["deploy", "defaultAmountSol"],
         message: "must be greater than or equal to minAmountSol",
+      });
+    }
+
+    if (
+      config.screening.minTokenAgeHours !== undefined &&
+      config.screening.maxTokenAgeHours !== undefined &&
+      config.screening.maxTokenAgeHours < config.screening.minTokenAgeHours
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["screening", "maxTokenAgeHours"],
+        message: "must be greater than or equal to minTokenAgeHours",
       });
     }
   });

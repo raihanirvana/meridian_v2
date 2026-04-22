@@ -12,6 +12,10 @@ import {
   FilePoolMemoryRepository,
   type PoolMemoryRepository,
 } from "../adapters/storage/PoolMemoryRepository.js";
+import {
+  FileRuntimeControlStore,
+  type RuntimeControlStore,
+} from "../adapters/storage/RuntimeControlStore.js";
 import { FileSignalWeightsStore, type SignalWeightsStore } from "../adapters/storage/SignalWeightsStore.js";
 import { StateRepository } from "../adapters/storage/StateRepository.js";
 import {
@@ -39,6 +43,7 @@ export interface RuntimeStores {
   runtimePolicyStore: RuntimePolicyStore;
   poolMemoryRepository: PoolMemoryRepository;
   signalWeightsStore: SignalWeightsStore;
+  runtimeControlStore: RuntimeControlStore;
   schedulerMetadataStore: SchedulerMetadataStore;
   actionQueue: ActionQueue;
 }
@@ -78,6 +83,9 @@ export function createRuntimeStores(
   const signalWeightsStore = new FileSignalWeightsStore({
     filePath: paths.signalWeightsFilePath,
   });
+  const runtimeControlStore = new FileRuntimeControlStore({
+    filePath: paths.runtimeControlsFilePath,
+  });
   const schedulerMetadataStore = new FileSchedulerMetadataStore({
     filePath: paths.schedulerMetadataFilePath,
   });
@@ -97,6 +105,7 @@ export function createRuntimeStores(
     runtimePolicyStore,
     poolMemoryRepository,
     signalWeightsStore,
+    runtimeControlStore,
     schedulerMetadataStore,
     actionQueue,
   };

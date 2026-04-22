@@ -16,7 +16,8 @@ export interface RuntimeAlert {
   kind:
     | "STUCK_ACTION"
     | "PENDING_RECONCILIATION"
-    | "STUCK_WORKER";
+    | "STUCK_WORKER"
+    | "DAILY_PROFIT_TARGET";
   severity: "WARN" | "CRITICAL";
   title: string;
   body: string;

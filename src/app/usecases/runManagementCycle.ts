@@ -1,6 +1,7 @@
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
@@ -118,6 +119,7 @@ export interface RunManagementCycleInput {
     now: string;
   }) => Promise<ManagementSignals> | ManagementSignals;
   poolMemoryRepository?: PoolMemoryRepository;
+  runtimeControlStore?: RuntimeControlStore;
   poolMemorySnapshotsEnabled?: boolean;
   rebalancePlanner?: (input: {
     position: Position;
@@ -425,6 +427,44 @@ export async function runManagementCycle(
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
         riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
+      });
+      continue;
+    }
+
+    if (
+      input.runtimeControlStore !== undefined &&
+      (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
+    ) {
+      const baseRiskResult = evaluatePortfolioRisk({
+        action: "REBALANCE",
+        portfolio,
+        policy: input.riskPolicy,
+        proposedAllocationUsd:
+          deriveRebalanceCapitalRequirement(rebalancePayload.redeploy),
+        proposedPoolAddress: rebalancePayload.redeploy.poolAddress,
+        proposedTokenMints: proposedTokenMints(rebalancePayload),
+        recentNewDeploys,
+        position,
+      });
+      const riskResult: PortfolioRiskEvaluationResult = {
+        ...baseRiskResult,
+        allowed: false,
+        decision: "BLOCK",
+        reason: "manual circuit breaker is active",
+        blockingRules: ["manual circuit breaker is active"],
+      };
+      positionResults.push({
+        positionId: position.positionId,
+        managementAction: evaluation.action,
+        status: "BLOCKED_BY_RISK",
+        reason: evaluation.reason,
+        triggerReasons: evaluation.triggerReasons,
+        actionId: null,
+        riskResult,
         aiMode,
         aiSource: aiAdvisory.source,
         aiSuggestedAction: aiAdvisory.aiSuggestedAction,

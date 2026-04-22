@@ -38,6 +38,7 @@ export interface RuntimeSupervisorInput {
     schedule: UserConfig["schedule"];
     darwin: UserConfig["darwin"];
     notifications: UserConfig["notifications"];
+    reporting: UserConfig["reporting"];
     runtime: UserConfig["runtime"];
   };
   stores: RuntimeStores;
@@ -115,6 +116,7 @@ export function createRuntimeSupervisor(
           dlmmGateway: input.gateways.dlmmGateway,
           stateRepository: input.stores.stateRepository,
           journalRepository: input.stores.journalRepository,
+          runtimeControlStore: input.stores.runtimeControlStore,
           ...(input.now === undefined ? {} : { now: input.now }),
         });
       case "CLOSE":
@@ -206,6 +208,7 @@ export function createRuntimeSupervisor(
           : { aiTimeoutMs: input.aiTimeoutMs }),
         signalProvider: input.signalProvider,
         poolMemoryRepository: input.stores.poolMemoryRepository,
+        runtimeControlStore: input.stores.runtimeControlStore,
         poolMemorySnapshotsEnabled: input.config.poolMemory.snapshotsEnabled,
         ...(input.rebalancePlanner === undefined
           ? {}
@@ -228,6 +231,7 @@ export function createRuntimeSupervisor(
         lessonRepository: input.stores.lessonRepository,
         performanceRepository: input.stores.performanceRepository,
         poolMemoryRepository: input.stores.poolMemoryRepository,
+        priceGateway: input.gateways.priceGateway,
         schedulerMetadataStore: input.stores.schedulerMetadataStore,
         ...(input.gateways.notifierGateway === undefined
           ? {}
@@ -235,6 +239,10 @@ export function createRuntimeSupervisor(
         ...(input.alertRecipient === undefined
           ? {}
           : { alertRecipient: input.alertRecipient }),
+        ...(input.config.risk.dailyProfitTargetSol === undefined
+          ? {}
+          : { dailyProfitTargetSol: input.config.risk.dailyProfitTargetSol }),
+        solMode: input.config.reporting.solMode,
         intervalSec: input.config.schedule.reportingIntervalSec,
         triggerSource,
         ...(input.now === undefined ? {} : { now: input.now }),
@@ -276,6 +284,7 @@ export function createRuntimeSupervisorFromUserConfig(
       schedule: input.userConfig.schedule,
       darwin: input.userConfig.darwin,
       notifications: input.userConfig.notifications,
+      reporting: input.userConfig.reporting,
       runtime: input.userConfig.runtime,
     },
   });

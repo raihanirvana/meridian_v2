@@ -243,6 +243,7 @@ export async function buildPortfolioState(
     openPositions: activePositions.length,
     pendingActions,
     dailyRealizedPnl,
+    solPriceUsd: solPriceQuote.priceUsd,
     drawdownState,
     circuitBreakerState: circuitBreakerSnapshot.circuitBreakerState,
     circuitBreakerActivatedAt: circuitBreakerSnapshot.circuitBreakerActivatedAt,

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import { FileRuntimeControlStore } from "../../src/adapters/storage/RuntimeControlStore.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { type FileSystemAdapter } from "../../src/adapters/storage/FileStore.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
@@ -228,6 +229,148 @@ describe("deploy flow", () => {
     expect(journalEvents.map((event) => event.eventType)).toContain(
       "DEPLOY_CONFIRMED",
     );
+  });
+
+  it("rejects new deploy requests while manual circuit breaker is active", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-controls.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await runtimeControlStore.tripStopAllDeploys({
+      reason: "panic",
+      updatedAt: "2026-04-20T01:00:00.000Z",
+    });
+
+    await expect(
+      requestDeploy({
+        actionQueue,
+        journalRepository,
+        runtimeControlStore,
+        wallet: "wallet_001",
+        payload: deployPayload,
+        requestedBy: "system",
+        requestedAt: "2026-04-20T01:00:00.000Z",
+      }),
+    ).rejects.toThrow(/manual circuit breaker/i);
+  });
+
+  it("aborts queued deploy processing while manual circuit breaker is active", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-controls.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: buildConfirmedPosition("pos_001"),
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_001",
+          txIds: ["tx_001"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "pos_001",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "pos_001",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T01:00:00.000Z",
+    });
+
+    await runtimeControlStore.tripStopAllDeploys({
+      reason: "panic",
+      updatedAt: "2026-04-20T01:00:30.000Z",
+    });
+
+    const queuedResult = await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+        runtimeControlStore,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    expect(queuedResult?.status).toBe("ABORTED");
+    expect(queuedResult?.error).toMatch(/manual circuit breaker/i);
+    expect(await stateRepository.get("pos_001")).toBeNull();
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("DEPLOY_BLOCKED_MANUAL_CIRCUIT_BREAKER");
+    expect((await actionRepository.get(action.actionId))?.status).toBe("ABORTED");
   });
 
   it("sets outOfRangeSince when a confirmed deploy is already outside the configured range", async () => {

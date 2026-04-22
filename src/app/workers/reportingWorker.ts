@@ -2,6 +2,7 @@ import type { ActionRepository } from "../../adapters/storage/ActionRepository.j
 import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
 import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
 import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
+import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { NotifierGateway, NotificationResult } from "../../adapters/telegram/NotifierGateway.js";
 import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
@@ -20,9 +21,12 @@ export interface ReportingWorkerInput {
   lessonRepository?: LessonRepositoryInterface;
   performanceRepository?: PerformanceRepositoryInterface;
   poolMemoryRepository?: PoolMemoryRepository;
+  priceGateway?: PriceGateway;
   schedulerMetadataStore?: SchedulerMetadataStore;
   notifierGateway?: NotifierGateway;
   alertRecipient?: string;
+  dailyProfitTargetSol?: number;
+  solMode?: boolean;
   stuckActionThresholdMinutes?: number;
   runningWorkerThresholdMinutes?: number;
   intervalSec?: number;
@@ -65,9 +69,16 @@ export async function runReportingWorker(
         ...(input.poolMemoryRepository === undefined
           ? {}
           : { poolMemoryRepository: input.poolMemoryRepository }),
+        ...(input.priceGateway === undefined
+          ? {}
+          : { priceGateway: input.priceGateway }),
         ...(input.schedulerMetadataStore === undefined
           ? {}
           : { schedulerMetadataStore: input.schedulerMetadataStore }),
+        ...(input.dailyProfitTargetSol === undefined
+          ? {}
+          : { dailyProfitTargetSol: input.dailyProfitTargetSol }),
+        ...(input.solMode === undefined ? {} : { solMode: input.solMode }),
         now: input.now?.() ?? new Date().toISOString(),
         ...(input.stuckActionThresholdMinutes === undefined
           ? {}
@@ -107,9 +118,19 @@ export async function runReportingWorker(
       wallet: input.wallet,
       stateRepository: input.stateRepository,
       actionRepository: input.actionRepository,
+      ...(input.performanceRepository === undefined
+        ? {}
+        : { performanceRepository: input.performanceRepository }),
+      ...(input.priceGateway === undefined
+        ? {}
+        : { priceGateway: input.priceGateway }),
       ...(input.schedulerMetadataStore === undefined
         ? {}
         : { schedulerMetadataStore: input.schedulerMetadataStore }),
+      ...(input.dailyProfitTargetSol === undefined
+        ? {}
+        : { dailyProfitTargetSol: input.dailyProfitTargetSol }),
+      ...(input.solMode === undefined ? {} : { solMode: input.solMode }),
       now: input.now?.() ?? new Date().toISOString(),
     });
     return {

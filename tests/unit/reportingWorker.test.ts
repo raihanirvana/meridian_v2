@@ -5,10 +5,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
+import { FilePerformanceRepository } from "../../src/adapters/storage/PerformanceRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockNotifierGateway } from "../../src/adapters/telegram/NotifierGateway.js";
+import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { runReportingWorker } from "../../src/app/workers/reportingWorker.js";
 import { type Action } from "../../src/domain/entities/Action.js";
+import { type PerformanceRecord } from "../../src/domain/entities/PerformanceRecord.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 import { FileSchedulerMetadataStore } from "../../src/infra/scheduler/SchedulerMetadataStore.js";
 
@@ -75,6 +78,39 @@ function buildStuckAction(): Action {
     startedAt: "2026-04-22T08:05:00.000Z",
     completedAt: null,
     requestedBy: "system",
+  };
+}
+
+function buildPerformanceRecord(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
+  return {
+    positionId: "pos_profit",
+    wallet: "wallet_001",
+    pool: "pool_profit",
+    poolName: "SOL-USDC",
+    baseMint: "mint_sol",
+    strategy: "bid_ask",
+    binStep: 100,
+    binRangeLower: 10,
+    binRangeUpper: 20,
+    volatility: 12,
+    feeTvlRatio: 0.2,
+    organicScore: 80,
+    amountSol: 1,
+    initialValueUsd: 100,
+    finalValueUsd: 125,
+    feesEarnedUsd: 5,
+    pnlUsd: 25,
+    pnlPct: 25,
+    rangeEfficiencyPct: 80,
+    minutesHeld: 120,
+    minutesInRange: 100,
+    closeReason: "take_profit",
+    deployedAt: "2026-04-22T01:00:00.000Z",
+    closedAt: "2026-04-22T03:00:00.000Z",
+    recordedAt: "2026-04-22T03:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -168,5 +204,46 @@ describe("reporting worker", () => {
     const workerState = await schedulerMetadataStore.get("reporting");
     expect(workerState.status).toBe("RUNNING");
     expect(workerState.manualRunCount).toBe(1);
+  });
+
+  it("emits a daily profit target alert and SOL display data when the target is reached", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: path.join(directory, "lessons.json"),
+    });
+    await performanceRepository.append(buildPerformanceRecord());
+
+    const result = await runReportingWorker({
+      wallet: "wallet_001",
+      stateRepository,
+      actionRepository,
+      performanceRepository,
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 50,
+            asOf: "2026-04-22T09:00:00.000Z",
+          },
+        },
+      }),
+      dailyProfitTargetSol: 0.4,
+      solMode: true,
+      now: () => "2026-04-22T09:00:00.000Z",
+    });
+
+    expect(result.report.displayMode).toBe("SOL");
+    expect(result.report.dailyPnlSol).toBe(0.5);
+    expect(result.report.dailyProfitTargetReached).toBe(true);
+    expect(result.report.alerts.map((alert) => alert.kind)).toContain(
+      "DAILY_PROFIT_TARGET",
+    );
   });
 });

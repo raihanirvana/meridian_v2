@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { Action } from "../../domain/entities/Action.js";
 import { PositionEntryMetadataSchema } from "../../domain/entities/Position.js";
 import type { Actor } from "../../domain/types/enums.js";
@@ -45,6 +46,7 @@ export interface RequestDeployInput {
   requestedAt?: string;
   idempotencyKey?: string;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
 }
 
 function buildDeployJournalPayload(action: Action): Record<string, unknown> {
@@ -60,6 +62,12 @@ function buildDeployJournalPayload(action: Action): Record<string, unknown> {
 export async function requestDeploy(input: RequestDeployInput): Promise<Action> {
   const payload = DeployActionRequestPayloadSchema.parse(input.payload);
   const journalTimestamp = input.requestedAt ?? new Date().toISOString();
+  if (
+    input.runtimeControlStore !== undefined &&
+    (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
+  ) {
+    throw new Error("manual circuit breaker is active; deploy requests are blocked");
+  }
   const idempotencyKey =
     input.idempotencyKey ??
     createIdempotencyKey({

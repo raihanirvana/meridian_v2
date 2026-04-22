@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import { FileRuntimeControlStore } from "../../src/adapters/storage/RuntimeControlStore.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockNotifierGateway } from "../../src/adapters/telegram/NotifierGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
@@ -586,5 +587,153 @@ describe("operator commands", () => {
       channel: "telegram",
       recipient: "chat_001",
     });
+  });
+
+  it("parses and applies deterministic manual circuit breaker commands", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-controls.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    expect(parseOperatorCommand({ raw: "circuit_breaker_trip market panic" })).toEqual({
+      kind: "CIRCUIT_BREAKER_TRIP",
+      reason: "market panic",
+    });
+    expect(parseOperatorCommand({ raw: "circuit_breaker_clear" })).toEqual({
+      kind: "CIRCUIT_BREAKER_CLEAR",
+    });
+
+    const tripResult = await executeOperatorCommand({
+      command: {
+        kind: "CIRCUIT_BREAKER_TRIP",
+        reason: "market panic",
+      },
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      runtimeControlStore,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(tripResult.text).toMatch(/activated/i);
+    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(true);
+
+    await expect(
+      handleCliOperatorCommand({
+        rawCommand: `deploy ${JSON.stringify(buildDeployPayload())}`,
+        wallet: "wallet_001",
+        actionQueue,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        runtimeControlStore,
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 5,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        riskPolicy: buildRiskPolicy(),
+        requestedBy: "operator",
+        requestedAt: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toThrow(/manual circuit breaker/i);
+
+    const clearResult = await executeOperatorCommand({
+      command: {
+        kind: "CIRCUIT_BREAKER_CLEAR",
+      },
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      runtimeControlStore,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:05:00.000Z",
+    });
+
+    expect(clearResult.text).toMatch(/cleared/i);
+    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(false);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toEqual(
+      expect.arrayContaining([
+        "CIRCUIT_BREAKER_MANUAL_TRIP",
+        "CIRCUIT_BREAKER_MANUAL_CLEAR",
+      ]),
+    );
   });
 });

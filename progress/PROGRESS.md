@@ -1,15 +1,14 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-22
-Current batch: Batch 18 - Hardening dan live-readiness checklist
+Current batch: Batch 19 - Config knobs parity & operator controls
 Status: Complete
 
-## Scope Batch 18
-- Add startup recovery checklist untuk supervised live readiness
-- Add reporting worker + runtime metrics summary
-- Add stuck action / pending reconcile alert generation
-- Add shared scheduler metadata untuk cron/manual trigger state
-- Add log redaction helper + packaging cleanup
+## Scope Batch 19
+- Add screening config parity knobs (`timeframe`, token age range, ATH filter, min fee-per-TVL 24h)
+- Add SOL-denominated risk/reporting knobs (`maxDailyLossSol`, `dailyProfitTargetSol`, `reporting.solMode`)
+- Add manual operator panic controls (`circuit_breaker_trip`, `circuit_breaker_clear`)
+- Keep all new behavior schema-driven, deterministic, and regression-tested
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -599,17 +598,8 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 19 — config knobs parity & operator controls
-- Prioritas implementasi berikutnya harus dimulai dari low-effort/high-value:
-  - `screening.timeframe`
-  - `screening.minTokenAgeHours` / `maxTokenAgeHours`
-  - `screening.athFilterPct`
-  - `screening.minFeePerTvl24h`
-  - `risk.dailyProfitTargetSol`
-  - `risk.maxDailyLossSol` (jalan berdampingan dengan `%`, trip memakai OR)
-  - `reporting.solMode`
-  - operator `circuit_breaker_trip` / `circuit_breaker_clear`
-- Batch 20 disiapkan untuk enrichment + UX:
+- Batch 20 — enrichment + UX
+- Prioritas implementasi berikutnya:
   - adaptive screening interval yang configurable, bukan hardcoded WIB
   - volume trend filter
   - token narrative enrichment
@@ -645,4 +635,9 @@ Status: Complete
   - confirmation/finalization recovery sekarang bisa resume bila posisi final lokal sudah ter-commit tetapi action belum sempat ditutup
   - close performance hook sekarang memakai snapshot pre-close agar `pnlPct` dan nilai awal/akhir tidak bias dari posisi `CLOSED` yang sudah di-zero-kan
   - startup checklist sekarang memulihkan stale scheduler state `RUNNING` yang tertinggal setelah crash
-- `npm test` terakhir hijau dengan total `194` tests passed
+- Batch 19 sekarang sudah masuk:
+  - screening policy/gateway parity knob `timeframe`, `minTokenAgeHours` / `maxTokenAgeHours`, `athFilterPct`, dan `minFeePerTvl24h`
+  - risk/reporting parity knob `maxDailyLossSol`, `dailyProfitTargetSol`, dan `reporting.solMode`
+  - manual panic control operator `circuit_breaker_trip` / `circuit_breaker_clear` lewat runtime control store terpisah
+  - regression khusus Batch 19 untuk timeframe forwarding, hard-filter baru, OR daily loss gate, daily profit target alert, dan operator panic command
+- `npm test` terakhir hijau dengan total `200` tests passed

@@ -25,6 +25,8 @@ export const PortfolioRiskPolicySchema = z
     maxPoolExposurePct: z.number().min(0).max(100),
     maxRebalancesPerPosition: z.number().int().min(0),
     dailyLossLimitPct: z.number().positive(),
+    maxDailyLossSol: z.number().positive().optional(),
+    dailyProfitTargetSol: z.number().positive().optional(),
     circuitBreakerCooldownMin: z.number().int().positive(),
     maxNewDeploysPerHour: z.number().int().positive(),
   })
@@ -43,6 +45,7 @@ export const CapitalUsageSnapshotSchema = z
 export const PortfolioRiskStateSnapshotSchema = z
   .object({
     dailyLossPct: z.number().min(0),
+    dailyLossSol: z.number().min(0),
     drawdownState: DrawdownStateSchema,
     circuitBreakerState: CircuitBreakerStateSchema,
     capitalUsage: CapitalUsageSnapshotSchema,
@@ -58,6 +61,7 @@ export const PortfolioRiskEvaluationInputSchema = z
     proposedPoolAddress: z.string().min(1).nullable().default(null),
     proposedTokenMints: z.array(z.string().min(1)).max(2).default([]),
     recentNewDeploys: z.number().int().nonnegative().default(0),
+    solPriceUsd: z.number().positive().optional(),
     position: PositionSchema.nullable().default(null),
   })
   .strict()
@@ -247,13 +251,20 @@ export function buildPortfolioRiskStateSnapshot(input: {
   portfolio: PortfolioState;
   policy: PortfolioRiskPolicy;
   allocationDeltaUsd?: number;
+  solPriceUsd?: number;
 }): PortfolioRiskStateSnapshot {
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = PortfolioRiskPolicySchema.parse(input.policy);
   const dailyLossPct = calculateDailyLossPct(portfolio);
+  const resolvedSolPriceUsd = input.solPriceUsd ?? portfolio.solPriceUsd ?? null;
+  const dailyLossSol =
+    resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
+      ? 0
+      : Math.max(-portfolio.dailyRealizedPnl, 0) / resolvedSolPriceUsd;
 
   return PortfolioRiskStateSnapshotSchema.parse({
     dailyLossPct,
+    dailyLossSol,
     drawdownState: deriveDrawdownState({
       dailyLossPct,
       dailyLossLimitPct: policy.dailyLossLimitPct,
@@ -396,6 +407,7 @@ export function evaluatePortfolioRisk(
     portfolio: input.portfolio,
     policy: input.policy,
     allocationDeltaUsd,
+    ...(input.solPriceUsd === undefined ? {} : { solPriceUsd: input.solPriceUsd }),
   });
   const projectedExposureByPool = projectExposureByPool({
     portfolio: input.portfolio,
@@ -455,6 +467,15 @@ export function evaluatePortfolioRisk(
   if (state.dailyLossPct >= input.policy.dailyLossLimitPct) {
     blockingRules.push(
       `daily realized loss reached ${state.dailyLossPct.toFixed(2)}%`,
+    );
+  }
+
+  if (
+    input.policy.maxDailyLossSol !== undefined &&
+    state.dailyLossSol >= input.policy.maxDailyLossSol
+  ) {
+    blockingRules.push(
+      `daily realized loss reached ${state.dailyLossSol.toFixed(4)} SOL`,
     );
   }
 

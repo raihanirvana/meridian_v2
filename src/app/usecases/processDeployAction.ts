@@ -4,6 +4,7 @@ import {
   DeployLiquidityResultSchema,
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
@@ -29,6 +30,7 @@ export interface ProcessDeployActionInput {
   dlmmGateway: DlmmGateway;
   stateRepository: StateRepository;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
   now?: () => string;
 }
 
@@ -222,6 +224,34 @@ export async function processDeployAction(
   const payload = DeployActionRequestPayloadSchema.parse(input.action.requestPayload);
   const now = nowTimestamp(input.now);
   let deployResult: z.infer<typeof DeployActionResultPayloadSchema> | null = null;
+
+  if (
+    input.runtimeControlStore !== undefined &&
+    (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
+  ) {
+    await appendJournalEvent(input.journalRepository, {
+      timestamp: now,
+      eventType: "DEPLOY_BLOCKED_MANUAL_CIRCUIT_BREAKER",
+      actor: input.action.requestedBy,
+      wallet: input.action.wallet,
+      positionId: null,
+      actionId: input.action.actionId,
+      before: toJournalRecord({
+        actionId: input.action.actionId,
+        requestPayload: payload,
+      }),
+      after: null,
+      txIds: [],
+      resultStatus: "ABORTED",
+      error: "manual circuit breaker is active",
+    });
+    return {
+      nextStatus: "ABORTED",
+      resultPayload: null,
+      txIds: [],
+      error: "manual circuit breaker is active",
+    };
+  }
 
   try {
     deployResult = DeployActionResultPayloadSchema.parse(

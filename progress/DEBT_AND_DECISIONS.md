@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-22 (Batch 18 audit hardening applied)
+Last updated: 2026-04-22 (Batch 19 parity controls applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -392,6 +392,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - CLI dan Telegram operator surfaces Batch 14 berbagi parser/executor yang sama, dan manual command hanya boleh memanggil request use case yang masuk queue (`requestClose`, `requestDeploy`, `requestRebalance`) di [operatorCommands.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/operatorCommands.ts:1>)
   Rationale: ini menjaga DoD Batch 14 tetap tegas; surface operator boleh membaca state dan membuat request, tetapi tidak boleh bypass single-writer boundary.
   Tradeoff: format output saat ini masih text-first dan sengaja sederhana; jika nanti operator butuh UX lebih kaya, enhancement harus tetap duduk di atas parser/executor yang sama.
+
+- Batch 19 manual panic control disimpan di runtime control store terpisah (`runtime-controls.json`), bukan memaksa mutate `PortfolioState.circuitBreakerState` atau policy override screening/risk di [RuntimeControlStore.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/storage/RuntimeControlStore.ts:1>)
+  Rationale: manual "stop all deploys/rebalances" adalah intent operator runtime, bukan observasi risk snapshot. Menyimpannya terpisah menghindari tabrakan semantik dengan circuit breaker otomatis yang tetap diturunkan dari risk engine/portfolio snapshot.
+  Tradeoff: caller runtime yang ingin menghormati panic button wajib membaca runtime control store eksplisit; saat ini `runManagementCycle()` dan operator deploy/rebalance sudah melakukannya, tetapi screening worker nanti juga harus ikut wiring yang sama.
 
 - Batch 15 mempertahankan AI sebagai advisory layer; bahkan pada mode `constrained_action`, management worker tetap mengeksekusi hasil deterministic dan hanya membawa metadata AI (`aiSuggestedAction`, `aiReasoning`, `aiSource`) di [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:1>) dan [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:1>)
   Rationale: prinsip produk tetap “AI advisory unless explicitly allowed”; Batch 15 menambah ranking/explanation terstruktur tanpa membuka write privilege atau memberi override langsung ke lifecycle inti.

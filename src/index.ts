@@ -215,6 +215,15 @@ export {
   type RuntimePolicyStoreSnapshot,
 } from "./adapters/config/RuntimePolicyStore.js";
 export {
+  FileRuntimeControlStore,
+  RuntimeControlStoreFileSchema,
+  RuntimeControlStoreCorruptError,
+  RuntimeDeployControlSchema,
+  type RuntimeControlStore,
+  type RuntimeControlStoreFile,
+  type RuntimeDeployControl,
+} from "./adapters/storage/RuntimeControlStore.js";
+export {
   MockDlmmGateway,
   ClaimFeesRequestSchema,
   ClaimFeesResultSchema,

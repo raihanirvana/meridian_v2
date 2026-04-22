@@ -49,6 +49,9 @@ export const ScreeningCandidateInputSchema = z
     smartWalletCount: z.number().int().nonnegative(),
     smartMoneyConfidenceScore: z.number().min(0).max(100),
     poolAgeHours: z.number().nonnegative(),
+    tokenAgeHours: z.number().nonnegative().optional(),
+    athDistancePct: z.number().max(0).optional(),
+    feePerTvl24h: z.number().nonnegative().optional(),
     narrativePenaltyScore: z.number().min(0).max(100),
   })
   .strict();

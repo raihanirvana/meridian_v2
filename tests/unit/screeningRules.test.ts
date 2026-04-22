@@ -39,6 +39,7 @@ function buildCandidate(
     volumeUsd: 25_000,
     volumeConsistencyScore: 75,
     feeToTvlRatio: 0.12,
+    feePerTvl24h: 0.03,
     organicScore: 80,
     holderCount: 1_200,
     binStep: 100,
@@ -59,11 +60,13 @@ function buildCandidate(
 }
 
 const screeningPolicy = {
+  timeframe: "5m",
   minMarketCapUsd: 150_000,
   maxMarketCapUsd: 10_000_000,
   minTvlUsd: 10_000,
   minVolumeUsd: 5_000,
   minFeeActiveTvlRatio: 0.05,
+  minFeePerTvl24h: 0.01,
   minOrganic: 60,
   minHolderCount: 500,
   allowedBinSteps: [80, 100, 125],
@@ -157,6 +160,7 @@ describe("screening rules", () => {
           poolAddress: "pool_best",
           symbolPair: "SOL-USDC",
           feeToTvlRatio: 0.14,
+          feePerTvl24h: 0.04,
           volumeConsistencyScore: 90,
           organicScore: 88,
           smartMoneyConfidenceScore: 90,
@@ -166,6 +170,7 @@ describe("screening rules", () => {
           poolAddress: "pool_mid",
           symbolPair: "BONK-SOL",
           feeToTvlRatio: 0.09,
+          feePerTvl24h: 0.03,
           volumeConsistencyScore: 70,
           organicScore: 72,
           smartMoneyConfidenceScore: 74,
@@ -175,6 +180,7 @@ describe("screening rules", () => {
           poolAddress: "pool_low",
           symbolPair: "JUP-SOL",
           feeToTvlRatio: 0.07,
+          feePerTvl24h: 0.02,
           volumeConsistencyScore: 60,
           organicScore: 65,
           smartMoneyConfidenceScore: 60,
@@ -198,5 +204,32 @@ describe("screening rules", () => {
       result.candidates.find((candidate) => candidate.candidateId === "cand_low")?.decision,
     ).toBe("PASSED_HARD_FILTER");
     expect(result.shortlist[0]?.score).toBeGreaterThan(result.shortlist[1]?.score ?? 0);
+  });
+
+  it("blocks candidates by token age, ath distance, and 24h fee-per-tvl floor", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        tokenAgeHours: 0.5,
+        athDistancePct: -5,
+        feePerTvl24h: 0.001,
+      }),
+      portfolio: buildPortfolio(),
+      policy: {
+        ...screeningPolicy,
+        minTokenAgeHours: 1,
+        maxTokenAgeHours: 720,
+        athFilterPct: -20,
+        minFeePerTvl24h: 0.01,
+      },
+    });
+
+    expect(result.hardFilterPassed).toBe(false);
+    expect(result.rejectionReasons).toEqual(
+      expect.arrayContaining([
+        "token age below minimum",
+        "price is too close to ath",
+        "24h fee-per-tvl below minimum",
+      ]),
+    );
   });
 });

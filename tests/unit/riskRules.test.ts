@@ -407,4 +407,26 @@ describe("risk rules", () => {
     expect(updatedPortfolio.drawdownState).toBe("LIMIT_REACHED");
     expect(updatedPortfolio.circuitBreakerState).toBe("ON");
   });
+
+  it("blocks deploy when either percent or absolute SOL daily loss limit is breached", () => {
+    const result = evaluatePortfolioRisk({
+      action: "DEPLOY",
+      portfolio: buildPortfolio({
+        dailyRealizedPnl: -25,
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 90,
+        maxDailyLossSol: 0.2,
+      }),
+      solPriceUsd: 100,
+      proposedAllocationUsd: 1,
+      proposedPoolAddress: "pool_new",
+      proposedTokenMints: ["mint_a", "mint_b"],
+      recentNewDeploys: 0,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.blockingRules).toContain("daily realized loss reached 0.2500 SOL");
+    expect(result.state.dailyLossSol).toBe(0.25);
+  });
 });

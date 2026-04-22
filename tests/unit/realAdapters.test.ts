@@ -275,6 +275,22 @@ describe("real adapters", () => {
     ).rejects.toBeInstanceOf(AdapterTransportError);
   });
 
+  it("forwards screening timeframe to the HTTP query boundary", async () => {
+    let requestedUrl = "";
+    const screening = new HttpScreeningGateway({
+      baseUrl: "https://screening.example.com/v1/",
+      fetchFn: async (url) => {
+        requestedUrl = String(url);
+        return new Response(JSON.stringify([]), { status: 200 });
+      },
+    });
+
+    await screening.listCandidates({ limit: 5, timeframe: "1h" });
+
+    expect(requestedUrl).toContain("timeframe=1h");
+    expect(requestedUrl).toContain("limit=5");
+  });
+
   it("treats DLMM 404 getPosition as null to preserve reconciliation semantics", async () => {
     const dlmm = new HttpDlmmGateway({
       baseUrl: "https://dlmm.example.com/v1/",

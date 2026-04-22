@@ -12,6 +12,7 @@ export interface MeridianPaths {
   poolMemoryFilePath: string;
   signalWeightsFilePath: string;
   schedulerMetadataFilePath: string;
+  runtimeControlsFilePath: string;
 }
 
 export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
@@ -30,6 +31,7 @@ export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
     poolMemoryFilePath: path.join(resolvedDataDir, "pool-memory.json"),
     signalWeightsFilePath: path.join(resolvedDataDir, "signal-weights.json"),
     schedulerMetadataFilePath: path.join(resolvedDataDir, "scheduler-metadata.json"),
+    runtimeControlsFilePath: path.join(resolvedDataDir, "runtime-controls.json"),
   };
 }
 

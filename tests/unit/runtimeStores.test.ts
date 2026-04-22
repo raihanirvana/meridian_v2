@@ -28,11 +28,13 @@ describe("runtime stores", () => {
     const stores = createRuntimeStores({
       dataDir: directory,
       baseScreeningPolicy: {
+        timeframe: "5m",
         minMarketCapUsd: 100_000,
         maxMarketCapUsd: 10_000_000,
         minTvlUsd: 10_000,
         minVolumeUsd: 500,
         minFeeActiveTvlRatio: 0.05,
+        minFeePerTvl24h: 0.01,
         minOrganic: 60,
         minHolderCount: 500,
         allowedBinSteps: [80],

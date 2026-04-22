@@ -9,12 +9,17 @@ import { scoreCandidate, CandidateScorePolicySchema, ScreeningCandidateInputSche
 
 export const ScreeningPolicySchema = z
   .object({
+    timeframe: z.enum(["5m", "1h", "24h"]),
     minMarketCapUsd: z.number().positive(),
     maxMarketCapUsd: z.number().positive(),
     minTvlUsd: z.number().positive(),
     minVolumeUsd: z.number().positive(),
     minFeeActiveTvlRatio: z.number().positive(),
+    minFeePerTvl24h: z.number().positive(),
     minOrganic: z.number().min(0).max(100),
+    minTokenAgeHours: z.number().nonnegative().optional(),
+    maxTokenAgeHours: z.number().nonnegative().optional(),
+    athFilterPct: z.number().min(-100).max(0).optional(),
     minHolderCount: z.number().int().positive(),
     allowedBinSteps: z.array(z.number().int().positive()).min(1),
     blockedLaunchpads: z.array(z.string().min(1)),
@@ -36,6 +41,18 @@ export const ScreeningPolicySchema = z
         code: z.ZodIssueCode.custom,
         path: ["maxMarketCapUsd"],
         message: "must be greater than or equal to minMarketCapUsd",
+      });
+    }
+
+    if (
+      policy.minTokenAgeHours !== undefined &&
+      policy.maxTokenAgeHours !== undefined &&
+      policy.maxTokenAgeHours < policy.minTokenAgeHours
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxTokenAgeHours"],
+        message: "must be greater than or equal to minTokenAgeHours",
       });
     }
   });
@@ -88,8 +105,34 @@ export function evaluateScreeningHardFilters(input: {
   if (candidate.feeToTvlRatio < policy.minFeeActiveTvlRatio) {
     rejectionReasons.push("fee-to-tvl ratio below minimum");
   }
+  if (candidate.feePerTvl24h === undefined) {
+    rejectionReasons.push("24h fee-per-tvl unavailable");
+  } else if (candidate.feePerTvl24h < policy.minFeePerTvl24h) {
+    rejectionReasons.push("24h fee-per-tvl below minimum");
+  }
   if (candidate.organicScore < policy.minOrganic) {
     rejectionReasons.push("organic score below minimum");
+  }
+  if (policy.minTokenAgeHours !== undefined) {
+    if (candidate.tokenAgeHours === undefined) {
+      rejectionReasons.push("token age unavailable");
+    } else if (candidate.tokenAgeHours < policy.minTokenAgeHours) {
+      rejectionReasons.push("token age below minimum");
+    }
+  }
+  if (policy.maxTokenAgeHours !== undefined) {
+    if (candidate.tokenAgeHours === undefined) {
+      rejectionReasons.push("token age unavailable");
+    } else if (candidate.tokenAgeHours > policy.maxTokenAgeHours) {
+      rejectionReasons.push("token age above maximum");
+    }
+  }
+  if (policy.athFilterPct !== undefined) {
+    if (candidate.athDistancePct === undefined) {
+      rejectionReasons.push("ath distance unavailable");
+    } else if (candidate.athDistancePct > policy.athFilterPct) {
+      rejectionReasons.push("price is too close to ath");
+    }
   }
   if (candidate.holderCount < policy.minHolderCount) {
     rejectionReasons.push("holder count below minimum");
@@ -190,11 +233,13 @@ function buildCandidateEntity(input: {
       volumeUsd: input.candidate.volumeUsd,
       volumeConsistencyScore: input.candidate.volumeConsistencyScore,
       feeToTvlRatio: input.candidate.feeToTvlRatio,
+      feePerTvl24h: input.candidate.feePerTvl24h,
       organicScore: input.candidate.organicScore,
       holderCount: input.candidate.holderCount,
       binStep: input.candidate.binStep,
       pairType: input.candidate.pairType,
       launchpad: input.candidate.launchpad,
+      athDistancePct: input.candidate.athDistancePct,
     },
     tokenRiskSnapshot: {
       deployerAddress: input.candidate.deployerAddress,
@@ -210,6 +255,7 @@ function buildCandidateEntity(input: {
       smartWalletCount: input.candidate.smartWalletCount,
       confidenceScore: input.candidate.smartMoneyConfidenceScore,
       poolAgeHours: input.candidate.poolAgeHours,
+      tokenAgeHours: input.candidate.tokenAgeHours,
       narrativePenaltyScore: input.candidate.narrativePenaltyScore,
     },
     hardFilterPassed: input.hardFilter.hardFilterPassed,

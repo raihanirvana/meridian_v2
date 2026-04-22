@@ -41,6 +41,7 @@ export class HttpScreeningGateway implements ScreeningGateway {
       path: "/candidates",
       query: {
         limit: parsedRequest.limit,
+        timeframe: parsedRequest.timeframe,
       },
       responseSchema: CandidateSchema.array(),
     });

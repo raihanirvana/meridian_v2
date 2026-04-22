@@ -8,14 +8,18 @@ import {
 
 export const ListCandidatesRequestSchema = z.object({
   limit: z.number().int().positive(),
+  timeframe: z.enum(["5m", "1h", "24h"]).default("24h"),
 });
 
 export const CandidateDetailsSchema = z.object({
   poolAddress: z.string().min(1),
   pairLabel: z.string().min(1),
   feeToTvlRatio: z.number().nonnegative(),
+  feePerTvl24h: z.number().nonnegative().optional(),
   organicScore: z.number().min(0).max(100),
   holderCount: z.number().int().nonnegative(),
+  tokenAgeHours: z.number().nonnegative().optional(),
+  athDistancePct: z.number().max(0).optional(),
 });
 
 export type ListCandidatesRequest = z.infer<typeof ListCandidatesRequestSchema>;

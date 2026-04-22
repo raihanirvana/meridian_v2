@@ -108,11 +108,13 @@ function createConservativeSignalProvider(): (
 
 function toRuntimeScreeningPolicy(
   userScreening: {
+    timeframe: "5m" | "1h" | "24h";
     minMarketCapUsd: number;
     maxMarketCapUsd: number;
     minTvlUsd: number;
     minVolumeUsd: number;
     minFeeActiveTvlRatio: number;
+    minFeePerTvl24h: number;
     minOrganic: number;
     minHolderCount: number;
     allowedBinSteps: number[];

@@ -8,6 +8,7 @@ import type { RuntimePolicyStore } from "../../adapters/config/RuntimePolicyStor
 import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
 import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
 import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { Action } from "../../domain/entities/Action.js";
 import { type PortfolioState } from "../../domain/entities/PortfolioState.js";
@@ -111,6 +112,13 @@ const OperatorCommandSchema = z.discriminatedUnion("kind", [
     confirm: z.literal(true),
   }),
   z.object({
+    kind: z.literal("CIRCUIT_BREAKER_TRIP"),
+    reason: z.string().min(1).optional(),
+  }),
+  z.object({
+    kind: z.literal("CIRCUIT_BREAKER_CLEAR"),
+  }),
+  z.object({
     kind: z.literal("POOL_MEMORY"),
     poolAddress: z.string().min(1),
   }),
@@ -152,8 +160,10 @@ export interface ExecuteOperatorCommandInput {
   performanceRepository?: PerformanceRepositoryInterface;
   poolMemoryRepository?: PoolMemoryRepository;
   runtimePolicyStore?: RuntimePolicyStore;
+  runtimeControlStore?: RuntimeControlStore;
   policyProvider?: PolicyProvider;
   previousPortfolioState?: PortfolioState | null;
+  reportingSolMode?: boolean;
 }
 
 export interface OperatorCommandExecutionResult {
@@ -231,6 +241,22 @@ export function parseOperatorCommand(
     return OperatorCommandSchema.parse({
       kind: "POLICY_RESET",
       confirm: true,
+    });
+  }
+
+  const circuitBreakerTripMatch = normalized.match(/^circuit_breaker_trip(?:\s+(.+))?$/s);
+  if (circuitBreakerTripMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "CIRCUIT_BREAKER_TRIP",
+      ...(circuitBreakerTripMatch[1] === undefined
+        ? {}
+        : { reason: circuitBreakerTripMatch[1].trim() }),
+    });
+  }
+
+  if (normalized === "circuit_breaker_clear") {
+    return OperatorCommandSchema.parse({
+      kind: "CIRCUIT_BREAKER_CLEAR",
     });
   }
 
@@ -395,7 +421,7 @@ export function parseOperatorCommand(
   }
 
   throw new Error(
-    "unknown command; supported commands: status, positions, pending-actions, close, deploy, rebalance, lessons list/pin/unpin/add/remove/remove-by-keyword/clear, performance summary, performance-history, policy show, policy reset, pool memory/note/cooldown/cooldown_clear",
+    "unknown command; supported commands: status, positions, pending-actions, close, deploy, rebalance, lessons list/pin/unpin/add/remove/remove-by-keyword/clear, performance summary, performance-history, policy show, policy reset, circuit_breaker_trip, circuit_breaker_clear, pool memory/note/cooldown/cooldown_clear",
   );
 }
 
@@ -449,17 +475,41 @@ function requirePoolMemoryRepository(
   return repository;
 }
 
-function renderPortfolioStatus(portfolio: PortfolioState): string {
-  return [
-    `wallet balance usd: ${portfolio.walletBalance.toFixed(2)}`,
-    `available usd: ${portfolio.availableBalance.toFixed(2)}`,
-    `reserved usd: ${portfolio.reservedBalance.toFixed(2)}`,
-    `open positions: ${portfolio.openPositions}`,
-    `pending actions: ${portfolio.pendingActions}`,
-    `daily realized pnl usd: ${portfolio.dailyRealizedPnl.toFixed(2)}`,
-    `drawdown: ${portfolio.drawdownState}`,
-    `circuit breaker: ${portfolio.circuitBreakerState}`,
-  ].join("\n");
+function requireRuntimeControlStore(
+  repository: RuntimeControlStore | undefined,
+): RuntimeControlStore {
+  if (repository === undefined) {
+    throw new Error("runtime control store is required for circuit breaker commands");
+  }
+
+  return repository;
+}
+
+function renderPortfolioStatus(input: {
+  portfolio: PortfolioState;
+  manualStopAllDeploys: boolean;
+  reportingSolMode: boolean;
+}): string {
+  const lines = [
+    `wallet balance usd: ${input.portfolio.walletBalance.toFixed(2)}`,
+    `available usd: ${input.portfolio.availableBalance.toFixed(2)}`,
+    `reserved usd: ${input.portfolio.reservedBalance.toFixed(2)}`,
+    `open positions: ${input.portfolio.openPositions}`,
+    `pending actions: ${input.portfolio.pendingActions}`,
+    `daily realized pnl usd: ${input.portfolio.dailyRealizedPnl.toFixed(2)}`,
+  ];
+  if (input.reportingSolMode && input.portfolio.solPriceUsd !== undefined) {
+    lines.push(
+      `wallet balance sol: ${(input.portfolio.walletBalance / input.portfolio.solPriceUsd).toFixed(4)}`,
+      `daily realized pnl sol: ${(input.portfolio.dailyRealizedPnl / input.portfolio.solPriceUsd).toFixed(4)}`,
+    );
+  }
+  lines.push(
+    `drawdown: ${input.portfolio.drawdownState}`,
+    `circuit breaker: ${input.portfolio.circuitBreakerState}`,
+    `manual stop-all-deploys: ${input.manualStopAllDeploys ? "ON" : "OFF"}`,
+  );
+  return lines.join("\n");
 }
 
 function renderPositions(positions: Awaited<ReturnType<StateRepository["list"]>>): string {
@@ -517,10 +567,18 @@ export async function executeOperatorCommand(
         previousPortfolioState: input.previousPortfolioState ?? null,
         now: requestedAt,
       });
+      const manualStopAllDeploys =
+        input.runtimeControlStore === undefined
+          ? false
+          : (await input.runtimeControlStore.snapshot()).stopAllDeploys.active;
 
       return {
         command: input.command.kind,
-        text: renderPortfolioStatus(portfolio),
+        text: renderPortfolioStatus({
+          portfolio,
+          manualStopAllDeploys,
+          reportingSolMode: input.reportingSolMode ?? false,
+        }),
         actionId: null,
       };
     }
@@ -569,6 +627,13 @@ export async function executeOperatorCommand(
       };
     }
     case "REQUEST_DEPLOY": {
+      const runtimeControlStore = input.runtimeControlStore;
+      if (
+        runtimeControlStore !== undefined &&
+        (await runtimeControlStore.snapshot()).stopAllDeploys.active
+      ) {
+        throw new Error("manual circuit breaker is active; deploy requests are blocked");
+      }
       const action = await requestDeploy({
         actionQueue: input.actionQueue,
         wallet: input.wallet,
@@ -585,6 +650,13 @@ export async function executeOperatorCommand(
       };
     }
     case "REQUEST_REBALANCE": {
+      const runtimeControlStore = input.runtimeControlStore;
+      if (
+        runtimeControlStore !== undefined &&
+        (await runtimeControlStore.snapshot()).stopAllDeploys.active
+      ) {
+        throw new Error("manual circuit breaker is active; rebalance requests are blocked");
+      }
       const action = await requestRebalance({
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
@@ -710,11 +782,17 @@ export async function executeOperatorCommand(
         input.performanceRepository,
       );
       const summary = await performanceRepository.summary();
+      const solPriceUsd = input.reportingSolMode === true
+        ? (await input.priceGateway.getSolPriceUsd()).priceUsd
+        : null;
       return {
         command: input.command.kind,
         text: [
           `closed: ${summary.totalPositionsClosed}`,
           `total pnl usd: ${summary.totalPnlUsd.toFixed(2)}`,
+          ...(solPriceUsd === null
+            ? []
+            : [`total pnl sol: ${(summary.totalPnlUsd / solPriceUsd).toFixed(4)}`]),
           `avg pnl pct: ${summary.avgPnlPct.toFixed(2)}`,
           `win rate pct: ${summary.winRatePct.toFixed(2)}`,
         ].join("\n"),
@@ -783,6 +861,55 @@ export async function executeOperatorCommand(
       return {
         command: input.command.kind,
         text: "policy overrides reset",
+        actionId: null,
+      };
+    }
+    case "CIRCUIT_BREAKER_TRIP": {
+      const runtimeControlStore = requireRuntimeControlStore(input.runtimeControlStore);
+      const snapshot = await runtimeControlStore.tripStopAllDeploys({
+        ...(input.command.reason === undefined ? {} : { reason: input.command.reason }),
+        updatedAt: requestedAt,
+      });
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "CIRCUIT_BREAKER_MANUAL_TRIP",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: snapshot,
+        txIds: [],
+        resultStatus: "ACTIVE",
+        error: null,
+      });
+      return {
+        command: input.command.kind,
+        text: snapshot.reason === undefined
+          ? "manual circuit breaker activated"
+          : `manual circuit breaker activated: ${snapshot.reason}`,
+        actionId: null,
+      };
+    }
+    case "CIRCUIT_BREAKER_CLEAR": {
+      const runtimeControlStore = requireRuntimeControlStore(input.runtimeControlStore);
+      const snapshot = await runtimeControlStore.clearStopAllDeploys(requestedAt);
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "CIRCUIT_BREAKER_MANUAL_CLEAR",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: snapshot,
+        txIds: [],
+        resultStatus: "CLEARED",
+        error: null,
+      });
+      return {
+        command: input.command.kind,
+        text: "manual circuit breaker cleared",
         actionId: null,
       };
     }
