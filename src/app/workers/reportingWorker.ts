@@ -12,6 +12,7 @@ import {
   generateRuntimeReport,
   type RuntimeReport,
 } from "../usecases/generateRuntimeReport.js";
+import { renderDailyBriefing } from "../usecases/renderDailyBriefing.js";
 import { sendOperatorAlert } from "../usecases/sendOperatorAlert.js";
 
 export interface ReportingWorkerInput {
@@ -27,6 +28,7 @@ export interface ReportingWorkerInput {
   alertRecipient?: string;
   dailyProfitTargetSol?: number;
   solMode?: boolean;
+  briefingEmoji?: boolean;
   stuckActionThresholdMinutes?: number;
   runningWorkerThresholdMinutes?: number;
   intervalSec?: number;
@@ -36,6 +38,7 @@ export interface ReportingWorkerInput {
 
 export interface ReportingWorkerResult {
   report: RuntimeReport;
+  briefingText: string;
   deliveredAlerts: NotificationResult[];
   skippedBecauseAlreadyRunning: boolean;
 }
@@ -89,6 +92,12 @@ export async function runReportingWorker(
       });
 
       const deliveredAlerts: NotificationResult[] = [];
+      const briefingText = renderDailyBriefing({
+        report,
+        ...(input.briefingEmoji === undefined
+          ? {}
+          : { emoji: input.briefingEmoji }),
+      });
       if (
         input.notifierGateway !== undefined &&
         input.alertRecipient !== undefined &&
@@ -108,6 +117,7 @@ export async function runReportingWorker(
 
       return {
         report,
+        briefingText,
         deliveredAlerts,
       };
     },
@@ -135,6 +145,12 @@ export async function runReportingWorker(
     });
     return {
       report,
+      briefingText: renderDailyBriefing({
+        report,
+        ...(input.briefingEmoji === undefined
+          ? {}
+          : { emoji: input.briefingEmoji }),
+      }),
       deliveredAlerts: [],
       skippedBecauseAlreadyRunning: true,
     };
@@ -142,6 +158,7 @@ export async function runReportingWorker(
 
   return {
     report: scheduled.result.report,
+    briefingText: scheduled.result.briefingText,
     deliveredAlerts: scheduled.result.deliveredAlerts,
     skippedBecauseAlreadyRunning: false,
   };

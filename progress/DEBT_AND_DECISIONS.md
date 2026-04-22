@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-22 (Batch 19 parity controls applied)
+Last updated: 2026-04-22 (Batch 20 enrichment, screening runtime, and claim auto-swap applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -162,15 +162,14 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: guard saat ini sudah memblok ketika reserve snapshot jatuh di bawah minimum, tetapi contract antara `walletBalance`, `availableBalance`, dan `reservedBalance` belum diformalisasi di schema. Perubahan penuh lebih aman dilakukan saat worker Batch 13 benar-benar menjadi producer utama snapshot portfolio.
   Revisit: saat integrasi worker risk/orchestration sudah final, lalu kencangkan schema atau builder snapshot di boundary.
 
-- `N34` management worker Batch 13 saat ini hanya men-dispatch action yang memang sudah punya request flow resmi (`CLOSE`, `REBALANCE`); hasil engine `CLAIM_FEES` dan `PARTIAL_CLOSE` masih di-skip sebagai unsupported di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:171>)
+- `N34` management worker saat ini masih belum men-dispatch `PARTIAL_CLOSE`; `CLAIM_FEES` sudah punya flow resmi, tetapi partial close masih di-skip sebagai unsupported di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:171>)
   Status: deferred
-  Kenapa ditunda: Batch 13 fokus pada orchestration fondasi dan tidak menambah close/confirm pipeline baru untuk `CLAIM_FEES` / `PARTIAL_CLOSE`. Worker tetap deterministic dan jujur tentang keterbatasannya, tetapi coverage auto-management penuh masih belum lengkap.
-  Revisit: saat flow request/process/finalize untuk `CLAIM_FEES` dan `PARTIAL_CLOSE` masuk roadmap aktif.
+  Kenapa ditunda: partial close masih butuh pipeline request/process/finalize yang setara dengan close/claim/rebalance. Setelah Batch 20, coverage auto-management tinggal kurang di partial-close path.
+  Revisit: saat flow request/process/finalize untuk `PARTIAL_CLOSE` masuk roadmap aktif.
 
-- `N36` residual scope PRD Batch 13 sekarang tinggal `screeningWorker`; `reportingWorker`, shared scheduler metadata, dan manual trigger state sudah ditutup di Batch 18, tetapi screening orchestration end-to-end belum dirakit
-  Status: deferred
-  Kenapa ditunda: Batch 18 memprioritaskan hardening live-readiness, reporting, alerts, dan scheduler state bersama. Screening runtime tetap paling mahal karena repo belum punya ingestion candidate snapshot + deploy planner live yang final.
-  Revisit: saat runtime screening resmi dirakit bersama composition root supervised-live.
+- `N36` screening worker orchestration runtime belum ada di Batch 18, tetapi sudah ditutup di Batch 20 lewat `runScreeningCycle()`, `runScreeningWorker()`, adaptive interval helper, dan wiring composition root live
+  Status: closed
+  Kenapa ditutup: runtime screening sekarang sudah punya worker resmi, scheduler metadata, policy/signal-weight injection, candidate detail enrichment, AI rerank, dan live bootstrap wiring opsional via env-backed gateways.
 
 - `N37` `PortfolioStateBuilder` belum mengecek staleness `asOf` dari `PriceGateway` dan `WalletGateway` snapshot di [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:67>)
   Status: deferred
@@ -231,10 +230,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: Batch 17.4 menutup fondasi entity/store/rule/usecase/provider dan menjaga perubahan scoring tetap deterministic, tetapi belum ada source historis yang bersih untuk `volumeConsistency`, `liquidityDepth`, `holderQuality`, `tokenAuditHealth`, `smartMoney`, `poolMaturity`, `launchpadPenalty`, atau `overlapPenalty`.
   Revisit: saat screening worker / candidate snapshot persistence resmi dibangun, supaya entry snapshot per kandidat bisa ditautkan ke `PerformanceRecord` close dan Darwin bisa belajar dari seluruh sinyal.
 
-- `N49` Darwin weights sudah bisa dipakai oleh scorer via parameter/provider, tetapi belum ada screening worker/runtime composition root yang menginjeksikan `SignalWeightsProvider` secara default di [screeningRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/screeningRules.ts:1>) dan [SignalWeightsProvider.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/SignalWeightsProvider.ts:1>)
-  Status: deferred
-  Kenapa ditunda: repo saat ini belum punya `screeningWorker` aktif, jadi Darwin path baru terverifikasi di integration/usecase layer dan pada caller yang sengaja menginjeksikan provider.
-  Revisit: saat `screeningWorker` atau composition root runtime screening resmi dirakit, kemungkinan bersama Batch 18 atau batch worker berikutnya.
+- `N49` Darwin weights belum terinjeksi default di runtime screening, tetapi sudah ditutup di Batch 20 karena `createRuntimeSupervisor()` sekarang membuat `DefaultSignalWeightsProvider` dan menyuntikkannya ke `runScreeningWorker()`
+  Status: closed
+  Kenapa ditutup: jalur runtime screening sekarang sudah memakai provider Darwin secara default saat `darwin.enabled=true`, bukan hanya pada integration/usecase caller manual.
 
 - `N50` runtime supervisor/composition root sekarang sudah ada, tetapi concrete live wiring untuk `WalletGateway`, `PriceGateway`, `NotifierGateway`, dan public wallet source masih bergantung pada environment luar repo ini
   Status: deferred

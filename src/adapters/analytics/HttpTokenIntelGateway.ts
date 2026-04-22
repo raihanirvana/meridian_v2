@@ -4,7 +4,9 @@ import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
 
 import {
   SmartMoneySnapshotSchema,
+  TokenNarrativeSnapshotSchema,
   TokenRiskSnapshotSchema,
+  type TokenNarrativeSnapshot,
   type SmartMoneySnapshot,
   type TokenIntelGateway,
   type TokenRiskSnapshot,
@@ -48,6 +50,18 @@ export class HttpTokenIntelGateway implements TokenIntelGateway {
       method: "GET",
       path: `/tokens/${encodeURIComponent(z.string().min(1).parse(tokenMint))}/smart-money`,
       responseSchema: SmartMoneySnapshotSchema,
+    });
+  }
+
+  public async getTokenNarrativeSnapshot(
+    tokenMint: string,
+  ): Promise<TokenNarrativeSnapshot> {
+    return this.client.request({
+      method: "GET",
+      path:
+        `/tokens/${encodeURIComponent(z.string().min(1).parse(tokenMint))}` +
+        "/narrative",
+      responseSchema: TokenNarrativeSnapshotSchema,
     });
   }
 }

@@ -14,6 +14,7 @@ export const ScreeningPolicySchema = z
     maxMarketCapUsd: z.number().positive(),
     minTvlUsd: z.number().positive(),
     minVolumeUsd: z.number().positive(),
+    minVolumeTrendPct: z.number().optional(),
     minFeeActiveTvlRatio: z.number().positive(),
     minFeePerTvl24h: z.number().positive(),
     minOrganic: z.number().min(0).max(100),
@@ -101,6 +102,13 @@ export function evaluateScreeningHardFilters(input: {
   }
   if (candidate.volumeUsd < policy.minVolumeUsd) {
     rejectionReasons.push("volume below minimum");
+  }
+  if (policy.minVolumeTrendPct !== undefined) {
+    if (candidate.volumeTrendPct === undefined) {
+      rejectionReasons.push("volume trend unavailable");
+    } else if (candidate.volumeTrendPct < policy.minVolumeTrendPct) {
+      rejectionReasons.push("volume trend below minimum");
+    }
   }
   if (candidate.feeToTvlRatio < policy.minFeeActiveTvlRatio) {
     rejectionReasons.push("fee-to-tvl ratio below minimum");
@@ -231,6 +239,7 @@ function buildCandidateEntity(input: {
       marketCapUsd: input.candidate.marketCapUsd,
       tvlUsd: input.candidate.tvlUsd,
       volumeUsd: input.candidate.volumeUsd,
+      volumeTrendPct: input.candidate.volumeTrendPct,
       volumeConsistencyScore: input.candidate.volumeConsistencyScore,
       feeToTvlRatio: input.candidate.feeToTvlRatio,
       feePerTvl24h: input.candidate.feePerTvl24h,
@@ -256,6 +265,9 @@ function buildCandidateEntity(input: {
       confidenceScore: input.candidate.smartMoneyConfidenceScore,
       poolAgeHours: input.candidate.poolAgeHours,
       tokenAgeHours: input.candidate.tokenAgeHours,
+      narrativeSummary: input.candidate.narrativeSummary ?? null,
+      holderDistributionSummary:
+        input.candidate.holderDistributionSummary ?? null,
       narrativePenaltyScore: input.candidate.narrativePenaltyScore,
     },
     hardFilterPassed: input.hardFilter.hardFilterPassed,

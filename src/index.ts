@@ -182,6 +182,9 @@ export {
   type ScreeningCandidateInput,
 } from "./domain/scoring/candidateScore.js";
 export {
+  deriveDefaultCandidateScorePolicy,
+} from "./domain/scoring/defaultCandidateScorePolicy.js";
+export {
   FileStore,
   type FileStoreOptions,
   type FileSystemAdapter,
@@ -286,7 +289,9 @@ export {
   MockTokenIntelGateway,
   type MockTokenIntelGatewayBehaviors,
   SmartMoneySnapshotSchema,
+  TokenNarrativeSnapshotSchema,
   type SmartMoneySnapshot,
+  type TokenNarrativeSnapshot,
   type TokenIntelGateway,
   TokenRiskSnapshotSchema,
   type TokenRiskSnapshot,
@@ -414,6 +419,10 @@ export {
   type LessonPromptService,
 } from "./app/services/LessonPromptService.js";
 export {
+  resolveAdaptiveScreeningIntervalSec,
+  type ResolveAdaptiveScreeningIntervalInput,
+} from "./app/services/AdaptiveScreeningInterval.js";
+export {
   buildPerformanceRecordFromClose,
   createRecordPositionPerformanceLessonHook,
   type CreateRecordPositionPerformanceLessonHookInput,
@@ -446,6 +455,10 @@ export {
   type ProcessActionQueueInput,
 } from "./app/usecases/processActionQueue.js";
 export {
+  renderDailyBriefing,
+  type RenderDailyBriefingInput,
+} from "./app/usecases/renderDailyBriefing.js";
+export {
   runDryRunSimulation,
   type DryRunSimulationCycleResult,
   type RunDryRunSimulationInput,
@@ -477,9 +490,19 @@ export {
   type RequestRebalanceInput,
 } from "./app/usecases/requestRebalance.js";
 export {
+  ClaimFeesActionRequestPayloadSchema,
+  requestClaimFees,
+  type ClaimFeesActionRequestPayload,
+  type RequestClaimFeesInput,
+} from "./app/usecases/requestClaimFees.js";
+export {
   processCloseAction,
   type ProcessCloseActionInput,
 } from "./app/usecases/processCloseAction.js";
+export {
+  processClaimFeesAction,
+  type ProcessClaimFeesActionInput,
+} from "./app/usecases/processClaimFeesAction.js";
 export {
   processRebalanceAction,
   RebalanceCloseSubmittedPayloadSchema,
@@ -496,6 +519,17 @@ export {
   type PostCloseSwapHook,
   type PostCloseSwapInput,
 } from "./app/usecases/finalizeClose.js";
+export {
+  createPostClaimSwapHook,
+} from "./app/usecases/executePostClaimSwap.js";
+export {
+  finalizeClaimFees,
+  PostClaimSwapInputSchema,
+  type FinalizeClaimFeesInput,
+  type FinalizeClaimFeesResult,
+  type PostClaimSwapHook,
+  type PostClaimSwapInput,
+} from "./app/usecases/finalizeClaimFees.js";
 export {
   finalizeRebalance,
   RebalanceAbortedPayloadSchema,
@@ -571,6 +605,11 @@ export {
   type RunManagementCycleResult,
 } from "./app/usecases/runManagementCycle.js";
 export {
+  runScreeningCycle,
+  type RunScreeningCycleInput,
+  type RunScreeningCycleResult,
+} from "./app/usecases/runScreeningCycle.js";
+export {
   runReconciliationWorker,
   type ReconciliationWorkerInput,
 } from "./app/workers/reconciliationWorker.js";
@@ -578,6 +617,10 @@ export {
   runManagementWorker,
   type ManagementWorkerInput,
 } from "./app/workers/managementWorker.js";
+export {
+  runScreeningWorker,
+  type ScreeningWorkerInput,
+} from "./app/workers/screeningWorker.js";
 export {
   runReportingWorker,
   type ReportingWorkerInput,

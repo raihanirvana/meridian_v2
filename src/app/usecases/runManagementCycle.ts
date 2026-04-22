@@ -29,6 +29,7 @@ import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 
 import { recordPoolSnapshot } from "./recordPoolSnapshot.js";
 import { requestClose } from "./requestClose.js";
+import { requestClaimFees } from "./requestClaimFees.js";
 import {
   deriveRebalanceCapitalRequirement,
   requestRebalance,
@@ -133,6 +134,10 @@ export interface RunManagementCycleInput {
     | null;
   requestedBy?: Actor;
   dryRun?: boolean;
+  claimConfig?: {
+    autoSwapAfterClaim: boolean;
+    swapOutputMint: string;
+  };
   previousPortfolioState?: PortfolioState | null;
   now?: () => string;
 }
@@ -302,10 +307,7 @@ export async function runManagementCycle(
       ...(input.aiTimeoutMs === undefined ? {} : { timeoutMs: input.aiTimeoutMs }),
     });
 
-    if (
-      evaluation.action === "CLAIM_FEES" ||
-      evaluation.action === "PARTIAL_CLOSE"
-    ) {
+    if (evaluation.action === "PARTIAL_CLOSE") {
       await appendJournalEvent(input.journalRepository, {
         timestamp: now,
         eventType: "MANAGEMENT_ACTION_UNSUPPORTED",
@@ -331,6 +333,58 @@ export async function runManagementCycle(
         reason: evaluation.reason,
         triggerReasons: evaluation.triggerReasons,
         actionId: null,
+        riskResult: null,
+        aiMode,
+        aiSource: aiAdvisory.source,
+        aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+        aiReasoning: aiAdvisory.aiReasoning,
+      });
+      continue;
+    }
+
+    if (evaluation.action === "CLAIM_FEES") {
+      if (input.dryRun) {
+        positionResults.push({
+          positionId: position.positionId,
+          managementAction: evaluation.action,
+          status: "DRY_RUN",
+          reason: evaluation.reason,
+          triggerReasons: evaluation.triggerReasons,
+          actionId: null,
+          riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
+        });
+        continue;
+      }
+
+      const action = await requestClaimFees({
+        actionQueue: input.actionQueue,
+        stateRepository: input.stateRepository,
+        wallet: input.wallet,
+        positionId: position.positionId,
+        payload: {
+          reason: evaluation.reason,
+          ...(input.claimConfig?.autoSwapAfterClaim === true
+            ? { autoSwapOutputMint: input.claimConfig.swapOutputMint }
+            : {}),
+        },
+        requestedBy,
+        requestedAt: now,
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+      });
+
+      positionResults.push({
+        positionId: position.positionId,
+        managementAction: evaluation.action,
+        status: "DISPATCHED",
+        reason: evaluation.reason,
+        triggerReasons: evaluation.triggerReasons,
+        actionId: action.actionId,
         riskResult: null,
         aiMode,
         aiSource: aiAdvisory.source,

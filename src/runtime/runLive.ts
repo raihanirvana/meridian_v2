@@ -1,9 +1,10 @@
 import path from "node:path";
 import process from "node:process";
-
 import { z } from "zod";
 
+import { HttpTokenIntelGateway } from "../adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../adapters/dlmm/HttpDlmmGateway.js";
+import { JupiterApiSwapGateway } from "../adapters/jupiter/JupiterApiSwapGateway.js";
 import { HttpLlmGateway } from "../adapters/llm/HttpLlmGateway.js";
 import {
   type SolPriceQuote,
@@ -13,11 +14,13 @@ import {
   type WalletBalanceSnapshot,
   type WalletGateway,
 } from "../adapters/wallet/WalletGateway.js";
+import { HttpScreeningGateway } from "../adapters/screening/HttpScreeningGateway.js";
 import type { ManagementSignals } from "../domain/rules/managementRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
 import { loadConfig, redactSecretsForLogging } from "../infra/config/loadConfig.js";
 import { createLogger } from "../infra/logging/logger.js";
 import { DefaultLessonPromptService } from "../app/services/LessonPromptService.js";
+import { resolveAdaptiveScreeningIntervalSec } from "../app/services/AdaptiveScreeningInterval.js";
 
 import { createRuntimeStores } from "./createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "./createRuntimeSupervisor.js";
@@ -27,6 +30,10 @@ const RuntimeBootstrapEnvSchema = z
     PUBLIC_WALLET_ADDRESS: z.string().min(1),
     DLMM_API_BASE_URL: z.url(),
     DLMM_API_KEY: z.string().min(1).optional(),
+    SCREENING_API_BASE_URL: z.url().optional(),
+    ANALYTICS_API_BASE_URL: z.url().optional(),
+    JUPITER_QUOTE_BASE_URL: z.url().optional(),
+    JUPITER_EXECUTE_BASE_URL: z.url().optional(),
     MOCK_SOL_PRICE_USD: z.coerce.number().positive().default(150),
     MOCK_WALLET_BALANCE_SOL: z.coerce.number().nonnegative().default(1),
     ACTION_QUEUE_INTERVAL_SEC: z.coerce.number().int().positive().default(5),
@@ -50,6 +57,10 @@ function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
     PUBLIC_WALLET_ADDRESS: emptyToUndefined(env.PUBLIC_WALLET_ADDRESS),
     DLMM_API_BASE_URL: emptyToUndefined(env.DLMM_API_BASE_URL),
     DLMM_API_KEY: emptyToUndefined(env.DLMM_API_KEY),
+    SCREENING_API_BASE_URL: emptyToUndefined(env.SCREENING_API_BASE_URL),
+    ANALYTICS_API_BASE_URL: emptyToUndefined(env.ANALYTICS_API_BASE_URL),
+    JUPITER_QUOTE_BASE_URL: emptyToUndefined(env.JUPITER_QUOTE_BASE_URL),
+    JUPITER_EXECUTE_BASE_URL: emptyToUndefined(env.JUPITER_EXECUTE_BASE_URL),
     MOCK_SOL_PRICE_USD: emptyToUndefined(env.MOCK_SOL_PRICE_USD),
     MOCK_WALLET_BALANCE_SOL: emptyToUndefined(env.MOCK_WALLET_BALANCE_SOL),
     ACTION_QUEUE_INTERVAL_SEC: emptyToUndefined(env.ACTION_QUEUE_INTERVAL_SEC),
@@ -113,6 +124,7 @@ function toRuntimeScreeningPolicy(
     maxMarketCapUsd: number;
     minTvlUsd: number;
     minVolumeUsd: number;
+    minVolumeTrendPct?: number | undefined;
     minFeeActiveTvlRatio: number;
     minFeePerTvl24h: number;
     minOrganic: number;
@@ -163,6 +175,36 @@ async function main() {
   const stores = createRuntimeStores({
     baseScreeningPolicy: toRuntimeScreeningPolicy(config.user.screening),
   });
+  const screeningGateway =
+    runtimeEnv.SCREENING_API_BASE_URL === undefined
+      ? undefined
+      : new HttpScreeningGateway({
+          baseUrl: runtimeEnv.SCREENING_API_BASE_URL,
+          ...(config.secrets.SCREENING_API_KEY === undefined
+            ? {}
+            : { apiKey: config.secrets.SCREENING_API_KEY }),
+        });
+  const tokenIntelGateway =
+    runtimeEnv.ANALYTICS_API_BASE_URL === undefined
+      ? undefined
+      : new HttpTokenIntelGateway({
+          baseUrl: runtimeEnv.ANALYTICS_API_BASE_URL,
+          ...(config.secrets.ANALYTICS_API_KEY === undefined
+            ? {}
+            : { apiKey: config.secrets.ANALYTICS_API_KEY }),
+        });
+  const swapGateway =
+    runtimeEnv.JUPITER_EXECUTE_BASE_URL === undefined
+      ? undefined
+      : new JupiterApiSwapGateway({
+          ...(config.secrets.JUPITER_API_KEY === undefined
+            ? {}
+            : { apiKey: config.secrets.JUPITER_API_KEY }),
+          ...(runtimeEnv.JUPITER_QUOTE_BASE_URL === undefined
+            ? {}
+            : { quoteBaseUrl: runtimeEnv.JUPITER_QUOTE_BASE_URL }),
+          executeBaseUrl: runtimeEnv.JUPITER_EXECUTE_BASE_URL,
+        });
   const liveLlmGateway =
     config.user.ai.mode !== "disabled" &&
     config.secrets.LLM_BASE_URL !== undefined &&
@@ -200,6 +242,8 @@ async function main() {
           : { apiKey: runtimeEnv.DLMM_API_KEY }),
         timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
       }),
+      ...(screeningGateway === undefined ? {} : { screeningGateway }),
+      ...(tokenIntelGateway === undefined ? {} : { tokenIntelGateway }),
       walletGateway: new StaticEnvWalletGateway(
         runtimeEnv.PUBLIC_WALLET_ADDRESS,
         runtimeEnv.MOCK_WALLET_BALANCE_SOL,
@@ -209,6 +253,7 @@ async function main() {
         runtimeEnv.MOCK_SOL_PRICE_USD,
         now,
       ),
+      ...(swapGateway === undefined ? {} : { swapGateway }),
       ...(liveLlmGateway === undefined ? {} : { llmGateway: liveLlmGateway }),
     },
     signalProvider: createConservativeSignalProvider(),
@@ -268,9 +313,11 @@ async function main() {
   const startupCycle = await supervisor.runRecommendedCycle({
     triggerSource: "startup",
     includeReporting: true,
+    includeScreening: true,
   });
   logger.info(
     {
+      screeningShortlist: startupCycle.screening?.shortlist.length ?? 0,
       reconciledRecords: startupCycle.reconciliation.records.length,
       evaluatedPositions: startupCycle.management.positionResults.length,
       processedActions: startupCycle.processedActions.length,
@@ -280,6 +327,7 @@ async function main() {
   );
 
   let queueTickRunning = false;
+  let screeningTimer: ReturnType<typeof setTimeout> | null = null;
 
   const queueTimer = setInterval(() => {
     if (queueTickRunning) {
@@ -311,6 +359,45 @@ async function main() {
     });
   }, config.user.schedule.reconciliationIntervalSec * 1000);
 
+  const scheduleNextScreeningTick = () => {
+    if (screeningGateway === undefined) {
+      return;
+    }
+
+    const nextIntervalSec = resolveAdaptiveScreeningIntervalSec({
+      defaultIntervalSec: config.user.schedule.screeningIntervalSec,
+      timezone: config.user.screening.intervalTimezone,
+      peakHours: config.user.screening.peakHours,
+      now: new Date(),
+    });
+
+    screeningTimer = setTimeout(() => {
+      void supervisor
+        .runScreeningTick("cron")
+        .then((result) => {
+          if (result !== null) {
+            logger.info(
+              {
+                timeframe: result.timeframe,
+                shortlist: result.shortlist.length,
+                aiSource: result.aiSource,
+                nextIntervalSec,
+              },
+              "screening tick completed",
+            );
+          }
+        })
+        .catch((error) => {
+          logger.error({ err: error }, "screening tick failed");
+        })
+        .finally(() => {
+          scheduleNextScreeningTick();
+        });
+    }, nextIntervalSec * 1000);
+  };
+
+  scheduleNextScreeningTick();
+
   const managementTimer = setInterval(() => {
     void supervisor.runManagementTick("cron").catch((error) => {
       logger.error({ err: error }, "management tick failed");
@@ -325,6 +412,9 @@ async function main() {
 
   const stop = (signal: string) => {
     clearInterval(queueTimer);
+    if (screeningTimer !== null) {
+      clearTimeout(screeningTimer);
+    }
     clearInterval(reconciliationTimer);
     clearInterval(managementTimer);
     clearInterval(reportingTimer);
@@ -340,6 +430,7 @@ async function main() {
       wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
       dataDir: stores.paths.dataDir,
       queueIntervalSec: runtimeEnv.ACTION_QUEUE_INTERVAL_SEC,
+      screeningIntervalSec: config.user.schedule.screeningIntervalSec,
       reconciliationIntervalSec: config.user.schedule.reconciliationIntervalSec,
       managementIntervalSec: config.user.schedule.managementIntervalSec,
       reportingIntervalSec: config.user.schedule.reportingIntervalSec,

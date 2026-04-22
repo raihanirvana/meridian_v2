@@ -75,6 +75,21 @@ describe("runtime supervisor", () => {
           circuitBreakerCooldownMin: 180,
           maxNewDeploysPerHour: 2,
         },
+        screening: {
+          timeframe: "5m",
+          minMarketCapUsd: 100_000,
+          maxMarketCapUsd: 10_000_000,
+          minTvlUsd: 10_000,
+          minVolumeUsd: 500,
+          minFeeActiveTvlRatio: 0.05,
+          minFeePerTvl24h: 0.01,
+          minOrganic: 60,
+          minHolderCount: 500,
+          allowedBinSteps: [80],
+          blockedLaunchpads: [],
+          intervalTimezone: "UTC",
+          peakHours: [],
+        },
         management: {
           stopLossUsd: 50,
           maxHoldMinutes: 1440,
@@ -104,6 +119,11 @@ describe("runtime supervisor", () => {
         },
         reporting: {
           solMode: false,
+          briefingEmoji: false,
+        },
+        claim: {
+          autoSwapAfterClaim: false,
+          swapOutputMint: "So11111111111111111111111111111111111111112",
         },
         runtime: {
           dryRun: true,

@@ -1,14 +1,14 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-22
-Current batch: Batch 19 - Config knobs parity & operator controls
+Current batch: Batch 20 - Enrichment, scheduling, and operator UX
 Status: Complete
 
-## Scope Batch 19
-- Add screening config parity knobs (`timeframe`, token age range, ATH filter, min fee-per-TVL 24h)
-- Add SOL-denominated risk/reporting knobs (`maxDailyLossSol`, `dailyProfitTargetSol`, `reporting.solMode`)
-- Add manual operator panic controls (`circuit_breaker_trip`, `circuit_breaker_clear`)
-- Keep all new behavior schema-driven, deterministic, and regression-tested
+## Scope Batch 20
+- Add adaptive screening intervals from configurable peak-hour windows and timezone-aware evaluation
+- Add `minVolumeTrendPct` and token narrative enrichment to screening context
+- Add briefing text rendering with optional emoji in reporting worker
+- Add queue-safe `CLAIM_FEES -> optional swap` orchestration without breaking lifecycle legality
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -640,4 +640,10 @@ Status: Complete
   - risk/reporting parity knob `maxDailyLossSol`, `dailyProfitTargetSol`, dan `reporting.solMode`
   - manual panic control operator `circuit_breaker_trip` / `circuit_breaker_clear` lewat runtime control store terpisah
   - regression khusus Batch 19 untuk timeframe forwarding, hard-filter baru, OR daily loss gate, daily profit target alert, dan operator panic command
-- `npm test` terakhir hijau dengan total `200` tests passed
+- Batch 20 sekarang juga sudah masuk:
+  - adaptive screening interval helper berbasis `screening.peakHours` + `screening.intervalTimezone`
+  - `screeningWorker` resmi untuk shortlist runtime, volume-trend filter, narrative enrichment, dan AI rerank yang lesson-aware
+  - briefing harian stabil dengan `reporting.briefingEmoji` optional
+  - flow `CLAIM_FEES -> optional auto swap` resmi lewat request/process/finalize + swap hook di atas `SwapGateway`
+  - runtime supervisor dan bootstrap live sekarang bisa me-wire screening/intel/swap gateway bila env tersedia
+- `npm test` terakhir hijau dengan total `209` tests passed

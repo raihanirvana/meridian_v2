@@ -33,6 +33,7 @@ export const ScreeningCandidateInputSchema = z
     marketCapUsd: z.number().nonnegative(),
     tvlUsd: z.number().nonnegative(),
     volumeUsd: z.number().nonnegative(),
+    volumeTrendPct: z.number().optional(),
     volumeConsistencyScore: z.number().min(0).max(100),
     feeToTvlRatio: z.number().nonnegative(),
     organicScore: z.number().min(0).max(100),
@@ -52,6 +53,8 @@ export const ScreeningCandidateInputSchema = z
     tokenAgeHours: z.number().nonnegative().optional(),
     athDistancePct: z.number().max(0).optional(),
     feePerTvl24h: z.number().nonnegative().optional(),
+    narrativeSummary: z.string().min(1).nullable().optional(),
+    holderDistributionSummary: z.string().min(1).nullable().optional(),
     narrativePenaltyScore: z.number().min(0).max(100),
   })
   .strict();

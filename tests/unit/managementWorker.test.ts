@@ -382,7 +382,7 @@ describe("management worker", () => {
     );
   });
 
-  it("skips unsupported management actions like CLAIM_FEES without enqueueing work", async () => {
+  it("dispatches CLAIM_FEES when management engine requests fee claiming", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
       filePath: path.join(directory, "positions.json"),
@@ -429,6 +429,10 @@ describe("management worker", () => {
       managementPolicy: buildManagementPolicy({
         claimFeesThresholdUsd: 10,
       }),
+      claimConfig: {
+        autoSwapAfterClaim: false,
+        swapOutputMint: "So11111111111111111111111111111111111111112",
+      },
       signalProvider: () => ({
         forcedManualClose: false,
         severeTokenRisk: false,
@@ -443,8 +447,10 @@ describe("management worker", () => {
     });
 
     expect(result.positionResults[0]?.managementAction).toBe("CLAIM_FEES");
-    expect(result.positionResults[0]?.status).toBe("SKIPPED_UNSUPPORTED");
+    expect(result.positionResults[0]?.status).toBe("DISPATCHED");
 
-    await expect(actionRepository.list()).resolves.toHaveLength(0);
+    const actions = await actionRepository.list();
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.type).toBe("CLAIM_FEES");
   });
 });

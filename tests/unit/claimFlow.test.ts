@@ -1,0 +1,265 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
+import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
+import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
+import { ActionQueue } from "../../src/app/services/ActionQueue.js";
+import { finalizeClaimFees } from "../../src/app/usecases/finalizeClaimFees.js";
+import { processClaimFeesAction } from "../../src/app/usecases/processClaimFeesAction.js";
+import { requestClaimFees } from "../../src/app/usecases/requestClaimFees.js";
+import { type Position } from "../../src/domain/entities/Position.js";
+
+const tempDirs: string[] = [];
+
+async function makeTempDir(): Promise<string> {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-claim-"));
+  tempDirs.push(directory);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0, tempDirs.length).map((directory) =>
+      fs.rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+function buildOpenPosition(overrides: Partial<Position> = {}): Position {
+  return {
+    positionId: "pos_001",
+    poolAddress: "pool_001",
+    tokenXMint: "mint_x",
+    tokenYMint: "mint_y",
+    baseMint: "mint_x",
+    quoteMint: "mint_y",
+    wallet: "wallet_001",
+    status: "OPEN",
+    openedAt: "2026-04-21T00:00:00.000Z",
+    lastSyncedAt: "2026-04-21T00:00:00.000Z",
+    closedAt: null,
+    deployAmountBase: 10,
+    deployAmountQuote: 5,
+    currentValueBase: 10,
+    currentValueUsd: 100,
+    feesClaimedBase: 0,
+    feesClaimedUsd: 0,
+    realizedPnlBase: 0,
+    realizedPnlUsd: 0,
+    unrealizedPnlBase: 2,
+    unrealizedPnlUsd: 20,
+    rebalanceCount: 0,
+    partialCloseCount: 0,
+    strategy: "spot",
+    rangeLowerBin: 10,
+    rangeUpperBin: 20,
+    activeBin: 15,
+    outOfRangeSince: null,
+    lastManagementDecision: null,
+    lastManagementReason: null,
+    lastWriteActionId: null,
+    needsReconciliation: false,
+    ...overrides,
+  };
+}
+
+describe("claim flow", () => {
+  it("finalizes claim fees and persists optional auto-swap result without breaking lifecycle", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition());
+
+    const action = await requestClaimFees({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: {
+        reason: "fees above threshold",
+        autoSwapOutputMint: "So11111111111111111111111111111111111111112",
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-22T10:00:00.000Z",
+      journalRepository,
+    });
+
+    const processed = await processClaimFeesAction({
+      action,
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: {
+          type: "success",
+          value: buildOpenPosition({
+            status: "CLAIM_CONFIRMED",
+            feesClaimedBase: 1,
+            feesClaimedUsd: 12,
+          }),
+        },
+        deployLiquidity: {
+          type: "success",
+          value: {
+            actionType: "DEPLOY",
+            positionId: "unused",
+            txIds: [],
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "unused",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 1,
+            txIds: ["tx_claim"],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "unused",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "X-Y",
+            binStep: 100,
+            activeBin: 15,
+          },
+        },
+      }),
+      stateRepository,
+      journalRepository,
+      now: () => "2026-04-22T10:01:00.000Z",
+    });
+
+    await actionRepository.upsert({
+      ...action,
+      status: "WAITING_CONFIRMATION",
+      startedAt: "2026-04-22T10:00:30.000Z",
+      resultPayload: processed.resultPayload ?? null,
+      txIds: processed.txIds ?? [],
+      error: processed.error ?? null,
+      completedAt: null,
+    });
+
+    const finalized = await finalizeClaimFees({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: {
+          type: "success",
+          value: buildOpenPosition({
+            status: "CLAIM_CONFIRMED",
+            feesClaimedBase: 1,
+            feesClaimedUsd: 12,
+            currentValueUsd: 101,
+          }),
+        },
+        deployLiquidity: {
+          type: "success",
+          value: {
+            actionType: "DEPLOY",
+            positionId: "unused",
+            txIds: [],
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "unused",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 1,
+            txIds: ["tx_claim"],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "unused",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "X-Y",
+            binStep: 100,
+            activeBin: 15,
+          },
+        },
+      }),
+      journalRepository,
+      postClaimSwapHook: async () => ({
+        txId: "tx_swap",
+        inputAmount: 1,
+        outputAmount: 0.9,
+      }),
+      now: () => "2026-04-22T10:02:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("OPEN");
+    expect(finalized.action.resultPayload).toMatchObject({
+      actionType: "CLAIM_FEES",
+      swap: {
+        txId: "tx_swap",
+        inputAmount: 1,
+        outputAmount: 0.9,
+      },
+    });
+  });
+});

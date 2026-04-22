@@ -4,6 +4,7 @@ import { ManagementPolicySchema } from "../../domain/rules/managementRules.js";
 
 const PositiveNumber = z.number().positive();
 const PercentNumber = z.number().min(0).max(100);
+const TimeOfDaySchema = z.string().regex(/^\d{2}:\d{2}$/, "must be HH:MM");
 
 export const AiModeSchema = z.enum([
   "disabled",
@@ -46,6 +47,7 @@ export const UserConfigSchema = z
         maxMarketCapUsd: PositiveNumber,
         minTvlUsd: PositiveNumber,
         minVolumeUsd: PositiveNumber,
+        minVolumeTrendPct: z.number().optional(),
         minFeeActiveTvlRatio: PositiveNumber,
         minFeePerTvl24h: PositiveNumber,
         minOrganic: PercentNumber,
@@ -55,6 +57,14 @@ export const UserConfigSchema = z
         minHolderCount: z.number().int().positive(),
         allowedBinSteps: z.array(z.number().int().positive()).min(1),
         blockedLaunchpads: z.array(z.string().min(1)),
+        intervalTimezone: z.string().min(1).default("UTC"),
+        peakHours: z.array(
+          z.object({
+            start: TimeOfDaySchema,
+            end: TimeOfDaySchema,
+            intervalSec: z.number().int().positive(),
+          }).strict(),
+        ).default([]),
       })
       .strict(),
     schedule: z
@@ -92,8 +102,20 @@ export const UserConfigSchema = z
     reporting: z
       .object({
         solMode: z.boolean(),
+        briefingEmoji: z.boolean().default(false),
       })
       .strict(),
+    claim: z
+      .object({
+        autoSwapAfterClaim: z.boolean().default(false),
+        swapOutputMint: z.string().min(1).default(
+          "So11111111111111111111111111111111111111112",
+        ),
+      })
+      .default({
+        autoSwapAfterClaim: false,
+        swapOutputMint: "So11111111111111111111111111111111111111112",
+      }),
     poolMemory: z
       .object({
         snapshotsEnabled: z.boolean(),
@@ -139,6 +161,34 @@ export const UserConfigSchema = z
         path: ["screening", "maxTokenAgeHours"],
         message: "must be greater than or equal to minTokenAgeHours",
       });
+    }
+
+    for (const [index, window] of config.screening.peakHours.entries()) {
+      const [startHourRaw, startMinuteRaw] = window.start.split(":");
+      const [endHourRaw, endMinuteRaw] = window.end.split(":");
+      const startHour = Number(startHourRaw ?? "");
+      const startMinute = Number(startMinuteRaw ?? "");
+      const endHour = Number(endHourRaw ?? "");
+      const endMinute = Number(endMinuteRaw ?? "");
+      const startValid = Number.isInteger(startHour) &&
+        Number.isInteger(startMinute) &&
+        startHour >= 0 &&
+        startHour <= 23 &&
+        startMinute >= 0 &&
+        startMinute <= 59;
+      const endValid = Number.isInteger(endHour) &&
+        Number.isInteger(endMinute) &&
+        endHour >= 0 &&
+        endHour <= 23 &&
+        endMinute >= 0 &&
+        endMinute <= 59;
+      if (!startValid || !endValid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["screening", "peakHours", index],
+          message: "peak hour windows must use valid 24h HH:MM values",
+        });
+      }
     }
   });
 

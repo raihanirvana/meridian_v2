@@ -21,6 +21,10 @@ import {
   finalizeClose,
   type PostCloseSwapHook,
 } from "./finalizeClose.js";
+import {
+  finalizeClaimFees,
+  type PostClaimSwapHook,
+} from "./finalizeClaimFees.js";
 import { confirmDeployAction } from "./processDeployAction.js";
 
 const TRACKED_SNAPSHOT_STATUSES = new Set<Position["status"]>([
@@ -65,6 +69,7 @@ export interface ReconcilePortfolioInput {
   now?: () => string;
   wallets?: string[];
   postCloseSwapHook?: PostCloseSwapHook;
+  postClaimSwapHook?: PostClaimSwapHook;
 }
 
 export interface ReconcilePortfolioResult {
@@ -191,6 +196,18 @@ function mapCloseReconciliationOutcome(
       return "RECONCILED_OK";
     case "TIMED_OUT":
     case "RECONCILIATION_REQUIRED":
+      return "MANUAL_REVIEW_REQUIRED";
+  }
+}
+
+function mapClaimReconciliationOutcome(
+  outcome: "FINALIZED" | "TIMED_OUT" | "UNCHANGED",
+): ReconciliationOutcome {
+  switch (outcome) {
+    case "FINALIZED":
+    case "UNCHANGED":
+      return "RECONCILED_OK";
+    case "TIMED_OUT":
       return "MANUAL_REVIEW_REQUIRED";
   }
 }
@@ -391,6 +408,37 @@ export async function reconcilePortfolio(
             actionId: result.action.actionId,
             outcome: mapRebalanceReconciliationOutcome(result),
             detail: `Rebalance recovery finished with ${result.outcome}`,
+          }),
+        );
+        continue;
+      }
+
+      if (action.type === "CLAIM_FEES") {
+        const result = await finalizeClaimFees({
+          actionId: action.actionId,
+          actionRepository: input.actionRepository,
+          stateRepository: input.stateRepository,
+          dlmmGateway: input.dlmmGateway,
+          walletLock,
+          positionLock,
+          now: () => now,
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          ...(input.postClaimSwapHook === undefined
+            ? {}
+            : { postClaimSwapHook: input.postClaimSwapHook }),
+        });
+
+        records.push(
+          createRecord({
+            scope: "ACTION",
+            entityId: result.action.actionId,
+            wallet: result.action.wallet,
+            positionId: result.position?.positionId ?? result.action.positionId,
+            actionId: result.action.actionId,
+            outcome: mapClaimReconciliationOutcome(result.outcome),
+            detail: `Claim-fees recovery finished with ${result.outcome}`,
           }),
         );
         continue;
