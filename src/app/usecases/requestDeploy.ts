@@ -57,6 +57,7 @@ function buildDeployJournalPayload(action: Action): Record<string, unknown> {
 
 export async function requestDeploy(input: RequestDeployInput): Promise<Action> {
   const payload = DeployActionRequestPayloadSchema.parse(input.payload);
+  const journalTimestamp = input.requestedAt ?? new Date().toISOString();
   const idempotencyKey =
     input.idempotencyKey ??
     createIdempotencyKey({
@@ -80,7 +81,7 @@ export async function requestDeploy(input: RequestDeployInput): Promise<Action> 
 
   if (input.journalRepository !== undefined) {
     await input.journalRepository.append({
-      timestamp: new Date().toISOString(),
+      timestamp: journalTimestamp,
       eventType: "DEPLOY_REQUEST_ACCEPTED",
       actor: action.requestedBy,
       wallet: action.wallet,

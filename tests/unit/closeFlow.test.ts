@@ -10,8 +10,11 @@ import {
 } from "../../src/adapters/dlmm/DlmmGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import { FileLessonRepository } from "../../src/adapters/storage/LessonRepository.js";
+import { FilePerformanceRepository } from "../../src/adapters/storage/PerformanceRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
+import { createRecordPositionPerformanceLessonHook } from "../../src/app/services/PerformanceLessonHook.js";
 import { finalizeClose } from "../../src/app/usecases/finalizeClose.js";
 import { processCloseAction } from "../../src/app/usecases/processCloseAction.js";
 import { requestClose } from "../../src/app/usecases/requestClose.js";
@@ -258,6 +261,97 @@ describe("close flow", () => {
     expect(persistedPosition?.status).toBe("CLOSED");
     expect(journalEvents.map((event) => event.eventType)).toContain(
       "CLOSE_FINALIZED",
+    );
+  });
+
+  it("records performance and lesson via lesson hook after close finalization", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const lessonsFilePath = path.join(directory, "lessons.json");
+    const lessonRepository = new FileLessonRepository({
+      filePath: lessonsFilePath,
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: lessonsFilePath,
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_001"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: {
+        reason: "take profit close",
+      },
+      requestedBy: "operator",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close_profit"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_001"),
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_001",
+            txIds: ["tx_close_profit"],
+          },
+        },
+      }),
+      journalRepository,
+      lessonHook: createRecordPositionPerformanceLessonHook({
+        lessonRepository,
+        performanceRepository,
+        journalRepository,
+      }),
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect((await performanceRepository.list())).toHaveLength(1);
+    expect((await lessonRepository.list())).toHaveLength(1);
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "LESSON_RECORDED",
     );
   });
 

@@ -229,7 +229,12 @@ describe("mock gateways", () => {
     await expect(
       analytics.getTokenRiskSnapshot("mint_001"),
     ).resolves.toMatchObject({ riskScore: 12 });
-    await expect(llm.rankCandidates([])).resolves.toMatchObject({
+    await expect(
+      llm.rankCandidates({
+        candidates: [],
+        systemPrompt: null,
+      }),
+    ).resolves.toMatchObject({
       rankedCandidateIds: ["cand_001"],
     });
     await expect(
@@ -238,6 +243,7 @@ describe("mock gateways", () => {
         proposedAction: "HOLD",
         positionSnapshot: validPositionSnapshot,
         triggerReasons: ["still in range"],
+        systemPrompt: null,
       }),
     ).resolves.toMatchObject({
       action: "HOLD",
@@ -288,7 +294,12 @@ describe("mock gateways", () => {
       }),
     ).rejects.toThrow(/deploy failed/i);
 
-    await expect(failingLlm.rankCandidates([])).rejects.toThrow(
+    await expect(
+      failingLlm.rankCandidates({
+        candidates: [],
+        systemPrompt: null,
+      }),
+    ).rejects.toThrow(
       /llm unavailable/i,
     );
     await expect(failingPrice.getSolPriceUsd()).rejects.toThrow(

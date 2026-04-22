@@ -71,6 +71,7 @@ export function deriveRebalanceCapitalRequirement(
 
 export async function requestRebalance(input: RequestRebalanceInput) {
   const payload = RebalanceActionRequestPayloadSchema.parse(input.payload);
+  const journalTimestamp = input.requestedAt ?? new Date().toISOString();
   const position = await input.stateRepository.get(input.positionId);
 
   if (position === null) {
@@ -110,7 +111,7 @@ export async function requestRebalance(input: RequestRebalanceInput) {
 
   if (input.journalRepository !== undefined) {
     await input.journalRepository.append({
-      timestamp: new Date().toISOString(),
+      timestamp: journalTimestamp,
       eventType: "REBALANCE_REQUEST_ACCEPTED",
       actor: action.requestedBy,
       wallet: action.wallet,

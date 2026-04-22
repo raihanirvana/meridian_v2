@@ -1,25 +1,34 @@
 export {
   JsonRecordSchema,
   TimestampSchema,
+  UlidSchema,
 } from "./domain/types/schemas.js";
 export { ActorSchema, type Actor } from "./domain/types/enums.js";
 export {
   ActionStatusSchema,
   ActionTypeSchema,
   CandidateDecisionSchema,
+  CloseReasonSchema,
   CircuitBreakerStateSchema,
   DrawdownStateSchema,
+  LessonOutcomeSchema,
+  LessonRoleSchema,
   ManagementActionSchema,
   PositionStatusSchema,
   ReconciliationOutcomeSchema,
+  StrategySchema,
   type ActionStatus,
   type ActionType,
   type CandidateDecision,
+  type CloseReason,
   type CircuitBreakerState,
   type DrawdownState,
+  type LessonOutcome,
+  type LessonRole,
   type ManagementAction,
   type PositionStatus,
   type ReconciliationOutcome,
+  type Strategy,
 } from "./domain/types/enums.js";
 export {
   ActionSchema,
@@ -34,9 +43,17 @@ export {
   type JournalEvent,
 } from "./domain/entities/JournalEvent.js";
 export {
+  LessonSchema,
+  type Lesson,
+} from "./domain/entities/Lesson.js";
+export {
   PortfolioStateSchema,
   type PortfolioState,
 } from "./domain/entities/PortfolioState.js";
+export {
+  PerformanceRecordSchema,
+  type PerformanceRecord,
+} from "./domain/entities/PerformanceRecord.js";
 export {
   PositionSchema,
   type Position,
@@ -51,6 +68,23 @@ export {
   canTransitionPositionStatus,
   transitionPositionStatus,
 } from "./domain/stateMachines/positionLifecycle.js";
+export {
+  buildContextString,
+  classifyOutcome,
+  collectTags,
+  deriveLesson,
+  inferRoleTags,
+  isSuspiciousUnitMix,
+  pickRuleTemplate,
+} from "./domain/rules/lessonRules.js";
+export {
+  defaultLessonCaps,
+  formatLessonsPrompt,
+  ROLE_TAGS,
+  selectLessonsForRole,
+  type LessonPromptCaps,
+  type SelectedLessonsForRole,
+} from "./domain/rules/lessonPromptRules.js";
 export {
   evaluateManagementAction,
   ManagementEvaluationInputSchema,
@@ -210,9 +244,11 @@ export {
 } from "./adapters/wallet/WalletGateway.js";
 export {
   MockLlmGateway,
+  CandidateRankingInputSchema,
   CandidateRankingResultSchema,
   ManagementExplanationInputSchema,
   ManagementExplanationResultSchema,
+  type CandidateRankingInput,
   type CandidateRankingResult,
   type LlmGateway,
   type ManagementExplanationInput,
@@ -234,6 +270,20 @@ export {
   ActionRepository,
   type ActionRepositoryOptions,
 } from "./adapters/storage/ActionRepository.js";
+export {
+  FileLessonRepository,
+  LessonStoreCorruptError,
+  LessonStoreFileSchema,
+  type LessonRepositoryInterface,
+  type LessonRepositoryOptions,
+  type LessonStoreFile,
+} from "./adapters/storage/LessonRepository.js";
+export {
+  FilePerformanceRepository,
+  type PerformanceRepositoryInterface,
+  type PerformanceRepositoryOptions,
+  type PerformanceSummary,
+} from "./adapters/storage/PerformanceRepository.js";
 export {
   JournalRepository,
   type JournalRepositoryOptions,
@@ -280,13 +330,48 @@ export {
   type RankedShortlistWithAi,
 } from "./app/services/AiAdvisoryService.js";
 export {
+  DefaultLessonPromptService,
+  type BuildLessonsPromptInput,
+  type LessonPromptService,
+} from "./app/services/LessonPromptService.js";
+export {
+  buildPerformanceRecordFromClose,
+  createRecordPositionPerformanceLessonHook,
+  type CreateRecordPositionPerformanceLessonHookInput,
+} from "./app/services/PerformanceLessonHook.js";
+export {
   countRecentNewDeploys,
   type CountRecentNewDeploysInput,
 } from "./app/services/RecentDeployCounter.js";
+export { FakeClock } from "./app/simulation/FakeClock.js";
+export {
+  ReplaySimulationFixtureSchema,
+  ReplaySimulationStepSchema,
+  ReplaySimulationGateway,
+  createReplayFailure,
+  createReplaySuccess,
+  createReplayTimeout,
+  type ReplaySimulationFixture,
+  type ReplaySimulationStep,
+} from "./app/simulation/ReplaySimulationGateway.js";
+export {
+  SIMULATION_SCENARIO_PACKS,
+  createCircuitBreakerScenarioPack,
+  createRebalanceScenarioPack,
+  createStopLossScenarioPack,
+  createTimeoutReconciliationScenarioPack,
+  type SimulationScenarioPack,
+} from "./app/simulation/scenarioPacks.js";
 export {
   processActionQueue,
   type ProcessActionQueueInput,
 } from "./app/usecases/processActionQueue.js";
+export {
+  runDryRunSimulation,
+  type DryRunSimulationCycleResult,
+  type RunDryRunSimulationInput,
+  type RunDryRunSimulationResult,
+} from "./app/usecases/runDryRunSimulation.js";
 export {
   confirmDeployAction,
   processDeployAction,
@@ -327,6 +412,8 @@ export {
   PostCloseSwapInputSchema,
   type FinalizeCloseInput,
   type FinalizeCloseResult,
+  type LessonHook,
+  type LessonHookInput,
   type PostCloseSwapHook,
   type PostCloseSwapInput,
 } from "./app/usecases/finalizeClose.js";
@@ -353,6 +440,11 @@ export {
   type OperatorCommandExecutionResult,
   type OperatorCommandParseInput,
 } from "./app/usecases/operatorCommands.js";
+export {
+  recordPositionPerformance,
+  type RecordPositionPerformanceInput,
+  type RecordPositionPerformanceResult,
+} from "./app/usecases/recordPositionPerformance.js";
 export {
   handleCliOperatorCommand,
   type HandleCliOperatorCommandInput,
@@ -394,4 +486,10 @@ export {
   loadConfig,
   redactSecretsForLogging,
 } from "./infra/config/loadConfig.js";
+export { createUlid } from "./infra/id/createUlid.js";
+export {
+  ensureDataDir,
+  resolveMeridianPaths,
+  type MeridianPaths,
+} from "./infra/config/paths.js";
 export { logger } from "./infra/logging/logger.js";

@@ -2,6 +2,32 @@ import { z } from "zod";
 
 export const ActorSchema = z.enum(["system", "operator", "ai"]);
 
+export const StrategySchema = z.enum(["spot", "curve", "bid_ask"]);
+
+export const CloseReasonSchema = z.enum([
+  "manual",
+  "stop_loss",
+  "take_profit",
+  "out_of_range",
+  "volume_collapse",
+  "timeout",
+  "operator",
+]);
+
+export const LessonOutcomeSchema = z.enum([
+  "good",
+  "poor",
+  "bad",
+  "manual",
+  "evolution",
+]);
+
+export const LessonRoleSchema = z.enum([
+  "SCREENER",
+  "MANAGER",
+  "GENERAL",
+]);
+
 export const PositionStatusSchema = z.enum([
   "DRAFT",
   "DEPLOY_REQUESTED",
@@ -88,6 +114,10 @@ export const CircuitBreakerStateSchema = z.enum([
 ]);
 
 export type Actor = z.infer<typeof ActorSchema>;
+export type Strategy = z.infer<typeof StrategySchema>;
+export type CloseReason = z.infer<typeof CloseReasonSchema>;
+export type LessonOutcome = z.infer<typeof LessonOutcomeSchema>;
+export type LessonRole = z.infer<typeof LessonRoleSchema>;
 export type PositionStatus = z.infer<typeof PositionStatusSchema>;
 export type ActionType = z.infer<typeof ActionTypeSchema>;
 export type ActionStatus = z.infer<typeof ActionStatusSchema>;

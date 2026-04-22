@@ -1,13 +1,14 @@
 # Meridian V2 Progress
 
-Last updated: 2026-04-21
-Current batch: Batch 16 - real adapters
+Last updated: 2026-04-22
+Current batch: Batch 17.1 - lesson memory inti dan wajib-konsultasi AI
 Status: Complete
 
-## Scope Batch 16
-- Add reusable HTTP JSON client with adapter-level error mapping
-- Implement real HTTP adapters for DLMM, swap, screening, and token-intel boundaries
-- Add contract tests for response validation and transport/HTTP failure mapping
+## Scope Batch 17.1
+- Add canonical `PerformanceRecord` + `Lesson` entities and pure derivation/prompt rules
+- Add shared `lessons.json` repositories for lessons + performance history
+- Wire close finalization to record performance/lesson and force AI advisory to consult lessons before LLM use
+- Add operator commands for lesson/performance inspection and manual curation
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -349,9 +350,81 @@ Status: Complete
     - `JsonHttpClient` sekarang mendukung timeout berbasis `AbortController`
     - `HttpDlmmGateway.getPosition()` sekarang memetakan HTTP 404 menjadi `null`, jadi semantik reconciliation tetap konsisten dengan mock
     - `SwapQuoteResultSchema.priceImpactPct` sekarang mendokumentasikan unit canonical sebagai fractional ratio (`0.01 = 1%`)
+- Batch 17 selesai:
+  - `FakeClock` sekarang tersedia sebagai sumber waktu deterministik untuk simulation cycle
+  - `ReplaySimulationGateway` sekarang bisa replay:
+    - wallet balance snapshot
+    - SOL/USD quote
+    - posisi on-chain per langkah
+    - response submit deploy/close/partial/claim yang deterministik
+  - `runDryRunSimulation()` sekarang menjalankan urutan lifecycle resmi per cycle:
+    - reconciliation worker
+    - management worker
+    - action queue processing
+  - fixture simulation sekarang bisa men-seed:
+    - initial positions
+    - initial actions
+    - initial journal events
+    - step-by-step on-chain snapshot dan management signals
+  - scenario packs Batch 17 sekarang tersedia untuk:
+    - stop loss
+    - rebalance
+    - timeout reconciliation
+    - circuit breaker
+  - tests Batch 17 sekarang cover replay end-to-end untuk keempat scenario pack PRD
+  - hardening kecil yang ikut masuk:
+    - `ActionQueue` sekarang bisa menerima `now()` supaya fake clock benar-benar menggerakkan enqueue/running/finalize timestamps
+    - request journal timestamp untuk `DEPLOY` / `CLOSE` / `REBALANCE` sekarang mengikuti `requestedAt` bila caller memberikannya, sehingga replay lebih repeatable
+    - replay timeout sekarang deterministic dan tidak lagi menunggu wall clock nyata
+    - replay fixture sekarang memvalidasi timestamp step monotonic agar fixture yang mundur waktunya gagal lebih awal
+- Batch 17.1 selesai:
+  - entity baru sekarang tersedia:
+    - `PerformanceRecord`
+    - `Lesson`
+  - rule pure baru sekarang tersedia:
+    - `deriveLesson()`
+    - `classifyOutcome()`
+    - `inferRoleTags()`
+    - `selectLessonsForRole()`
+    - `formatLessonsPrompt()`
+  - persistence lesson/performance sekarang tersedia lewat:
+    - `FileLessonRepository`
+    - `FilePerformanceRepository`
+    - shared file `lessons.json` via `resolveMeridianPaths()`
+  - use case `recordPositionPerformance()` sekarang:
+    - menulis performance record
+    - menurunkan lesson bila outcome cukup bermakna
+    - menulis journal `LESSON_RECORDED` hanya saat lesson benar-benar lahir
+  - `finalizeClose()` sekarang mendukung `LessonHook` opsional, dan service helper `createRecordPositionPerformanceLessonHook()` tersedia untuk wiring runtime
+  - AI advisory sekarang wajib berkonsultasi ke lesson prompt sebelum memakai LLM:
+    - entry path `rankShortlistWithAi()` memanggil `buildLessonsPrompt({ role: "SCREENER" })`
+    - management path `adviseManagementDecision()` memakai lesson prompt `MANAGER`
+    - kalau pemuatan lesson gagal, sistem log `ai_lesson_injection_failed`, fallback ke deterministic, dan tidak memanggil LLM tanpa lessons
+  - operator surface sekarang punya command tambahan:
+    - `lessons list/pin/unpin/add/remove/remove-by-keyword/clear`
+    - `performance summary`
+    - `performance-history`
+  - heading prompt lesson sekarang mengikuti role nyata (`SCREENER` / `MANAGER`), bukan label generik `ROLE`
+  - regression tests baru mencakup:
+    - lesson derivation
+    - lesson prompt tiering/format
+    - performance record write + suspicious-unit guard
+    - operator commands untuk lesson/performance
+    - worker fallback ketika AI aktif tetapi lesson prompt service tidak tersedia
+  - hardening setelah audit Batch 17/17.1:
+    - `Lesson.id` sekarang ditegakkan sebagai ULID dan default generator internal sudah diganti ke `createUlid()`
+    - lesson repository sekarang punya regression test eksplisit untuk invalid JSON / invalid store shape -> `LessonStoreCorruptError`
+    - `recordPositionPerformance()` sekarang punya regression untuk neutral outcome: performance tetap tersimpan, lesson tidak lahir, dan journal tidak menulis `LESSON_RECORDED`
+    - AI advisory tests sekarang memverifikasi lesson prompt benar-benar ter-inject ke body request LLM untuk path `SCREENER` dan `MANAGER`
+    - close flow sekarang punya integration test `finalizeClose() -> LessonHook -> performance/lesson/journal`
+    - `buildPerformanceRecordFromClose()` sekarang merekonstruksi baseline `initialValueUsd/finalValueUsd` lebih aman dari snapshot close-finalized agar hook tidak gagal hanya karena position value sudah di-zero-kan
+  - baseline verifikasi terbaru:
+    - `npm test` ✅ `150/150`
+    - `npm run build` ✅
+    - `npm run lint` ✅
 
 ## Pending
-- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 17
+- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 17.2 atau Batch 18
 - Gap yang masih tersisa sekarang lebih ke scope/surface:
   - `screeningWorker`
   - `reportingWorker`
@@ -384,7 +457,10 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 17: dry-run simulation harness
+- Batch 17.2: adaptive threshold evolution (port `evolveThresholds`, runtime policy store)
+- Batch 17.3: pool-memory per alamat pool dengan cooldown
+- Batch 17.4 (opsional): Darwinian signal weights
+- Batch 18: hardening dan live-readiness checklist
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -401,4 +477,6 @@ Status: Complete
 - Operator interface Batch 14 sekarang berbagi parser/executor yang sama antara CLI dan Telegram agar manual request tetap konsisten dan tidak mem-bypass queue
 - Batch 15 menambahkan advisory AI tanpa mengubah write boundary: worker tetap dispatch berdasarkan hasil deterministic, sementara output AI hanya dipakai untuk ranking/explanation metadata dan selalu punya fallback
 - Batch 16 menambahkan adapter nyata berbasis HTTP + error mapping, tetapi runtime composition tetap external/manual: worker masih menerima gateway via dependency injection, bukan instantiate service live sendiri
-- `npm test` terakhir hijau dengan total `117` tests passed
+- Batch 17 simulation harness sengaja menjalankan urutan `reconcile -> manage -> queue`, sehingga action yang disubmit di cycle N baru dikonfirmasi/recovered pada cycle N+1 lewat replay fixture berikutnya
+- Batch 17.1 lesson memory sekarang sudah ada, tetapi quality beberapa field performance close masih bergantung pada metadata yang tersedia saat finalizer dipanggil; detail yang belum bisa dipulihkan penuh dicatat di debt register, bukan disembunyikan
+- `npm test` terakhir hijau dengan total `123` tests passed

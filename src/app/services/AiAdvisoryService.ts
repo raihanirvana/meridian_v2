@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  CandidateRankingInputSchema,
   CandidateRankingResultSchema,
   ManagementExplanationInputSchema,
   ManagementExplanationResultSchema,
@@ -15,6 +16,9 @@ import {
 import { ManagementActionSchema } from "../../domain/types/enums.js";
 import { AiModeSchema, type UserConfig } from "../../infra/config/configSchema.js";
 import { logger } from "../../infra/logging/logger.js";
+import {
+  type LessonPromptService,
+} from "./LessonPromptService.js";
 
 const AdvisorySourceSchema = z.enum([
   "DISABLED",
@@ -50,6 +54,7 @@ export type ManagementDecisionAdvisory = z.infer<
 export interface RankShortlistWithAiInput {
   shortlist: Candidate[];
   aiMode: AiMode;
+  lessonPromptService: LessonPromptService;
   llmGateway?: LlmGateway;
   timeoutMs?: number;
 }
@@ -59,6 +64,7 @@ export interface AdviseManagementDecisionInput {
   evaluation: ManagementEvaluationResult;
   position: Position;
   triggerReasons: string[];
+  lessonPromptService: LessonPromptService;
   llmGateway?: LlmGateway;
   timeoutMs?: number;
 }
@@ -143,6 +149,15 @@ function logAiFallback(message: string, error: unknown): void {
   );
 }
 
+function logLessonInjectionFailure(error: unknown): void {
+  logger.warn(
+    {
+      err: error,
+    },
+    "ai_lesson_injection_failed",
+  );
+}
+
 export async function rankShortlistWithAi(
   input: RankShortlistWithAiInput,
 ): Promise<RankedShortlistWithAi> {
@@ -174,10 +189,32 @@ export async function rankShortlistWithAi(
     });
   }
 
+  let lessonsPrompt: string | null;
+  try {
+    lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
+      role: "SCREENER",
+    });
+  } catch (error) {
+    logLessonInjectionFailure(error);
+    return RankedShortlistWithAiSchema.parse({
+      shortlist,
+      source: "FALLBACK",
+      aiReasoning: null,
+    });
+  }
+
   try {
     const ranking = CandidateRankingResultSchema.parse(
       await withTimeout(
-        llmGateway.rankCandidates(shortlist),
+        llmGateway.rankCandidates(
+          CandidateRankingInputSchema.parse({
+            candidates: shortlist,
+            systemPrompt:
+              lessonsPrompt === null
+                ? null
+                : `### LESSONS LEARNED\n${lessonsPrompt}`,
+          }),
+        ),
         normalizeTimeout(input.timeoutMs),
       ),
     );
@@ -228,6 +265,20 @@ export async function adviseManagementDecision(
     });
   }
 
+  let lessonsPrompt: string | null;
+  try {
+    lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
+      role: "MANAGER",
+    });
+  } catch (error) {
+    logLessonInjectionFailure(error);
+    return ManagementDecisionAdvisorySchema.parse({
+      source: "FALLBACK",
+      aiSuggestedAction: null,
+      aiReasoning: null,
+    });
+  }
+
   try {
     const explanation = ManagementExplanationResultSchema.parse(
       await withTimeout(
@@ -237,6 +288,10 @@ export async function adviseManagementDecision(
             proposedAction: evaluation.action,
             positionSnapshot: input.position,
             triggerReasons: input.triggerReasons,
+            systemPrompt:
+              lessonsPrompt === null
+                ? null
+                : `### LESSONS LEARNED\n${lessonsPrompt}`,
           }),
         ),
         normalizeTimeout(input.timeoutMs),

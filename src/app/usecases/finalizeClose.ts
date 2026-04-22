@@ -18,6 +18,8 @@ import {
   buildCloseAccountingSummary,
   resolveOutOfRangeSince,
 } from "../services/AccountingService.js";
+import { logger } from "../../infra/logging/logger.js";
+import { type PerformanceRecord } from "../../domain/entities/PerformanceRecord.js";
 
 import { CloseActionRequestPayloadSchema } from "./requestClose.js";
 
@@ -38,6 +40,17 @@ export type PostCloseSwapHook = (
   input: PostCloseSwapInput,
 ) => Promise<Record<string, unknown> | null>;
 
+export interface LessonHookInput {
+  position: Position;
+  closedAction: Action;
+  reason: string;
+  now: string;
+}
+
+export type LessonHook = (
+  input: LessonHookInput,
+) => Promise<PerformanceRecord | void>;
+
 export interface FinalizeCloseInput {
   actionId: string;
   actionRepository: ActionRepository;
@@ -48,6 +61,7 @@ export interface FinalizeCloseInput {
   positionLock?: PositionLock;
   now?: () => string;
   postCloseSwapHook?: PostCloseSwapHook;
+  lessonHook?: LessonHook;
 }
 
 export interface FinalizeCloseResult {
@@ -388,6 +402,26 @@ export async function finalizeClose(
           resultStatus: doneAction.status,
           error: null,
         });
+
+        if (input.lessonHook !== undefined) {
+          try {
+            await input.lessonHook({
+              position: closedPosition,
+              closedAction: doneAction,
+              reason: payload.reason,
+              now,
+            });
+          } catch (error) {
+            logger.warn(
+              {
+                err: error,
+                actionId: doneAction.actionId,
+                positionId: closedPosition.positionId,
+              },
+              "close lesson hook failed after finalization",
+            );
+          }
+        }
 
         return {
           action: doneAction,

@@ -21,6 +21,7 @@ import type { Actor, ManagementAction } from "../../domain/types/enums.js";
 import type { UserConfig } from "../../infra/config/configSchema.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { adviseManagementDecision } from "../services/AiAdvisoryService.js";
+import { type LessonPromptService } from "../services/LessonPromptService.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 
@@ -72,6 +73,7 @@ export interface RunManagementCycleInput {
   managementPolicy: ManagementPolicy;
   aiMode?: UserConfig["ai"]["mode"];
   llmGateway?: LlmGateway;
+  lessonPromptService?: LessonPromptService;
   aiTimeoutMs?: number;
   signalProvider: (input: {
     position: Position;
@@ -133,6 +135,12 @@ function advisoryBypassForDeterministicResult(
     aiReasoning: null,
   };
 }
+
+const missingLessonPromptService: LessonPromptService = {
+  async buildLessonsPrompt(): Promise<string | null> {
+    throw new Error("LessonPromptService is required for AI advisory");
+  },
+};
 
 export async function runManagementCycle(
   input: RunManagementCycleInput,
@@ -223,6 +231,8 @@ export async function runManagementCycle(
       evaluation,
       position,
       triggerReasons: evaluation.triggerReasons,
+      lessonPromptService:
+        input.lessonPromptService ?? missingLessonPromptService,
       ...(input.llmGateway === undefined ? {} : { llmGateway: input.llmGateway }),
       ...(input.aiTimeoutMs === undefined ? {} : { timeoutMs: input.aiTimeoutMs }),
     });

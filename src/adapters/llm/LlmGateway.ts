@@ -1,11 +1,16 @@
 import { z } from "zod";
 
-import type { Candidate } from "../../domain/entities/Candidate.js";
+import { CandidateSchema } from "../../domain/entities/Candidate.js";
 import { PositionSchema } from "../../domain/entities/Position.js";
 import {
   type MockBehavior,
   resolveMockBehavior,
 } from "../mockBehavior.js";
+
+export const CandidateRankingInputSchema = z.object({
+  candidates: CandidateSchema.array(),
+  systemPrompt: z.string().min(1).nullable(),
+}).strict();
 
 export const CandidateRankingResultSchema = z.object({
   rankedCandidateIds: z.array(z.string().min(1)),
@@ -24,6 +29,7 @@ export const ManagementExplanationInputSchema = z.object({
   ]),
   positionSnapshot: PositionSchema,
   triggerReasons: z.array(z.string().min(1)),
+  systemPrompt: z.string().min(1).nullable(),
 }).strict();
 
 export const ManagementExplanationResultSchema = z.object({
@@ -39,6 +45,7 @@ export const ManagementExplanationResultSchema = z.object({
 }).strict();
 
 export type CandidateRankingResult = z.infer<typeof CandidateRankingResultSchema>;
+export type CandidateRankingInput = z.infer<typeof CandidateRankingInputSchema>;
 export type ManagementExplanationInput = z.infer<
   typeof ManagementExplanationInputSchema
 >;
@@ -47,7 +54,7 @@ export type ManagementExplanationResult = z.infer<
 >;
 
 export interface LlmGateway {
-  rankCandidates(candidates: Candidate[]): Promise<CandidateRankingResult>;
+  rankCandidates(input: CandidateRankingInput): Promise<CandidateRankingResult>;
   explainManagementDecision(
     input: ManagementExplanationInput,
   ): Promise<ManagementExplanationResult>;
@@ -62,8 +69,9 @@ export class MockLlmGateway implements LlmGateway {
   public constructor(private readonly behaviors: MockLlmGatewayBehaviors) {}
 
   public async rankCandidates(
-    _candidates: Candidate[],
+    input: CandidateRankingInput,
   ): Promise<CandidateRankingResult> {
+    CandidateRankingInputSchema.parse(input);
     return CandidateRankingResultSchema.parse(
       await resolveMockBehavior(this.behaviors.rankCandidates),
     );

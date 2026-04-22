@@ -19,6 +19,7 @@ export interface ActionQueueOptions {
   journalRepository?: JournalRepository;
   walletLock?: WalletLock;
   positionLock?: PositionLock;
+  now?: () => string;
 }
 
 export interface QueueExecutionResult {
@@ -59,6 +60,7 @@ export class ActionQueue {
   private readonly journalRepository: JournalRepository | null;
   private readonly walletLock: WalletLock;
   private readonly positionLock: PositionLock;
+  private readonly now: () => string;
   private readonly claimedActionIds = new Set<string>();
   private paused = false;
 
@@ -67,6 +69,7 @@ export class ActionQueue {
     this.journalRepository = options.journalRepository ?? null;
     this.walletLock = options.walletLock ?? new WalletLock();
     this.positionLock = options.positionLock ?? new PositionLock();
+    this.now = options.now ?? (() => new Date().toISOString());
   }
 
   public isPaused(): boolean {
@@ -92,7 +95,7 @@ export class ActionQueue {
     }
 
     await this.appendJournalEvent({
-      timestamp: new Date().toISOString(),
+      timestamp: this.now(),
       eventType: "ACTION_ENQUEUED",
       actor: enqueueResult.action.requestedBy,
       wallet: enqueueResult.action.wallet,
@@ -180,12 +183,12 @@ export class ActionQueue {
     const runningAction: Action = {
       ...action,
       status: runningStatus,
-      startedAt: new Date().toISOString(),
+      startedAt: this.now(),
     };
 
     await this.actionRepository.upsert(runningAction);
     await this.appendJournalEvent({
-      timestamp: new Date().toISOString(),
+      timestamp: this.now(),
       eventType: "ACTION_RUNNING",
       actor: runningAction.requestedBy,
       wallet: runningAction.wallet,
@@ -216,13 +219,13 @@ export class ActionQueue {
       txIds: executionResult.txIds ?? [],
       error: executionResult.error ?? null,
       completedAt: TERMINAL_STATUSES.has(nextStatus)
-        ? new Date().toISOString()
+        ? this.now()
         : null,
     };
 
     await this.actionRepository.upsert(finalizedAction);
     await this.appendJournalEvent({
-      timestamp: new Date().toISOString(),
+      timestamp: this.now(),
       eventType: "ACTION_FINALIZED",
       actor: finalizedAction.requestedBy,
       wallet: finalizedAction.wallet,
@@ -243,12 +246,12 @@ export class ActionQueue {
       ...runningAction,
       status: failedStatus,
       error: toSafeErrorMessage(error),
-      completedAt: new Date().toISOString(),
+      completedAt: this.now(),
     };
 
     await this.actionRepository.upsert(failedAction);
     await this.appendJournalEvent({
-      timestamp: new Date().toISOString(),
+      timestamp: this.now(),
       eventType: "ACTION_FAILED",
       actor: failedAction.requestedBy,
       wallet: failedAction.wallet,

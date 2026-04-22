@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-21 (Batch 15 AI advisory applied)
+Last updated: 2026-04-22 (Batch 17.1 lesson memory applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -202,6 +202,21 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: body ringkas cukup untuk sekarang dan mencegah log/error terlalu bising, tetapi beberapa upstream bisa menyimpan kode error penting di payload yang lebih panjang.
   Revisit: saat real adapter observability mulai dipakai operator dan perlu richer vendor error context.
 
+- `N43` simulation seeding belum idempotent penuh karena `runDryRunSimulation()` masih melakukan append journal fixture tanpa dedup/replace di [runDryRunSimulation.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runDryRunSimulation.ts:69>)
+  Status: deferred
+  Kenapa ditunda: untuk test harness saat ini setiap run memakai temp workspace baru, jadi duplicate seed belum mengganggu correctness. Tetapi jika simulator nanti dipakai di persistent dev environment yang sama, replay fixture yang dijalankan dua kali bisa menggandakan initial journal events.
+  Revisit: saat harness mulai dipakai sebagai tooling dev/regression jangka panjang di workspace yang persisten.
+
+- `N44` replay simulation gateway masih belum mencakup `LlmGateway`, `SwapGateway`, `ScreeningGateway`, atau `TokenIntelGateway` di [ReplaySimulationGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/simulation/ReplaySimulationGateway.ts:1>)
+  Status: deferred
+  Kenapa ditunda: Batch 17 PRD memang fokus pada lifecycle stop-loss/rebalance/timeout/circuit-breaker, jadi harness sekarang cukup dengan `DlmmGateway` + valuation inputs. Namun advisory AI, post-close swap, screening, dan token-intel path belum bisa direpro lewat replay fixture yang sama.
+  Revisit: saat simulator mulai dipakai sebagai regression platform yang lebih luas untuk Batch 18+ atau saat swap/screening/advisory flow perlu skenario replay resmi.
+
+- `N45` `buildPerformanceRecordFromClose()` masih mengisi sebagian field lesson/performance dengan best-effort placeholder karena `finalizeClose()` belum membawa metadata deploy/screening awal secara penuh di [PerformanceLessonHook.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PerformanceLessonHook.ts:62>)
+  Status: deferred
+  Kenapa ditunda: Batch 17.1 sudah menutup fondasi memory dan audit trail, tetapi field seperti `binStep`, `volatility`, `feeTvlRatio`, `organicScore`, dan `amountSol` belum semuanya tersedia secara canonical di close finalizer. Daripada menghambat wiring lesson memory total, hook sekarang memakai fallback konservatif/best-effort yang masih cukup untuk derivasi lesson dasar.
+  Revisit: saat Batch 17.2/17.3 mulai memakai performance historis untuk evolusi threshold atau pool-memory yang lebih sensitif terhadap metadata entry asli.
+
 - `T8` coverage gap risk engine setelah hardening Batch 12 di [riskRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/riskRules.test.ts:1>)
   Status: deferred
   Kenapa ditunda: core semantics Batch 12 sudah diregresikan, tetapi beberapa branch penting dan ambiguity cases belum diuji eksplisit.
@@ -217,6 +232,18 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Revisit: sebelum worker orchestration dipakai sebagai loop runtime utama atau mulai dihubungkan ke reporter/operator surface.
 
 ## Design Decisions
+- Batch 17.1 menyimpan `lessons` dan `performance` dalam satu file shared `lessons.json`, bukan dua store terpisah
+  Rationale: ini mengikuti spec Batch 17.1 agar snapshot memory + performance selalu konsisten dan migrasi dari repo lama lebih mudah.
+  Tradeoff: file ini sekarang memegang dua concern yang berbeda, sehingga corruption/backup handling perlu lebih hati-hati dan memang sengaja dibiarkan jadi concern Batch 18 jika store rusak.
+
+- AI advisory tidak boleh memanggil LLM tanpa hasil konsultasi lesson; jika `LessonPromptService` gagal, sistem harus log `ai_lesson_injection_failed` lalu fallback ke deterministic
+  Rationale: PRD Batch 17.1 menegaskan bahwa AI harus belajar dulu sebelum entry/management reasoning. Safety yang dipilih adalah “no lessons -> no LLM”, bukan “LLM jalan tanpa konteks”.
+  Tradeoff: jika lesson store unavailable, kualitas advisory turun ke deterministic penuh sampai store pulih, tetapi boundary keselamatan dan auditability tetap jelas.
+
+- Simulation harness Batch 17 sengaja menjalankan urutan cycle `reconcile -> manage -> queue` di [runDryRunSimulation.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runDryRunSimulation.ts:1>)
+  Rationale: replay fixture jadi lebih deterministik karena action yang disubmit pada cycle N baru dikonfirmasi atau di-recover pada cycle N+1, sesuai model worker periodik yang lebih realistis.
+  Tradeoff: skenario yang ingin "submit dan confirm di cycle yang sama" harus dimodelkan sebagai dua step replay, bukan satu step tunggal.
+
 - Deploy request tetap menulis via `ActionQueue`; `requestDeploy()` tidak boleh direct write ke state/action terminal.
   Rationale: single-writer principle.
   Files: [requestDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1>), [ActionQueue.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/ActionQueue.ts:1>)

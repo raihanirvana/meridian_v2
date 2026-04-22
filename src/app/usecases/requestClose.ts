@@ -60,6 +60,7 @@ export function assertCloseRequestablePosition(position: Position): void {
 
 export async function requestClose(input: RequestCloseInput) {
   const payload = CloseActionRequestPayloadSchema.parse(input.payload);
+  const journalTimestamp = input.requestedAt ?? new Date().toISOString();
   const position = await input.stateRepository.get(input.positionId);
 
   if (position === null) {
@@ -97,7 +98,7 @@ export async function requestClose(input: RequestCloseInput) {
 
   if (input.journalRepository !== undefined) {
     await input.journalRepository.append({
-      timestamp: new Date().toISOString(),
+      timestamp: journalTimestamp,
       eventType: "CLOSE_REQUEST_ACCEPTED",
       actor: action.requestedBy,
       wallet: action.wallet,

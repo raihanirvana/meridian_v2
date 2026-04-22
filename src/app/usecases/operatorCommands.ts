@@ -4,6 +4,8 @@ import type { ActionRepository } from "../../adapters/storage/ActionRepository.j
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
+import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
+import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { Action } from "../../domain/entities/Action.js";
 import { type PortfolioState } from "../../domain/entities/PortfolioState.js";
@@ -11,6 +13,7 @@ import {
   type PortfolioRiskPolicy,
 } from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
+import { createUlid } from "../../infra/id/createUlid.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 
@@ -55,6 +58,48 @@ const OperatorCommandSchema = z.discriminatedUnion("kind", [
     positionId: z.string().min(1),
     payload: RebalanceActionRequestPayloadSchema,
   }),
+  z.object({
+    kind: z.literal("LESSONS_LIST"),
+    role: z.enum(["SCREENER", "MANAGER", "GENERAL"]).nullable().default(null),
+    pinned: z.boolean().nullable().default(null),
+    tag: z.string().min(1).nullable().default(null),
+    limit: z.number().int().positive().default(30),
+  }),
+  z.object({
+    kind: z.literal("LESSONS_PIN"),
+    id: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("LESSONS_UNPIN"),
+    id: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("LESSONS_ADD"),
+    rule: z.string().min(1),
+    tags: z.array(z.string().min(1)).default([]),
+    pinned: z.boolean().default(false),
+    role: z.enum(["SCREENER", "MANAGER", "GENERAL"]).nullable().default(null),
+  }),
+  z.object({
+    kind: z.literal("LESSONS_REMOVE"),
+    id: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("LESSONS_REMOVE_BY_KEYWORD"),
+    keyword: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("LESSONS_CLEAR"),
+    confirm: z.literal(true),
+  }),
+  z.object({
+    kind: z.literal("PERFORMANCE_SUMMARY"),
+  }),
+  z.object({
+    kind: z.literal("PERFORMANCE_HISTORY"),
+    hours: z.number().int().positive().nullable().default(null),
+    limit: z.number().int().positive().default(20),
+  }),
 ]);
 
 export type OperatorCommand = z.infer<typeof OperatorCommandSchema>;
@@ -75,6 +120,8 @@ export interface ExecuteOperatorCommandInput {
   walletGateway: WalletGateway;
   priceGateway: PriceGateway;
   riskPolicy: PortfolioRiskPolicy;
+  lessonRepository?: LessonRepositoryInterface;
+  performanceRepository?: PerformanceRepositoryInterface;
   previousPortfolioState?: PortfolioState | null;
 }
 
@@ -141,6 +188,101 @@ export function parseOperatorCommand(
     return OperatorCommandSchema.parse({ kind: "PENDING_ACTIONS" });
   }
 
+  if (normalized === "performance summary") {
+    return OperatorCommandSchema.parse({ kind: "PERFORMANCE_SUMMARY" });
+  }
+
+  const performanceHistoryMatch = normalized.match(/^performance-history(?:\s+(\d+))?(?:\s+(\d+))?$/);
+  if (performanceHistoryMatch !== null) {
+    const [, hoursRaw, limitRaw] = performanceHistoryMatch;
+    return OperatorCommandSchema.parse({
+      kind: "PERFORMANCE_HISTORY",
+      ...(hoursRaw === undefined ? {} : { hours: Number(hoursRaw) }),
+      ...(limitRaw === undefined ? {} : { limit: Number(limitRaw) }),
+    });
+  }
+
+  const lessonsListMatch = normalized.match(/^lessons\s+list(?:\s+(.+))?$/);
+  if (lessonsListMatch !== null) {
+    const tail = lessonsListMatch[1]?.trim() ?? "";
+    const args = tail.length === 0 ? [] : tail.split(/\s+/);
+    const payload: Record<string, unknown> = {
+      kind: "LESSONS_LIST",
+    };
+    for (let index = 0; index < args.length; index += 1) {
+      const part = args[index];
+      if (part === "--role") {
+        payload.role = args[index + 1] ?? null;
+        index += 1;
+        continue;
+      }
+      if (part === "--tag") {
+        payload.tag = args[index + 1] ?? null;
+        index += 1;
+        continue;
+      }
+      if (part === "--limit") {
+        payload.limit = Number(args[index + 1] ?? "30");
+        index += 1;
+        continue;
+      }
+      if (part === "--pinned") {
+        payload.pinned = true;
+      }
+      if (part === "--unpinned") {
+        payload.pinned = false;
+      }
+    }
+    return OperatorCommandSchema.parse(payload);
+  }
+
+  const lessonsPinMatch = normalized.match(/^lessons\s+pin\s+(\S+)$/);
+  if (lessonsPinMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "LESSONS_PIN",
+      id: requireCapture(lessonsPinMatch[1], "lessons pin"),
+    });
+  }
+
+  const lessonsUnpinMatch = normalized.match(/^lessons\s+unpin\s+(\S+)$/);
+  if (lessonsUnpinMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "LESSONS_UNPIN",
+      id: requireCapture(lessonsUnpinMatch[1], "lessons unpin"),
+    });
+  }
+
+  const lessonsAddMatch = normalized.match(/^lessons\s+add\s+(.+)$/s);
+  if (lessonsAddMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "LESSONS_ADD",
+      rule: requireCapture(lessonsAddMatch[1], "lessons add").trim(),
+    });
+  }
+
+  const lessonsRemoveMatch = normalized.match(/^lessons\s+remove\s+(\S+)$/);
+  if (lessonsRemoveMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "LESSONS_REMOVE",
+      id: requireCapture(lessonsRemoveMatch[1], "lessons remove"),
+    });
+  }
+
+  const lessonsRemoveKeywordMatch = normalized.match(/^lessons\s+remove-by-keyword\s+(.+)$/s);
+  if (lessonsRemoveKeywordMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "LESSONS_REMOVE_BY_KEYWORD",
+      keyword: requireCapture(lessonsRemoveKeywordMatch[1], "lessons remove-by-keyword").trim(),
+    });
+  }
+
+  if (normalized === "lessons clear confirm=true") {
+    return OperatorCommandSchema.parse({
+      kind: "LESSONS_CLEAR",
+      confirm: true,
+    });
+  }
+
   const closeMatch = normalized.match(/^close\s+(\S+)\s+(.+)$/s);
   if (closeMatch !== null) {
     const [, positionId, reason] = closeMatch;
@@ -177,8 +319,28 @@ export function parseOperatorCommand(
   }
 
   throw new Error(
-    "unknown command; supported commands: status, positions, pending-actions, close, deploy, rebalance",
+    "unknown command; supported commands: status, positions, pending-actions, close, deploy, rebalance, lessons list/pin/unpin/add/remove/remove-by-keyword/clear, performance summary, performance-history",
   );
+}
+
+function requireLessonsRepository(
+  repository: LessonRepositoryInterface | undefined,
+): LessonRepositoryInterface {
+  if (repository === undefined) {
+    throw new Error("lesson repository is required for lessons commands");
+  }
+
+  return repository;
+}
+
+function requirePerformanceRepository(
+  repository: PerformanceRepositoryInterface | undefined,
+): PerformanceRepositoryInterface {
+  if (repository === undefined) {
+    throw new Error("performance repository is required for performance commands");
+  }
+
+  return repository;
 }
 
 function renderPortfolioStatus(portfolio: PortfolioState): string {
@@ -332,6 +494,159 @@ export async function executeOperatorCommand(
         command: input.command.kind,
         text: `rebalance request accepted: ${action.actionId}`,
         actionId: action.actionId,
+      };
+    }
+    case "LESSONS_LIST": {
+      const command = input.command;
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      const lessons = (await lessonRepository.list())
+        .filter((lesson) =>
+          command.role === null ? true : lesson.role === null || lesson.role === command.role,
+        )
+        .filter((lesson) =>
+          command.pinned === null ? true : lesson.pinned === command.pinned,
+        )
+        .filter((lesson) =>
+          command.tag === null ? true : lesson.tags.includes(command.tag.toLowerCase()),
+        )
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, command.limit);
+
+      return {
+        command: input.command.kind,
+        text:
+          lessons.length === 0
+            ? "no lessons"
+            : lessons
+                .map((lesson) =>
+                  [
+                    lesson.id,
+                    lesson.outcome,
+                    lesson.role ?? "ALL",
+                    lesson.pinned ? "PINNED" : "normal",
+                    lesson.rule,
+                  ].join(" | "),
+                )
+                .join("\n"),
+        actionId: null,
+      };
+    }
+    case "LESSONS_PIN": {
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      await lessonRepository.update(input.command.id, { pinned: true });
+      return {
+        command: input.command.kind,
+        text: `lesson pinned: ${input.command.id}`,
+        actionId: null,
+      };
+    }
+    case "LESSONS_UNPIN": {
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      await lessonRepository.update(input.command.id, { pinned: false });
+      return {
+        command: input.command.kind,
+        text: `lesson unpinned: ${input.command.id}`,
+        actionId: null,
+      };
+    }
+    case "LESSONS_ADD": {
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      await lessonRepository.append({
+        id: createUlid(Date.parse(requestedAt)),
+        rule: input.command.rule,
+        tags: input.command.tags,
+        outcome: "manual",
+        role: input.command.role,
+        pinned: input.command.pinned,
+        createdAt: requestedAt,
+      });
+      return {
+        command: input.command.kind,
+        text: "lesson added",
+        actionId: null,
+      };
+    }
+    case "LESSONS_REMOVE": {
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      const removed = await lessonRepository.remove(input.command.id);
+      return {
+        command: input.command.kind,
+        text: removed > 0 ? `lesson removed: ${input.command.id}` : `lesson not found: ${input.command.id}`,
+        actionId: null,
+      };
+    }
+    case "LESSONS_REMOVE_BY_KEYWORD": {
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      const lessons = await lessonRepository.list();
+      let removed = 0;
+      for (const lesson of lessons) {
+        if (lesson.rule.toLowerCase().includes(input.command.keyword.toLowerCase())) {
+          removed += await lessonRepository.remove(lesson.id);
+        }
+      }
+      return {
+        command: input.command.kind,
+        text: `lessons removed: ${removed}`,
+        actionId: null,
+      };
+    }
+    case "LESSONS_CLEAR": {
+      const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      const cleared = await lessonRepository.clear();
+      return {
+        command: input.command.kind,
+        text: `lessons cleared: ${cleared}`,
+        actionId: null,
+      };
+    }
+    case "PERFORMANCE_SUMMARY": {
+      const performanceRepository = requirePerformanceRepository(
+        input.performanceRepository,
+      );
+      const summary = await performanceRepository.summary();
+      return {
+        command: input.command.kind,
+        text: [
+          `closed: ${summary.totalPositionsClosed}`,
+          `total pnl usd: ${summary.totalPnlUsd.toFixed(2)}`,
+          `avg pnl pct: ${summary.avgPnlPct.toFixed(2)}`,
+          `win rate pct: ${summary.winRatePct.toFixed(2)}`,
+        ].join("\n"),
+        actionId: null,
+      };
+    }
+    case "PERFORMANCE_HISTORY": {
+      const performanceRepository = requirePerformanceRepository(
+        input.performanceRepository,
+      );
+      const sinceIso =
+        input.command.hours === null
+          ? undefined
+          : new Date(
+              Date.parse(requestedAt) - input.command.hours * 60 * 60 * 1000,
+            ).toISOString();
+      const records = await performanceRepository.list({
+        ...(sinceIso === undefined ? {} : { sinceIso }),
+        limit: input.command.limit,
+      });
+
+      return {
+        command: input.command.kind,
+        text:
+          records.length === 0
+            ? "no performance history"
+            : records
+                .map((record) =>
+                  [
+                    record.positionId,
+                    record.recordedAt,
+                    record.pnlUsd.toFixed(2),
+                    record.pnlPct.toFixed(2),
+                    record.closeReason,
+                  ].join(" | "),
+                )
+                .join("\n"),
+        actionId: null,
       };
     }
   }
