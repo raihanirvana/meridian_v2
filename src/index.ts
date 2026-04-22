@@ -55,6 +55,20 @@ export {
   type PerformanceRecord,
 } from "./domain/entities/PerformanceRecord.js";
 export {
+  createDefaultSchedulerMetadata,
+  createDefaultSchedulerWorkerState,
+  SchedulerMetadataSchema,
+  SchedulerTriggerSourceSchema,
+  SchedulerWorkerNameSchema,
+  SchedulerWorkerRunStatusSchema,
+  SchedulerWorkerStateSchema,
+  type SchedulerMetadata,
+  type SchedulerTriggerSource,
+  type SchedulerWorkerName,
+  type SchedulerWorkerRunStatus,
+  type SchedulerWorkerState,
+} from "./domain/entities/SchedulerMetadata.js";
+export {
   createDefaultSignalWeights,
   SIGNAL_WEIGHT_KEYS,
   SignalWeightEntrySchema,
@@ -521,6 +535,22 @@ export {
   type SendOperatorAlertInput,
 } from "./app/usecases/sendOperatorAlert.js";
 export {
+  generateRuntimeReport,
+  type GenerateRuntimeReportInput,
+  type RuntimeReport,
+} from "./app/usecases/generateRuntimeReport.js";
+export {
+  runStartupRecoveryChecklist,
+  type RunStartupRecoveryChecklistInput,
+  type StartupChecklistItem,
+  type StartupRecoveryChecklistResult,
+} from "./app/usecases/runStartupRecoveryChecklist.js";
+export {
+  scanRuntimeAlerts,
+  type RuntimeAlert,
+  type ScanRuntimeAlertsInput,
+} from "./app/usecases/scanRuntimeAlerts.js";
+export {
   runManagementCycle,
   type ManagementCyclePositionResult,
   type ManagementCycleResultStatus,
@@ -535,6 +565,11 @@ export {
   runManagementWorker,
   type ManagementWorkerInput,
 } from "./app/workers/managementWorker.js";
+export {
+  runReportingWorker,
+  type ReportingWorkerInput,
+  type ReportingWorkerResult,
+} from "./app/workers/reportingWorker.js";
 export {
   AiModeSchema,
   EnvSecretsSchema,
@@ -555,4 +590,32 @@ export {
   resolveMeridianPaths,
   type MeridianPaths,
 } from "./infra/config/paths.js";
-export { logger } from "./infra/logging/logger.js";
+export {
+  createLogger,
+  DEFAULT_LOG_REDACT_PATHS,
+  logger,
+  redactLogData,
+} from "./infra/logging/logger.js";
+export {
+  FileSchedulerMetadataStore,
+  SchedulerMetadataCorruptError,
+  type SchedulerMetadataStore,
+  type SchedulerMetadataStoreOptions,
+} from "./infra/scheduler/SchedulerMetadataStore.js";
+export {
+  runWithSchedulerMetadata,
+  type RunWithSchedulerMetadataInput,
+  type RunWithSchedulerMetadataResult,
+} from "./infra/scheduler/runWithSchedulerMetadata.js";
+export {
+  createRuntimeStores,
+  type CreateRuntimeStoresInput,
+  type RuntimeStores,
+} from "./runtime/createRuntimeStores.js";
+export {
+  createRuntimeSupervisor,
+  createRuntimeSupervisorFromUserConfig,
+  type CreateRuntimeSupervisorFromUserConfigInput,
+  type RuntimeSupervisor,
+  type RuntimeSupervisorInput,
+} from "./runtime/createRuntimeSupervisor.js";

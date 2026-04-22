@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Meridian V2 greenfield bootstrap",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

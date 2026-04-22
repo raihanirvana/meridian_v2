@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-22 (Batch 17.4 Darwin applied)
+Last updated: 2026-04-22 (Batch 18 hardening applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -167,10 +167,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: Batch 13 fokus pada orchestration fondasi dan tidak menambah close/confirm pipeline baru untuk `CLAIM_FEES` / `PARTIAL_CLOSE`. Worker tetap deterministic dan jujur tentang keterbatasannya, tetapi coverage auto-management penuh masih belum lengkap.
   Revisit: saat flow request/process/finalize untuk `CLAIM_FEES` dan `PARTIAL_CLOSE` masuk roadmap aktif.
 
-- `N36` PRD Batch 13 belum terpenuhi penuh; `screeningWorker`, `reportingWorker`, scheduler metadata, dan manual triggers belum diimplementasikan dan scope-nya formal digeser ke batch berikutnya
+- `N36` residual scope PRD Batch 13 sekarang tinggal `screeningWorker`; `reportingWorker`, shared scheduler metadata, dan manual trigger state sudah ditutup di Batch 18, tetapi screening orchestration end-to-end belum dirakit
   Status: deferred
-  Kenapa ditunda: Batch 13 yang dikirim fokus pada management orchestration foundation (`PriceGateway`, `PortfolioStateBuilder`, `recentNewDeploys`, `managementWorker`) agar boundary risk/valuation matang dulu. Sisa worker/scheduler surface belum dikerjakan pada batch ini.
-  Revisit: wajib dibawa sebagai scope eksplisit worker/runtime batch berikutnya, bukan diasumsikan sudah selesai.
+  Kenapa ditunda: Batch 18 memprioritaskan hardening live-readiness, reporting, alerts, dan scheduler state bersama. Screening runtime tetap paling mahal karena repo belum punya ingestion candidate snapshot + deploy planner live yang final.
+  Revisit: saat runtime screening resmi dirakit bersama composition root supervised-live.
 
 - `N37` `PortfolioStateBuilder` belum mengecek staleness `asOf` dari `PriceGateway` dan `WalletGateway` snapshot di [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:67>)
   Status: deferred
@@ -236,6 +236,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: repo saat ini belum punya `screeningWorker` aktif, jadi Darwin path baru terverifikasi di integration/usecase layer dan pada caller yang sengaja menginjeksikan provider.
   Revisit: saat `screeningWorker` atau composition root runtime screening resmi dirakit, kemungkinan bersama Batch 18 atau batch worker berikutnya.
 
+- `N50` runtime supervisor/composition root sekarang sudah ada, tetapi concrete live wiring untuk `WalletGateway`, `PriceGateway`, `NotifierGateway`, dan public wallet source masih bergantung pada environment luar repo ini
+  Status: deferred
+  Kenapa ditunda: repo inti sekarang sudah menyediakan `createRuntimeStores()` + `createRuntimeSupervisor()`, tetapi belum punya adapter live native untuk semua boundary runtime yang dibutuhkan supervised-live penuh. Tanpa wiring environment itu, supervisor tetap berjalan sebagai composition root yang DI-first, bukan executable live node yang self-contained.
+  Revisit: sebelum supervised live run pertama; putuskan source wallet publik, adapter balance/price live, dan notifier delivery nyata.
+
 ## Design Decisions
 - Batch 17.2 menstandarkan naming screening threshold ke istilah PRD yang baru: `minFeeActiveTvlRatio` dan `minOrganic`
   Rationale: spec 17.2 dan heuristik repo lama memakai istilah itu secara eksplisit; menyelaraskan naming sekarang lebih murah daripada membawa alias lama (`minFeeToTvlRatio` / `minOrganicScore`) ke runtime policy store dan evolution layer.
@@ -256,6 +261,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - Batch 17.4 memperlakukan `signalWeights` sebagai multiplier di atas `scoringPolicy.weights`, bukan mengganti policy base weight mentah, di [candidateScore.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/scoring/candidateScore.ts:1>)
   Rationale: policy base tetap source of truth yang bisa diaudit operator, sementara Darwin menjadi lapisan adaptif kecil yang menggeser sensitivitas scorer secara perlahan.
   Tradeoff: perubahan Darwin tidak pernah benar-benar meniadakan policy weight dasar; jika operator ingin mematikan atau merombak sebuah signal total, itu tetap dilakukan di config/policy, bukan menunggu Darwin.
+
+- Batch 18 memakai satu scheduler metadata store bersama untuk trigger `cron`, `manual`, dan `startup`, di [SchedulerMetadataStore.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/scheduler/SchedulerMetadataStore.ts:1>) dan [runWithSchedulerMetadata.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/scheduler/runWithSchedulerMetadata.ts:1>)
+  Rationale: PRD meminta countdown/timer dan manual trigger berbagi state yang sama agar tidak terjadi double-fire liar. Menyimpan metadata run bersama memberi satu sumber kebenaran untuk health/reporting sekaligus guard sederhana saat worker sudah `RUNNING`.
+  Tradeoff: scheduler metadata sekarang menjadi state runtime tambahan yang juga harus dijaga dari corruption dan diinjeksikan oleh composition root nyata; tanpa wiring runtime itu, fitur ini tetap opsional di level caller.
 
 - Simulation harness Batch 17 sengaja menjalankan urutan cycle `reconcile -> manage -> queue` di [runDryRunSimulation.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runDryRunSimulation.ts:1>)
   Rationale: replay fixture jadi lebih deterministik karena action yang disubmit pada cycle N baru dikonfirmasi atau di-recover pada cycle N+1, sesuai model worker periodik yang lebih realistis.

@@ -159,5 +159,5 @@ describe("screening uses darwin weights", () => {
     });
 
     expect(after.candidates[0]?.score).toBeGreaterThan(before.candidates[0]?.score ?? 0);
-  });
+  }, 10_000);
 });

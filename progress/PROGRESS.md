@@ -1,15 +1,15 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-22
-Current batch: Batch 17.4 - Darwinian signal weights
+Current batch: Batch 18 - Hardening dan live-readiness checklist
 Status: Complete
 
-## Scope Batch 17.4
-- Add `SignalWeights` entity + file store (`signal-weights.json`)
-- Add pure Darwin recalibration rule untuk weight scoring
-- Add `maybeRecalibrateSignalWeights()` use case behind `darwin.enabled`
-- Make screening scorer read `signalWeights` via injected parameter/provider
-- Add regression/unit/integration tests untuk recalibration flow
+## Scope Batch 18
+- Add startup recovery checklist untuk supervised live readiness
+- Add reporting worker + runtime metrics summary
+- Add stuck action / pending reconcile alert generation
+- Add shared scheduler metadata untuk cron/manual trigger state
+- Add log redaction helper + packaging cleanup
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -527,14 +527,51 @@ Status: Complete
     - `npm test` ✅ `183/183`
     - `npm run build` ✅
     - `npm run lint` ✅
+- Batch 18 selesai:
+  - startup readiness checklist sekarang tersedia di `runStartupRecoveryChecklist()`:
+    - membaca semua store utama secara aman saat boot
+    - ikut memanfaatkan recovery atomic `.tmp/.bak` bawaan `FileStore`
+    - merangkum health `HEALTHY` vs `UNSAFE` untuk operator
+  - runtime reporting sekarang tersedia di `generateRuntimeReport()` + `runReportingWorker()`:
+    - menghitung positions/actions summary
+    - membawa performance/lesson/pool/scheduler summary bila repository diinjeksikan
+    - mengirim alert operator untuk stuck action dan pending reconciliation
+  - shared scheduler metadata sekarang tersedia:
+    - `SchedulerMetadata` entity
+    - `FileSchedulerMetadataStore`
+    - `runWithSchedulerMetadata()` untuk shared cron/manual trigger state
+    - duplicate manual trigger sekarang bisa di-skip sebagai `already running`
+  - redaction helper logging sekarang tersedia:
+    - `redactLogData()`
+    - `createLogger()` dengan default redact paths
+  - packaging cleanup kecil ikut masuk:
+    - `package.json` sekarang membatasi package surface ke `dist` via `files` + `exports`
+  - regression tests Batch 18 sekarang mencakup:
+    - startup recovery dari orphan `.tmp`
+    - alert generation untuk stuck action + pending reconciliation
+    - scheduler metadata no-double-fire
+    - log redaction helper
+  - baseline verifikasi terbaru:
+    - `npm test` ✅ `188/188`
+    - `npm run build` ✅
+    - `npm run lint` ✅
+  - post-Batch 18 runtime supervisor wiring sekarang juga tersedia:
+    - `createRuntimeStores()` untuk factory file-backed repositories/store/action-queue dari satu `dataDir`
+    - `createRuntimeSupervisor()` untuk boot checklist + reconciliation/management/queue/reporting ticks
+    - `createRuntimeSupervisorFromUserConfig()` untuk merge `risk.maxRebalancesPerPosition` ke management policy tanpa footgun caller
+    - supervisor sekarang membawa `previousPortfolioState` antar-cycle dan memakai `SchedulerMetadataStore` yang sama untuk worker runtime
+  - regression tests tambahan untuk wiring runtime sekarang mencakup:
+    - runtime store factory
+    - runtime supervisor boot/reporting/manual-trigger path
+  - baseline verifikasi terbaru:
+    - `npm test` ✅ `190/190`
+    - `npm run build` ✅
+    - `npm run lint` ✅
 
 ## Pending
-- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 18
+- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum masuk supervised live wiring berikutnya
 - Gap yang masih tersisa sekarang lebih ke scope/surface:
   - `screeningWorker`
-  - `reportingWorker`
-  - scheduler metadata
-  - manual triggers
   - management auto-dispatch untuk `CLAIM_FEES` / `PARTIAL_CLOSE`
 - Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
@@ -562,8 +599,9 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 18: hardening dan live-readiness checklist
-- Worker wiring consolidation: rakit composition root yang mengaktifkan dependency `runtimePolicyStore`, `signalWeightsStore`, dan `poolMemoryRepository` secara default di runtime nyata, supaya evolution/pool-snapshot/Darwin tidak lagi bergantung pada manual DI per caller
+- Supervised live environment wiring
+- Sambungkan concrete gateway runtime untuk boundary yang repo ini belum punya adapter live-nya secara native (`WalletGateway`, `PriceGateway`, `NotifierGateway`, dan bila perlu `LlmGateway`)
+- Jika screening runtime mau diaktifkan, tutup residual `screeningWorker` + Darwin provider injection default
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -585,4 +623,6 @@ Status: Complete
 - Batch 17.2 adaptive threshold evolution sekarang sudah ada di level rule/store/usecase/operator surface, dan close hook sudah bisa memicunya otomatis bila `runtimePolicyStore` diinjeksikan
 - Batch 17.3 pool memory sekarang aktif di jalur close → `recordPoolDeploy` → AI shortlist prompt, dan snapshot trend juga sudah bisa direkam dari management cycle secara opt-in lewat `poolMemorySnapshotsEnabled`
 - Batch 17.4 Darwinian signal weights sekarang sudah ada di level entity/store/rule/usecase/provider; screening scorer juga sudah bisa membaca `signalWeights` terinjeksi tanpa mutasi global
-- `npm test` terakhir hijau dengan total `183` tests passed
+- Batch 18 menambahkan reporting worker, startup recovery checklist, runtime alerts, dan scheduler metadata shared state; management/reconciliation workers juga sekarang bisa dibungkus metadata yang sama secara opsional
+- Runtime supervisor/composition-root factory sekarang juga tersedia lewat `createRuntimeStores()` + `createRuntimeSupervisor()`, tetapi concrete gateway live tetap masih tanggung jawab wiring environment di luar repo inti
+- `npm test` terakhir hijau dengan total `190` tests passed
