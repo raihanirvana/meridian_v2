@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HttpTokenIntelGateway } from "../../src/adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../../src/adapters/dlmm/HttpDlmmGateway.js";
+import { HttpLlmGateway } from "../../src/adapters/llm/HttpLlmGateway.js";
 import { AdapterHttpStatusError, AdapterResponseValidationError, AdapterTransportError } from "../../src/adapters/http/HttpJsonClient.js";
 import { JupiterApiSwapGateway } from "../../src/adapters/jupiter/JupiterApiSwapGateway.js";
 import { HttpScreeningGateway } from "../../src/adapters/screening/HttpScreeningGateway.js";
@@ -116,6 +117,74 @@ describe("real adapters", () => {
       topHolderPct: 12,
       botHolderPct: 1,
     });
+
+    const llm = new HttpLlmGateway({
+      baseUrl: "https://llm.example.com/v1/",
+      generalModel: "gpt-test",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    action: "CLOSE",
+                    reasoning: "Stop loss triggered",
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      llm.explainManagementDecision({
+        positionId: "pos_001",
+        proposedAction: "CLOSE",
+        positionSnapshot: {
+          positionId: "pos_001",
+          poolAddress: "pool_001",
+          tokenXMint: "mint_x",
+          tokenYMint: "mint_y",
+          baseMint: "mint_base",
+          quoteMint: "mint_quote",
+          wallet: "wallet_001",
+          status: "OPEN",
+          openedAt: "2026-04-21T00:00:00.000Z",
+          lastSyncedAt: "2026-04-21T00:00:00.000Z",
+          closedAt: null,
+          deployAmountBase: 1,
+          deployAmountQuote: 1,
+          currentValueBase: 1,
+          currentValueUsd: 100,
+          feesClaimedBase: 0,
+          feesClaimedUsd: 0,
+          realizedPnlBase: 0,
+          realizedPnlUsd: 0,
+          unrealizedPnlBase: -1,
+          unrealizedPnlUsd: -10,
+          rebalanceCount: 0,
+          partialCloseCount: 0,
+          strategy: "bid_ask",
+          rangeLowerBin: 10,
+          rangeUpperBin: 20,
+          activeBin: 15,
+          outOfRangeSince: null,
+          lastManagementDecision: null,
+          lastManagementReason: null,
+          lastWriteActionId: null,
+          needsReconciliation: false,
+        },
+        triggerReasons: ["stop loss reached"],
+        systemPrompt: "be concise",
+      }),
+    ).resolves.toEqual({
+      action: "CLOSE",
+      reasoning: "Stop loss triggered",
+    });
   });
 
   it("maps non-2xx HTTP responses into AdapterHttpStatusError", async () => {
@@ -147,6 +216,32 @@ describe("real adapters", () => {
 
     await expect(
       intel.getTokenRiskSnapshot("mint_001"),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+
+    const llm = new HttpLlmGateway({
+      baseUrl: "https://llm.example.com/v1/",
+      generalModel: "gpt-test",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "not-json",
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      llm.rankCandidates({
+        candidates: [],
+        systemPrompt: "rank",
+      }),
     ).rejects.toBeInstanceOf(AdapterResponseValidationError);
   });
 

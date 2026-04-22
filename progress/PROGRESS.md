@@ -599,9 +599,25 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Supervised live environment wiring
-- Sambungkan concrete gateway runtime untuk boundary yang repo ini belum punya adapter live-nya secara native (`WalletGateway`, `PriceGateway`, `NotifierGateway`, dan bila perlu `LlmGateway`)
-- Jika screening runtime mau diaktifkan, tutup residual `screeningWorker` + Darwin provider injection default
+- Batch 19 — config knobs parity & operator controls
+- Prioritas implementasi berikutnya harus dimulai dari low-effort/high-value:
+  - `screening.timeframe`
+  - `screening.minTokenAgeHours` / `maxTokenAgeHours`
+  - `screening.athFilterPct`
+  - `screening.minFeePerTvl24h`
+  - `risk.dailyProfitTargetSol`
+  - `risk.maxDailyLossSol` (jalan berdampingan dengan `%`, trip memakai OR)
+  - `reporting.solMode`
+  - operator `circuit_breaker_trip` / `circuit_breaker_clear`
+- Batch 20 disiapkan untuk enrichment + UX:
+  - adaptive screening interval yang configurable, bukan hardcoded WIB
+  - volume trend filter
+  - token narrative enrichment
+  - briefing harian dengan emoji optional
+  - auto-swap after claim
+- Batch 21 disiapkan untuk advanced exit:
+  - trailing take profit
+  - auto-compound fees
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD

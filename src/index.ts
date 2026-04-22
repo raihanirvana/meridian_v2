@@ -314,6 +314,10 @@ export {
   type MockLlmGatewayBehaviors,
 } from "./adapters/llm/LlmGateway.js";
 export {
+  HttpLlmGateway,
+  type HttpLlmGatewayOptions,
+} from "./adapters/llm/HttpLlmGateway.js";
+export {
   MockNotifierGateway,
   type MockNotifierGatewayBehaviors,
   NotificationResultSchema,

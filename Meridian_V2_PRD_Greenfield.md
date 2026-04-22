@@ -1681,6 +1681,139 @@ Menyiapkan supervised live testing.
 
 ---
 
+## Batch 19 — Config knobs parity & operator controls (low effort, high value)
+
+### Tujuan
+Menutup gap fitur repo lama yang high-value tetapi relatif murah diport ke V2: screening horizon/timeframe, age/ATH/profitability knobs, dual-unit risk target, mode tampilan SOL, dan panic-button operator. Batch ini sengaja diprioritaskan lebih dulu karena mayoritas berupa config schema + pure rule + operator surface.
+
+### Bangun
+- **Screening timeframe**
+  - Tambah `screening.timeframe` dengan enum minimal `"5m" | "1h" | "24h"`.
+  - Timeframe ini dibawa ke screening/runtime gateway request agar operator bisa memilih antara fresh/liquid pools vs aged pools tanpa restart/wiring baru.
+- **Token age range**
+  - Tambah `screening.minTokenAgeHours` dan `screening.maxTokenAgeHours` (opsional, batas bawah/atas).
+  - Screening hard filter harus bisa menolak token terlalu muda atau terlalu tua.
+- **ATH price filter**
+  - Tambah `screening.athFilterPct`.
+  - Semantik: candidate hanya lolos bila harga saat ini cukup jauh di bawah ATH sesuai threshold.
+- **24h fee profitability floor**
+  - Tambah `screening.minFeePerTvl24h`.
+  - Ini complementary terhadap `minFeeActiveTvlRatio`; gunakan sebagai floor profitability 24h yang lebih mirip repo lama.
+- **Daily profit target**
+  - Tambah `risk.dailyProfitTargetSol`.
+  - Reporting/operator alert harus bisa memberi sinyal "target harian tercapai".
+- **Daily loss absolute**
+  - Tambah `risk.maxDailyLossSol` sebagai representasi alternatif dari `dailyLossLimitPct`.
+  - V2 harus mendukung **keduanya**; trip rule memakai OR (`pct breached` atau `absolute SOL breached`).
+- **SOL display mode**
+  - Tambah `reporting.solMode` (`false` default).
+  - Reporting/brief summary/operator render dapat memilih fokus fiat vs SOL-native.
+- **Manual circuit breaker**
+  - Tambah operator command:
+    - `circuit_breaker_trip`
+    - `circuit_breaker_clear`
+  - Command ini tidak boleh bypass queue/write boundary lain; cukup mengubah runtime guard state/policy override yang resmi.
+
+### Output
+- Operator bisa mengganti screening horizon dan risk target tanpa refactor runtime.
+- Risk layer mendukung target/loss dalam SOL maupun %.
+- Panic button tersedia untuk menghentikan deploy baru saat market crash.
+
+### Tests
+- screening timeframe diteruskan ke boundary/runtime request.
+- token age / ATH / min fee per TVL 24h memblok candidate yang tidak sesuai.
+- daily profit target memicu alert/report.
+- daily loss trip OR antara `%` dan `SOL`.
+- operator command `circuit_breaker_trip` / `clear` menutup/membuka deploy baru secara deterministic.
+
+### DoD
+- Semua knob baru tervalidasi di schema.
+- Semua rule baru deterministic dan punya regression test.
+- Tidak ada command operator yang bypass queue atau write directly ke posisi/action lifecycle.
+
+### Prompt vibecode
+“Add Batch 19 config/runtime parity features from the legacy bot: screening timeframe (5m/1h/24h), token age min/max, ATH filter, minFeePerTvl24h, dailyProfitTargetSol, maxDailyLossSol alongside existing percent loss guard, reporting.solMode, and manual circuit breaker operator commands. Keep all new behavior schema-driven, deterministic, and regression-tested.”
+
+---
+
+## Batch 20 — Enrichment, scheduling, and operator UX (medium effort)
+
+### Tujuan
+Menambah fitur yang meningkatkan kualitas screening, efisiensi runtime, dan UX operator: adaptive interval, momentum filter, token narrative enrichment, briefing harian, dan auto-swap setelah claim.
+
+### Bangun
+- **Adaptive screening interval**
+  - Jangan hardcode WIB.
+  - Tambah config seperti `screening.peakHours: [{ start, end, intervalSec }]` + timezone-aware evaluation.
+  - Runtime scheduler memilih interval screening lebih rapat saat peak, lebih renggang saat sepi.
+- **Volume trend direction**
+  - Tambah `screening.minVolumeTrendPct`.
+  - Candidate dapat ditolak bila volume trend turun melewati batas.
+- **Token narrative enrichment**
+  - Perluas `TokenIntelGateway` / adapter nyata untuk membawa narrative / intelligence summary dan holder-distribution context yang lebih kaya.
+- **Briefing report**
+  - Tambah template briefing harian di reporting worker.
+  - Emoji **harus optional** via config, mis. `reporting.briefingEmoji: boolean`, agar konsisten dengan aturan implementasi V2 yang default-nya tidak emoji-heavy.
+- **Auto-swap after claim**
+  - Tambah `claim -> swap` orchestration resmi di atas `SwapGateway`, bukan ad-hoc.
+  - Flow harus tetap queue-safe dan reconciliation-safe.
+
+### Output
+- Screening cadence lebih efisien.
+- Operator mendapat morning/evening briefing yang lebih actionable.
+- Claim flow bisa langsung mengurangi token risk lewat swap otomatis bila diaktifkan.
+
+### Tests
+- adaptive interval memilih slot interval sesuai config time window.
+- volume trend filter memblok candidate downtrend.
+- narrative enrichment masuk ke screening/advisory context.
+- briefing render stabil dengan emoji on/off.
+- auto-swap after claim menjaga status/action lifecycle tetap legal.
+
+### DoD
+- Adaptive interval configurable lintas timezone.
+- Briefing tidak memaksa emoji.
+- Auto-swap claim tidak membuat chain action liar di luar queue/finalizer.
+
+### Prompt vibecode
+“Add Batch 20 enrichment and UX features: adaptive screening intervals from configurable peak-hour windows (not hardcoded WIB), volume-trend screening filter, token narrative enrichment, optional-emoji daily briefing reports, and queue-safe auto-swap after claim.”
+
+---
+
+## Batch 21 — Advanced exits & compounding automation (higher effort)
+
+### Tujuan
+Menambah exit logic yang lebih adaptif dan automation compound yang dulu ada di repo lama, tetapi dengan state/lifecycle V2 yang benar.
+
+### Bangun
+- **Trailing take profit**
+  - Tambah config:
+    - `management.trailingTakeProfitEnabled`
+    - `management.trailingTriggerPct`
+    - `management.trailingDropPct`
+  - Perlu state posisi tambahan seperti `peakPnlPct` atau snapshot peak value agar trailing exit deterministic.
+- **Auto-compound fees**
+  - Tambah orchestration `claim -> swap -> redeploy same pool` yang resmi.
+  - Harus reuse action queue / idempotency / reconciliation-safe chaining, bukan shortcut langsung.
+
+### Output
+- Exit logic bisa mempertahankan profit yang sudah terbentuk tanpa hanya mengandalkan stop-loss statis.
+- Fee compounding bisa dijalankan sebagai automation resmi, bukan tool manual terpisah.
+
+### Tests
+- trailing take profit aktif setelah trigger tercapai dan close saat drawdown dari peak melampaui threshold.
+- peak state survive restart/reconciliation.
+- auto-compound berhasil di happy path dan aman di partial failure / timeout path.
+
+### DoD
+- Tidak ada trailing logic yang bergantung pada state ephemeral saja.
+- Auto-compound tidak mem-bypass queue, tidak memecah idempotency, dan aman saat crash di tengah chain.
+
+### Prompt vibecode
+“Add Batch 21 advanced exit and compounding flows: trailing take profit with persisted peak-PnL state, and queue-safe auto-compound fees (claim -> swap -> redeploy same pool) with reconciliation-safe crash handling.”
+
+---
+
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:

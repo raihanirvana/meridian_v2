@@ -70,6 +70,15 @@ function buildSecretInput(
   runtimeEnv: NodeJS.ProcessEnv,
 ): Partial<EnvSecrets> {
   const input: Partial<EnvSecrets> = {};
+  const pickOptional = (runtimeValue: string | undefined, fileValue: string | undefined) => {
+    const value = runtimeValue ?? fileValue;
+    if (value === undefined) {
+      return undefined;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
 
   const walletPrivateKey =
     runtimeEnv.WALLET_PRIVATE_KEY ?? envFileValues.WALLET_PRIVATE_KEY;
@@ -82,36 +91,50 @@ function buildSecretInput(
     input.RPC_URL = rpcUrl;
   }
 
-  const screeningApiKey =
-    runtimeEnv.SCREENING_API_KEY ?? envFileValues.SCREENING_API_KEY;
+  const screeningApiKey = pickOptional(
+    runtimeEnv.SCREENING_API_KEY,
+    envFileValues.SCREENING_API_KEY,
+  );
   if (screeningApiKey !== undefined) {
     input.SCREENING_API_KEY = screeningApiKey;
   }
 
-  const analyticsApiKey =
-    runtimeEnv.ANALYTICS_API_KEY ?? envFileValues.ANALYTICS_API_KEY;
+  const analyticsApiKey = pickOptional(
+    runtimeEnv.ANALYTICS_API_KEY,
+    envFileValues.ANALYTICS_API_KEY,
+  );
   if (analyticsApiKey !== undefined) {
     input.ANALYTICS_API_KEY = analyticsApiKey;
   }
 
-  const jupiterApiKey =
-    runtimeEnv.JUPITER_API_KEY ?? envFileValues.JUPITER_API_KEY;
+  const jupiterApiKey = pickOptional(
+    runtimeEnv.JUPITER_API_KEY,
+    envFileValues.JUPITER_API_KEY,
+  );
   if (jupiterApiKey !== undefined) {
     input.JUPITER_API_KEY = jupiterApiKey;
   }
 
-  const llmApiKey = runtimeEnv.LLM_API_KEY ?? envFileValues.LLM_API_KEY;
+  const llmApiKey = pickOptional(
+    runtimeEnv.LLM_API_KEY,
+    envFileValues.LLM_API_KEY,
+  );
   if (llmApiKey !== undefined) {
     input.LLM_API_KEY = llmApiKey;
   }
 
-  const llmBaseUrl = runtimeEnv.LLM_BASE_URL ?? envFileValues.LLM_BASE_URL;
+  const llmBaseUrl = pickOptional(
+    runtimeEnv.LLM_BASE_URL,
+    envFileValues.LLM_BASE_URL,
+  );
   if (llmBaseUrl !== undefined) {
     input.LLM_BASE_URL = llmBaseUrl;
   }
 
-  const telegramBotToken =
-    runtimeEnv.TELEGRAM_BOT_TOKEN ?? envFileValues.TELEGRAM_BOT_TOKEN;
+  const telegramBotToken = pickOptional(
+    runtimeEnv.TELEGRAM_BOT_TOKEN,
+    envFileValues.TELEGRAM_BOT_TOKEN,
+  );
   if (telegramBotToken !== undefined) {
     input.TELEGRAM_BOT_TOKEN = telegramBotToken;
   }

@@ -64,6 +64,10 @@ export const UserConfigSchema = z
     ai: z
       .object({
         mode: AiModeSchema,
+        generalModel: z.string().min(1).optional(),
+        managementModel: z.string().min(1).optional(),
+        screeningModel: z.string().min(1).optional(),
+        timeoutMs: z.number().int().positive().optional(),
       })
       .strict(),
     deploy: z

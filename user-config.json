@@ -1,14 +1,14 @@
 {
   "risk": {
-    "maxConcurrentPositions": 3,
-    "maxCapitalUsagePct": 70,
-    "minReserveUsd": 0.5,
-    "maxTokenExposurePct": 35,
-    "maxPoolExposurePct": 40,
-    "maxRebalancesPerPosition": 2,
-    "dailyLossLimitPct": 8,
+    "maxConcurrentPositions": 2,
+    "maxCapitalUsagePct": 50,
+    "minReserveUsd": 25,
+    "maxTokenExposurePct": 25,
+    "maxPoolExposurePct": 30,
+    "maxRebalancesPerPosition": 1,
+    "dailyLossLimitPct": 5,
     "circuitBreakerCooldownMin": 180,
-    "maxNewDeploysPerHour": 2
+    "maxNewDeploysPerHour": 1
   },
   "screening": {
     "minMarketCapUsd": 150000,
@@ -25,10 +25,10 @@
     "screeningIntervalSec": 1800,
     "managementIntervalSec": 600,
     "reconciliationIntervalSec": 300,
-    "reportingIntervalSec": 3600
+    "reportingIntervalSec": 1800
   },
   "management": {
-    "stopLossUsd": 50,
+    "stopLossUsd": 25,
     "maxHoldMinutes": 1440,
     "maxOutOfRangeMinutes": 240,
     "claimFeesThresholdUsd": 20,
@@ -37,21 +37,21 @@
     "rebalanceEnabled": true
   },
   "ai": {
-    "mode": "advisory",
+    "mode": "disabled",
     "generalModel": "gpt-4.1-mini",
     "managementModel": "gpt-4.1-mini",
     "screeningModel": "gpt-4.1-mini",
     "timeoutMs": 3000
   },
   "deploy": {
-    "defaultAmountSol": 0.5,
-    "minAmountSol": 0.2
+    "defaultAmountSol": 0.25,
+    "minAmountSol": 0.1
   },
   "notifications": {
     "telegramEnabled": false
   },
   "poolMemory": {
-    "snapshotsEnabled": false
+    "snapshotsEnabled": true
   },
   "darwin": {
     "enabled": false

@@ -77,6 +77,10 @@ function writeFixtureFiles(directory: string, overrides?: { userConfig?: string;
           },
           ai: {
             mode: "advisory",
+            generalModel: "gpt-4.1-mini",
+            managementModel: "gpt-4.1-mini",
+            screeningModel: "gpt-4.1-mini",
+            timeoutMs: 3000,
           },
           deploy: {
             defaultAmountSol: 0.5,
@@ -253,5 +257,28 @@ describe("loadConfig", () => {
     expect(redactedText).not.toContain("telegram_secret");
     expect(redactedText).toContain("[REDACTED]");
     expect(redactedText).toContain("\"dryRun\":true");
+  });
+
+  it("treats blank optional .env secrets as undefined instead of invalid", () => {
+    const directory = makeTempDir();
+    const { envPath, userConfigPath } = writeFixtureFiles(directory, {
+      env: [
+        "WALLET_PRIVATE_KEY=test_private_key",
+        "RPC_URL=https://rpc.example.com",
+        "LLM_API_KEY=",
+        "LLM_BASE_URL=",
+        "TELEGRAM_BOT_TOKEN=",
+      ].join("\n"),
+    });
+
+    const config = loadConfig({
+      env: {},
+      envFilePath: envPath,
+      userConfigPath,
+    });
+
+    expect(config.secrets.LLM_API_KEY).toBeUndefined();
+    expect(config.secrets.LLM_BASE_URL).toBeUndefined();
+    expect(config.secrets.TELEGRAM_BOT_TOKEN).toBeUndefined();
   });
 });
