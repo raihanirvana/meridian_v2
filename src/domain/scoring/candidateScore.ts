@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  createDefaultSignalWeights,
+  SignalWeightsSchema,
+  type SignalWeights,
+} from "../entities/SignalWeights.js";
 import { PortfolioStateSchema } from "../entities/PortfolioState.js";
 
 function clamp(value: number, min: number, max: number): number {
@@ -104,14 +109,25 @@ export type CandidateScorePolicy = z.infer<typeof CandidateScorePolicySchema>;
 export type CandidateScoreBreakdown = z.infer<typeof CandidateScoreBreakdownSchema>;
 export type CandidateScoreResult = z.infer<typeof CandidateScoreResultSchema>;
 
+function effectiveSignalMultiplier(
+  signalWeights: SignalWeights,
+  key: keyof SignalWeights,
+): number {
+  return signalWeights[key].weight;
+}
+
 export function scoreCandidate(input: {
   candidate: ScreeningCandidateInput;
   portfolio: z.infer<typeof PortfolioStateSchema>;
   policy: CandidateScorePolicy;
+  signalWeights?: SignalWeights;
 }): CandidateScoreResult {
   const candidate = ScreeningCandidateInputSchema.parse(input.candidate);
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = CandidateScorePolicySchema.parse(input.policy);
+  const signalWeights = input.signalWeights === undefined
+    ? createDefaultSignalWeights()
+    : SignalWeightsSchema.parse(input.signalWeights);
 
   const poolExposurePct = portfolio.exposureByPool[candidate.poolAddress] ?? 0;
   const tokenExposurePct = Math.max(
@@ -176,7 +192,36 @@ export function scoreCandidate(input: {
     overlapPenalty: round(100 - overlapPenaltyScore),
   });
 
-  const weights = policy.weights;
+  const weights = {
+    feeToTvl:
+      policy.weights.feeToTvl * effectiveSignalMultiplier(signalWeights, "feeToTvl"),
+    volumeConsistency:
+      policy.weights.volumeConsistency *
+      effectiveSignalMultiplier(signalWeights, "volumeConsistency"),
+    liquidityDepth:
+      policy.weights.liquidityDepth *
+      effectiveSignalMultiplier(signalWeights, "liquidityDepth"),
+    organicScore:
+      policy.weights.organicScore *
+      effectiveSignalMultiplier(signalWeights, "organicScore"),
+    holderQuality:
+      policy.weights.holderQuality *
+      effectiveSignalMultiplier(signalWeights, "holderQuality"),
+    tokenAuditHealth:
+      policy.weights.tokenAuditHealth *
+      effectiveSignalMultiplier(signalWeights, "tokenAuditHealth"),
+    smartMoney:
+      policy.weights.smartMoney * effectiveSignalMultiplier(signalWeights, "smartMoney"),
+    poolMaturity:
+      policy.weights.poolMaturity *
+      effectiveSignalMultiplier(signalWeights, "poolMaturity"),
+    launchpadPenalty:
+      policy.weights.launchpadPenalty *
+      effectiveSignalMultiplier(signalWeights, "launchpadPenalty"),
+    overlapPenalty:
+      policy.weights.overlapPenalty *
+      effectiveSignalMultiplier(signalWeights, "overlapPenalty"),
+  } as const;
   const totalWeight =
     weights.feeToTvl +
     weights.volumeConsistency +

@@ -55,6 +55,16 @@ export {
   type PerformanceRecord,
 } from "./domain/entities/PerformanceRecord.js";
 export {
+  createDefaultSignalWeights,
+  SIGNAL_WEIGHT_KEYS,
+  SignalWeightEntrySchema,
+  SignalWeightKeySchema,
+  SignalWeightsSchema,
+  type SignalWeightEntry,
+  type SignalWeightKey,
+  type SignalWeights,
+} from "./domain/entities/SignalWeights.js";
+export {
   PositionSchema,
   type Position,
 } from "./domain/entities/Position.js";
@@ -127,6 +137,21 @@ export {
   type ScreeningPolicy,
 } from "./domain/rules/screeningRules.js";
 export {
+  evolveThresholds,
+  MAX_CHANGE_PER_STEP,
+  MIN_EVOLVE_POSITIONS,
+  type ThresholdEvolutionResult,
+} from "./domain/rules/thresholdEvolutionRules.js";
+export {
+  MAX_SIGNAL_WEIGHT_CHANGE_PER_STEP,
+  MIN_MEANINGFUL_CORRELATION,
+  MIN_SIGNAL_WEIGHT_SAMPLES,
+  SIGNAL_WEIGHT_CEILING,
+  SIGNAL_WEIGHT_FLOOR,
+  recalculateWeights,
+  type SignalWeightRecalculationResult,
+} from "./domain/rules/signalWeightRules.js";
+export {
   MANAGEMENT_PRIORITY_SCORES,
   ManagementPrioritySchema,
   type ManagementPriority,
@@ -148,6 +173,13 @@ export {
   type FileSystemAdapter,
 } from "./adapters/storage/FileStore.js";
 export {
+  FileSignalWeightsStore,
+  SignalWeightsStoreFileSchema,
+  SignalWeightsStoreCorruptError,
+  type SignalWeightsStore,
+  type SignalWeightsStoreFile,
+} from "./adapters/storage/SignalWeightsStore.js";
+export {
   AdapterHttpStatusError,
   AdapterResponseValidationError,
   AdapterTransportError,
@@ -156,6 +188,18 @@ export {
   type JsonHttpClientOptions,
   type JsonHttpRequestOptions,
 } from "./adapters/http/HttpJsonClient.js";
+export {
+  FileRuntimePolicyStore,
+  PolicyOverridesSchema,
+  PolicyStoreCorruptError,
+  RuntimePolicyMetadataSchema,
+  RuntimePolicyStoreFileSchema,
+  type PolicyOverrides,
+  type RuntimePolicyMetadata,
+  type RuntimePolicyStore,
+  type RuntimePolicyStoreFile,
+  type RuntimePolicyStoreSnapshot,
+} from "./adapters/config/RuntimePolicyStore.js";
 export {
   MockDlmmGateway,
   ClaimFeesRequestSchema,
@@ -330,6 +374,14 @@ export {
   type RankedShortlistWithAi,
 } from "./app/services/AiAdvisoryService.js";
 export {
+  DefaultPolicyProvider,
+  type PolicyProvider,
+} from "./app/services/PolicyProvider.js";
+export {
+  DefaultSignalWeightsProvider,
+  type SignalWeightsProvider,
+} from "./app/services/SignalWeightsProvider.js";
+export {
   DefaultLessonPromptService,
   type BuildLessonsPromptInput,
   type LessonPromptService,
@@ -440,6 +492,17 @@ export {
   type OperatorCommandExecutionResult,
   type OperatorCommandParseInput,
 } from "./app/usecases/operatorCommands.js";
+export {
+  maybeEvolvePolicy,
+  type MaybeEvolvePolicyInput,
+  type MaybeEvolvePolicyResult,
+} from "./app/usecases/maybeEvolvePolicy.js";
+export {
+  MIN_SIGNAL_RECALIBRATION_POSITIONS,
+  maybeRecalibrateSignalWeights,
+  type MaybeRecalibrateSignalWeightsInput,
+  type MaybeRecalibrateSignalWeightsResult,
+} from "./app/usecases/maybeRecalibrateSignalWeights.js";
 export {
   recordPositionPerformance,
   type RecordPositionPerformanceInput,

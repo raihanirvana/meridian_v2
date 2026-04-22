@@ -5,6 +5,9 @@ import path from "node:path";
 export interface MeridianPaths {
   dataDir: string;
   lessonsFilePath: string;
+  policyOverridesFilePath: string;
+  poolMemoryFilePath: string;
+  signalWeightsFilePath: string;
 }
 
 export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
@@ -16,6 +19,9 @@ export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
   return {
     dataDir: resolvedDataDir,
     lessonsFilePath: path.join(resolvedDataDir, "lessons.json"),
+    policyOverridesFilePath: path.join(resolvedDataDir, "policy-overrides.json"),
+    poolMemoryFilePath: path.join(resolvedDataDir, "pool-memory.json"),
+    signalWeightsFilePath: path.join(resolvedDataDir, "signal-weights.json"),
   };
 }
 

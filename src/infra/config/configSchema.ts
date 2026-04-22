@@ -43,8 +43,8 @@ export const UserConfigSchema = z
         maxMarketCapUsd: PositiveNumber,
         minTvlUsd: PositiveNumber,
         minVolumeUsd: PositiveNumber,
-        minFeeToTvlRatio: PositiveNumber,
-        minOrganicScore: PercentNumber,
+        minFeeActiveTvlRatio: PositiveNumber,
+        minOrganic: PercentNumber,
         minHolderCount: z.number().int().positive(),
         allowedBinSteps: z.array(z.number().int().positive()).min(1),
         blockedLaunchpads: z.array(z.string().min(1)),
@@ -76,6 +76,16 @@ export const UserConfigSchema = z
       .object({
         telegramEnabled: z.boolean(),
         alertChatId: z.string().min(1).optional(),
+      })
+      .strict(),
+    poolMemory: z
+      .object({
+        snapshotsEnabled: z.boolean(),
+      })
+      .strict(),
+    darwin: z
+      .object({
+        enabled: z.boolean(),
       })
       .strict(),
     runtime: z

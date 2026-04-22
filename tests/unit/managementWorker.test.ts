@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import { FilePoolMemoryRepository } from "../../src/adapters/storage/PoolMemoryRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
@@ -291,6 +292,94 @@ describe("management worker", () => {
     const actions = await actionRepository.list();
     expect(actions.some((action) => action.type === "REBALANCE")).toBe(true);
     expect(result.portfolioState?.circuitBreakerState).toBe("OFF");
+  });
+
+  it("records pool snapshots during management cycles when enabled", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const poolMemoryRepository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(
+      buildPosition({
+        unrealizedPnlUsd: 12,
+        currentValueUsd: 112,
+        activeBin: 25,
+        outOfRangeSince: "2026-04-21T11:30:00.000Z",
+      }),
+    );
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy(),
+      signalProvider: () => ({
+        forcedManualClose: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 3.5,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      journalRepository,
+      poolMemoryRepository,
+      poolMemorySnapshotsEnabled: true,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.status).toBe("NO_ACTION");
+
+    const poolEntry = await poolMemoryRepository.get("pool_001");
+    expect(poolEntry?.snapshots).toHaveLength(1);
+    expect(poolEntry?.snapshots[0]).toMatchObject({
+      ts: "2026-04-21T12:00:00.000Z",
+      positionId: "pos_001",
+      pnlUsd: 12,
+      unclaimedFeesUsd: 3.5,
+      inRange: false,
+      minutesOutOfRange: 30,
+      ageMinutes: 720,
+    });
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "POOL_MEMORY_UPDATED",
+    );
   });
 
   it("skips unsupported management actions like CLAIM_FEES without enqueueing work", async () => {

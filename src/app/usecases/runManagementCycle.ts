@@ -1,5 +1,6 @@
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
@@ -25,6 +26,7 @@ import { type LessonPromptService } from "../services/LessonPromptService.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 
+import { recordPoolSnapshot } from "./recordPoolSnapshot.js";
 import { requestClose } from "./requestClose.js";
 import {
   deriveRebalanceCapitalRequirement,
@@ -37,6 +39,41 @@ function proposedTokenMints(payload: RebalanceActionRequestPayload): string[] {
     payload.redeploy.baseMint,
     payload.redeploy.quoteMint,
   ])];
+}
+
+function diffMinutes(from: string | null, to: string): number {
+  if (from === null) {
+    return 0;
+  }
+
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((toMs - fromMs) / 60_000));
+}
+
+function isPositionInRange(position: Position): boolean {
+  return (
+    position.activeBin !== null &&
+    position.activeBin >= position.rangeLowerBin &&
+    position.activeBin <= position.rangeUpperBin
+  );
+}
+
+function deriveSnapshotPnlPct(position: Position): number {
+  const estimatedInitialValueUsd = Math.max(
+    position.currentValueUsd - position.unrealizedPnlUsd,
+    0,
+  );
+
+  if (estimatedInitialValueUsd <= 0) {
+    return 0;
+  }
+
+  return (position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
 }
 
 export type ManagementCycleResultStatus =
@@ -80,6 +117,8 @@ export interface RunManagementCycleInput {
     portfolio: PortfolioState;
     now: string;
   }) => Promise<ManagementSignals> | ManagementSignals;
+  poolMemoryRepository?: PoolMemoryRepository;
+  poolMemorySnapshotsEnabled?: boolean;
   rebalancePlanner?: (input: {
     position: Position;
     portfolio: PortfolioState;
@@ -182,6 +221,30 @@ export async function runManagementCycle(
       portfolio,
       now,
     });
+    if (
+      input.poolMemoryRepository !== undefined &&
+      input.poolMemorySnapshotsEnabled === true
+    ) {
+      await recordPoolSnapshot({
+        poolMemoryRepository: input.poolMemoryRepository,
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        poolAddress: position.poolAddress,
+        name: position.poolAddress,
+        baseMint: position.baseMint,
+        snapshot: {
+          ts: now,
+          positionId: position.positionId,
+          pnlPct: deriveSnapshotPnlPct(position),
+          pnlUsd: position.unrealizedPnlUsd,
+          inRange: isPositionInRange(position),
+          unclaimedFeesUsd: signals.claimableFeesUsd,
+          minutesOutOfRange: diffMinutes(position.outOfRangeSince, now),
+          ageMinutes: diffMinutes(position.openedAt, now),
+        },
+      });
+    }
     const evaluation = evaluateManagementAction({
       now,
       position,

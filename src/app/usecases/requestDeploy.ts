@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
+import { PositionEntryMetadataSchema } from "../../domain/entities/Position.js";
 import type { Actor } from "../../domain/types/enums.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
@@ -20,6 +21,7 @@ export const DeployActionRequestPayloadSchema = z
     rangeUpperBin: z.number().int(),
     initialActiveBin: z.number().int().nullable(),
     estimatedValueUsd: z.number().nonnegative(),
+    entryMetadata: PositionEntryMetadataSchema.optional(),
   })
   .superRefine((payload, ctx) => {
     if (payload.rangeLowerBin >= payload.rangeUpperBin) {

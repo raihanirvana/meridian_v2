@@ -126,6 +126,9 @@ function buildPendingDeployPosition(input: {
     lastManagementReason: null,
     lastWriteActionId: input.action.actionId,
     needsReconciliation: false,
+    ...(input.payload.entryMetadata === undefined
+      ? {}
+      : { entryMetadata: input.payload.entryMetadata }),
   });
 }
 

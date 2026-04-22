@@ -293,6 +293,9 @@ function buildPendingRedeployPosition(input: {
     lastManagementReason: payload.reason,
     lastWriteActionId: input.action.actionId,
     needsReconciliation: false,
+    ...(payload.redeploy.entryMetadata === undefined
+      ? {}
+      : { entryMetadata: payload.redeploy.entryMetadata }),
   });
 }
 

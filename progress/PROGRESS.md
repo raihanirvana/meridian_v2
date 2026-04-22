@@ -1,14 +1,15 @@
 # Meridian V2 Progress
 
 Last updated: 2026-04-22
-Current batch: Batch 17.1 - lesson memory inti dan wajib-konsultasi AI
+Current batch: Batch 17.4 - Darwinian signal weights
 Status: Complete
 
-## Scope Batch 17.1
-- Add canonical `PerformanceRecord` + `Lesson` entities and pure derivation/prompt rules
-- Add shared `lessons.json` repositories for lessons + performance history
-- Wire close finalization to record performance/lesson and force AI advisory to consult lessons before LLM use
-- Add operator commands for lesson/performance inspection and manual curation
+## Scope Batch 17.4
+- Add `SignalWeights` entity + file store (`signal-weights.json`)
+- Add pure Darwin recalibration rule untuk weight scoring
+- Add `maybeRecalibrateSignalWeights()` use case behind `darwin.enabled`
+- Make screening scorer read `signalWeights` via injected parameter/provider
+- Add regression/unit/integration tests untuk recalibration flow
 
 ## Completed
 - PRD V2 sudah dibaca dan dijadikan source of truth
@@ -422,9 +423,113 @@ Status: Complete
     - `npm test` ✅ `150/150`
     - `npm run build` ✅
     - `npm run lint` ✅
+- Batch 17.2 selesai:
+  - naming threshold screening sekarang diselaraskan ke spec baru:
+    - `minFeeActiveTvlRatio`
+    - `minOrganic`
+  - runtime policy layer sekarang tersedia:
+    - `FileRuntimePolicyStore`
+    - `DefaultPolicyProvider`
+    - path `policy-overrides.json` via `resolveMeridianPaths()`
+  - pure rule `evolveThresholds()` sekarang mem-port heuristic repo lama:
+    - fee floor evolution via lowest-winner / loser-ceiling
+    - organic floor evolution via winner-loser gap
+    - nudge cap `<= 20%`
+    - clamp range yang deterministic
+  - use case `maybeEvolvePolicy()` sekarang:
+    - hanya jalan pada kelipatan 5 closed positions
+    - menulis overrides ke runtime store
+    - menulis journal `POLICY_EVOLVED`
+    - menulis lesson audit outcome `evolution`
+  - operator surface sekarang punya:
+    - `policy show`
+    - `policy reset confirm=true`
+  - regression tests Batch 17.2 sekarang mencakup:
+    - pure threshold evolution rule
+    - runtime policy store merge/corruption handling
+    - maybe-evolve write path + no-op path
+    - screening yang memakai evolved policy
+    - operator policy show/reset
+  - `policy reset` sekarang benar-benar menghapus file overrides, bukan hanya mengosongkan isinya
+  - baseline verifikasi terbaru:
+    - `npm test` ✅ `163/163`
+    - `npm run build` ✅
+    - `npm run lint` ✅
+- Batch 17.3 selesai:
+  - entity baru sekarang tersedia:
+    - `PoolMemoryEntry`
+    - `PoolDeploy`
+    - `PoolSnapshot`
+  - persistence pool-memory sekarang tersedia lewat:
+    - `FilePoolMemoryRepository`
+    - file `pool-memory.json` via `resolveMeridianPaths()`
+    - `PoolMemoryStoreCorruptError` saat file invalid (tidak silent reset)
+  - pure rule sekarang tersedia:
+    - `computePoolAggregates()` (totalDeploys, avgPnlPct, winRatePct, lastOutcome, lastDeployedAt)
+    - `shouldCooldown()` (default trigger `volume_collapse`)
+    - `buildPoolRecallString()` (deploy summary + recent trend + cooldown + last note)
+    - `applyCooldownFilter()` screening helper
+  - use case `recordPoolDeploy()` sekarang:
+    - upsert entry pool dengan cap 50 deploy terakhir
+    - set `cooldownUntil = now + 4h` bila `shouldCooldown` true
+    - emit journal `POOL_MEMORY_UPDATED`
+    - dijalankan otomatis lewat `PerformanceLessonHook` setelah close terfinalisasi
+  - use case `recordPoolSnapshot()` sekarang tersedia (cap 48 snapshot ~ 4 jam @ 5 menit) dan sudah bisa dipanggil dari management cycle secara opt-in lewat `poolMemorySnapshotsEnabled`
+  - AI shortlist sekarang **wajib** melihat pool memory:
+    - `LessonPromptService.buildLessonsPrompt` menerima opsi `includePoolMemory`
+    - `rankShortlistWithAi` selalu passing `includePoolMemory` dengan pool address tiap kandidat
+    - prompt siap pakai mengandung blok `### POOL MEMORY` di bawah `### LESSONS LEARNED`
+  - screening pipeline sekarang menyaring kandidat cooldown sebelum scoring
+  - operator surface sekarang punya command tambahan:
+    - `pool memory <address>`
+    - `pool note <address> <note>`
+    - `pool cooldown <address> <hours>`
+    - `pool cooldown_clear <address>`
+  - bug yang ditemukan dan ditutup selama audit 17.3:
+    - `DefaultLessonPromptService` tidak lagi melewati injeksi pool memory saat lesson kosong (sebelumnya early-return `null`, sehingga blok pool memory hilang untuk fresh install)
+    - `PerformanceLessonHook` sekarang memakai conditional spread untuk `journalRepository` saat memanggil `recordPoolDeploy`, menutup pelanggaran `exactOptionalPropertyTypes`
+    - `PerformanceLessonHook` sekarang juga memicu `maybeEvolvePolicy()` otomatis setelah performance close tercatat, jadi policy evolution tidak lagi menunggu wiring manual lain
+    - `runManagementCycle()` sekarang bisa merekam `PoolSnapshot` saat `poolMemorySnapshotsEnabled=true` dan `poolMemoryRepository` tersedia
+    - metadata entry deploy/redeploy sekarang bisa dibawa lewat `entryMetadata` pada payload -> posisi -> performance close, jadi field seperti `poolName`, `binStep`, `volatility`, `feeTvlRatio`, `organicScore`, dan `amountSol` tidak lagi default `0` saat context entry memang tersedia
+  - baseline verifikasi terbaru:
+    - `npm test` ✅ `175/175`
+    - `npm run build` ✅
+    - `npm run lint` ✅
+- Batch 17.4 selesai:
+  - entity Darwin sekarang tersedia:
+    - `SignalWeightKey`
+    - `SignalWeightEntry`
+    - `SignalWeights`
+  - persistence signal weights sekarang tersedia lewat:
+    - `FileSignalWeightsStore`
+    - file `signal-weights.json` via `resolveMeridianPaths()`
+    - `SignalWeightsStoreCorruptError` saat file invalid
+  - pure rule Darwin sekarang tersedia:
+    - `recalculateWeights()` dengan gate sample minimal 10
+    - korelasi positif/negatif mengubah weight maksimal `20%` per step
+    - clamp weight `[0.1, 3.0]`
+  - use case `maybeRecalibrateSignalWeights()` sekarang:
+    - hanya jalan saat `darwin.enabled=true`
+    - hanya jalan pada kelipatan 10 closed positions
+    - menulis store `signal-weights.json`
+    - menulis journal `SIGNAL_WEIGHTS_RECALIBRATED`
+    - menulis lesson audit outcome `evolution`
+  - close learning hook sekarang bisa memicu Darwin recalibration otomatis bila `signalWeightsStore` diinjeksikan
+  - screening scorer sekarang menerima `signalWeights` via parameter, sehingga runtime/provider bisa mengubah output tanpa mutasi global
+  - provider siap pakai sekarang tersedia:
+    - `DefaultSignalWeightsProvider`
+  - regression tests Batch 17.4 sekarang mencakup:
+    - pure recalibration rule
+    - signal weights store default/corruption behavior
+    - use case skip/apply path
+    - screening output berubah saat Darwin weights aktif
+  - baseline verifikasi terbaru:
+    - `npm test` ✅ `183/183`
+    - `npm run build` ✅
+    - `npm run lint` ✅
 
 ## Pending
-- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 17.2 atau Batch 18
+- Tidak ada blocker fungsional aktif yang wajib ditutup sebelum mulai Batch 18
 - Gap yang masih tersisa sekarang lebih ke scope/surface:
   - `screeningWorker`
   - `reportingWorker`
@@ -457,10 +562,8 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
-- Batch 17.2: adaptive threshold evolution (port `evolveThresholds`, runtime policy store)
-- Batch 17.3: pool-memory per alamat pool dengan cooldown
-- Batch 17.4 (opsional): Darwinian signal weights
 - Batch 18: hardening dan live-readiness checklist
+- Worker wiring consolidation: rakit composition root yang mengaktifkan dependency `runtimePolicyStore`, `signalWeightsStore`, dan `poolMemoryRepository` secara default di runtime nyata, supaya evolution/pool-snapshot/Darwin tidak lagi bergantung pada manual DI per caller
 
 ## Handoff Notes
 - Repo ini awalnya kosong kecuali PRD
@@ -478,5 +581,8 @@ Status: Complete
 - Batch 15 menambahkan advisory AI tanpa mengubah write boundary: worker tetap dispatch berdasarkan hasil deterministic, sementara output AI hanya dipakai untuk ranking/explanation metadata dan selalu punya fallback
 - Batch 16 menambahkan adapter nyata berbasis HTTP + error mapping, tetapi runtime composition tetap external/manual: worker masih menerima gateway via dependency injection, bukan instantiate service live sendiri
 - Batch 17 simulation harness sengaja menjalankan urutan `reconcile -> manage -> queue`, sehingga action yang disubmit di cycle N baru dikonfirmasi/recovered pada cycle N+1 lewat replay fixture berikutnya
-- Batch 17.1 lesson memory sekarang sudah ada, tetapi quality beberapa field performance close masih bergantung pada metadata yang tersedia saat finalizer dipanggil; detail yang belum bisa dipulihkan penuh dicatat di debt register, bukan disembunyikan
-- `npm test` terakhir hijau dengan total `123` tests passed
+- Batch 17.1 lesson memory sekarang sudah membawa metadata entry dengan lebih baik lewat `entryMetadata` pada deploy/redeploy payload; jika caller tidak memberi metadata itu, hook masih fallback konservatif ke nilai posisi dasar
+- Batch 17.2 adaptive threshold evolution sekarang sudah ada di level rule/store/usecase/operator surface, dan close hook sudah bisa memicunya otomatis bila `runtimePolicyStore` diinjeksikan
+- Batch 17.3 pool memory sekarang aktif di jalur close → `recordPoolDeploy` → AI shortlist prompt, dan snapshot trend juga sudah bisa direkam dari management cycle secara opt-in lewat `poolMemorySnapshotsEnabled`
+- Batch 17.4 Darwinian signal weights sekarang sudah ada di level entity/store/rule/usecase/provider; screening scorer juga sudah bisa membaca `signalWeights` terinjeksi tanpa mutasi global
+- `npm test` terakhir hijau dengan total `183` tests passed

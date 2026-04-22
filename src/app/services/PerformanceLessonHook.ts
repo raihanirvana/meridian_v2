@@ -1,11 +1,20 @@
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimePolicyStore } from "../../adapters/config/RuntimePolicyStore.js";
 import { type LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
 import { type PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
+import { type PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
+import { type SignalWeightsStore } from "../../adapters/storage/SignalWeightsStore.js";
 import { type PerformanceRecord } from "../../domain/entities/PerformanceRecord.js";
-import { type Position } from "../../domain/entities/Position.js";
+import {
+  type Position,
+  type PositionEntryMetadata,
+} from "../../domain/entities/Position.js";
 import { createUlid } from "../../infra/id/createUlid.js";
 
 import { recordPositionPerformance } from "../usecases/recordPositionPerformance.js";
+import { recordPoolDeploy } from "../usecases/recordPoolDeploy.js";
+import { maybeRecalibrateSignalWeights } from "../usecases/maybeRecalibrateSignalWeights.js";
+import { maybeEvolvePolicy } from "../usecases/maybeEvolvePolicy.js";
 
 function diffMinutes(from: string | null, to: string | null): number {
   if (from === null || to === null) {
@@ -54,8 +63,16 @@ function mapCloseReason(reason: string): PerformanceRecord["closeReason"] {
 export interface CreateRecordPositionPerformanceLessonHookInput {
   lessonRepository: LessonRepositoryInterface;
   performanceRepository: PerformanceRepositoryInterface;
+  poolMemoryRepository?: PoolMemoryRepository;
+  runtimePolicyStore?: RuntimePolicyStore;
+  signalWeightsStore?: SignalWeightsStore;
+  darwinEnabled?: boolean;
   journalRepository?: JournalRepository;
   idGen?: () => string;
+}
+
+function resolveEntryMetadata(position: Position): PositionEntryMetadata {
+  return position.entryMetadata ?? {};
 }
 
 export function buildPerformanceRecordFromClose(input: {
@@ -63,6 +80,7 @@ export function buildPerformanceRecordFromClose(input: {
   reason: string;
   now: string;
 }): PerformanceRecord {
+  const entryMetadata = resolveEntryMetadata(input.position);
   const minutesHeld = diffMinutes(input.position.openedAt, input.position.closedAt ?? input.now);
   const minutesOutOfRange = diffMinutes(
     input.position.outOfRangeSince,
@@ -86,18 +104,18 @@ export function buildPerformanceRecordFromClose(input: {
     positionId: input.position.positionId,
     wallet: input.position.wallet,
     pool: input.position.poolAddress,
-    poolName: input.position.poolAddress,
+    poolName: entryMetadata.poolName ?? input.position.poolAddress,
     baseMint: input.position.baseMint,
     strategy: input.position.strategy === "spot" || input.position.strategy === "curve"
       ? input.position.strategy
       : "bid_ask",
-    binStep: 0,
+    binStep: entryMetadata.binStep ?? 0,
     binRangeLower: input.position.rangeLowerBin,
     binRangeUpper: input.position.rangeUpperBin,
-    volatility: 0,
-    feeTvlRatio: 0,
-    organicScore: 0,
-    amountSol: 0,
+    volatility: entryMetadata.volatility ?? 0,
+    feeTvlRatio: entryMetadata.feeTvlRatio ?? 0,
+    organicScore: entryMetadata.organicScore ?? 0,
+    amountSol: entryMetadata.amountSol ?? 0,
     initialValueUsd: recoveredInitialValueUsd,
     finalValueUsd: recoveredFinalValueUsd,
     feesEarnedUsd: input.position.feesClaimedUsd,
@@ -142,6 +160,68 @@ export function createRecordPositionPerformanceLessonHook(
       idGen,
       now: () => hookInput.now,
     });
+
+    if (
+      input.poolMemoryRepository !== undefined &&
+      result.skipped !== true &&
+      result.performance !== undefined
+    ) {
+      await recordPoolDeploy({
+        poolMemoryRepository: input.poolMemoryRepository,
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        poolAddress: result.performance.pool,
+        name: result.performance.poolName,
+        baseMint: result.performance.baseMint,
+        deploy: {
+          deployedAt: result.performance.deployedAt,
+          closedAt: result.performance.closedAt,
+          pnlPct: result.performance.pnlPct,
+          pnlUsd: result.performance.pnlUsd,
+          rangeEfficiencyPct: result.performance.rangeEfficiencyPct,
+          minutesHeld: result.performance.minutesHeld,
+          closeReason: result.performance.closeReason,
+          strategy: result.performance.strategy,
+          volatilityAtDeploy: result.performance.volatility,
+        },
+        now: hookInput.now,
+      });
+    }
+
+    if (
+      input.runtimePolicyStore !== undefined &&
+      result.skipped !== true &&
+      result.performance !== undefined
+    ) {
+      await maybeEvolvePolicy({
+        performanceRepository: input.performanceRepository,
+        runtimePolicyStore: input.runtimePolicyStore,
+        lessonRepository: input.lessonRepository,
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        now: () => hookInput.now,
+        idGen,
+      });
+    }
+
+    if (
+      input.signalWeightsStore !== undefined &&
+      result.skipped !== true
+    ) {
+      await maybeRecalibrateSignalWeights({
+        performanceRepository: input.performanceRepository,
+        signalWeightsStore: input.signalWeightsStore,
+        lessonRepository: input.lessonRepository,
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        darwinEnabled: input.darwinEnabled ?? false,
+        now: () => hookInput.now,
+        idGen,
+      });
+    }
 
     return result.performance;
   };

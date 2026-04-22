@@ -4,6 +4,17 @@ import { PositionStatusSchema } from "../types/enums.js";
 
 const TimestampSchema = z.string().datetime();
 
+export const PositionEntryMetadataSchema = z
+  .object({
+    poolName: z.string().min(1).optional(),
+    binStep: z.number().int().positive().optional(),
+    volatility: z.number().nonnegative().optional(),
+    feeTvlRatio: z.number().nonnegative().optional(),
+    organicScore: z.number().nonnegative().optional(),
+    amountSol: z.number().nonnegative().optional(),
+  })
+  .strict();
+
 export const PositionSchema = z
   .object({
     positionId: z.string().min(1),
@@ -38,6 +49,7 @@ export const PositionSchema = z
     lastManagementReason: z.string().min(1).nullable(),
     lastWriteActionId: z.string().min(1).nullable(),
     needsReconciliation: z.boolean(),
+    entryMetadata: PositionEntryMetadataSchema.optional(),
   })
   .superRefine((position, ctx) => {
     if (position.status === "CLOSED" && position.closedAt === null) {
@@ -79,3 +91,4 @@ export const PositionSchema = z
   .strict();
 
 export type Position = z.infer<typeof PositionSchema>;
+export type PositionEntryMetadata = z.infer<typeof PositionEntryMetadataSchema>;

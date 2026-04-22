@@ -4,8 +4,10 @@ import type { ActionRepository } from "../../adapters/storage/ActionRepository.j
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
+import type { RuntimePolicyStore } from "../../adapters/config/RuntimePolicyStore.js";
 import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
 import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
+import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { Action } from "../../domain/entities/Action.js";
 import { type PortfolioState } from "../../domain/entities/PortfolioState.js";
@@ -15,6 +17,7 @@ import {
 import type { Actor } from "../../domain/types/enums.js";
 import { createUlid } from "../../infra/id/createUlid.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
+import type { PolicyProvider } from "../services/PolicyProvider.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 
 import {
@@ -100,6 +103,31 @@ const OperatorCommandSchema = z.discriminatedUnion("kind", [
     hours: z.number().int().positive().nullable().default(null),
     limit: z.number().int().positive().default(20),
   }),
+  z.object({
+    kind: z.literal("POLICY_SHOW"),
+  }),
+  z.object({
+    kind: z.literal("POLICY_RESET"),
+    confirm: z.literal(true),
+  }),
+  z.object({
+    kind: z.literal("POOL_MEMORY"),
+    poolAddress: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("POOL_NOTE"),
+    poolAddress: z.string().min(1),
+    note: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("POOL_COOLDOWN"),
+    poolAddress: z.string().min(1),
+    hours: z.number().positive(),
+  }),
+  z.object({
+    kind: z.literal("POOL_COOLDOWN_CLEAR"),
+    poolAddress: z.string().min(1),
+  }),
 ]);
 
 export type OperatorCommand = z.infer<typeof OperatorCommandSchema>;
@@ -122,6 +150,9 @@ export interface ExecuteOperatorCommandInput {
   riskPolicy: PortfolioRiskPolicy;
   lessonRepository?: LessonRepositoryInterface;
   performanceRepository?: PerformanceRepositoryInterface;
+  poolMemoryRepository?: PoolMemoryRepository;
+  runtimePolicyStore?: RuntimePolicyStore;
+  policyProvider?: PolicyProvider;
   previousPortfolioState?: PortfolioState | null;
 }
 
@@ -190,6 +221,51 @@ export function parseOperatorCommand(
 
   if (normalized === "performance summary") {
     return OperatorCommandSchema.parse({ kind: "PERFORMANCE_SUMMARY" });
+  }
+
+  if (normalized === "policy show") {
+    return OperatorCommandSchema.parse({ kind: "POLICY_SHOW" });
+  }
+
+  if (normalized === "policy reset confirm=true") {
+    return OperatorCommandSchema.parse({
+      kind: "POLICY_RESET",
+      confirm: true,
+    });
+  }
+
+  const poolMemoryMatch = normalized.match(/^pool\s+memory\s+(\S+)$/);
+  if (poolMemoryMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "POOL_MEMORY",
+      poolAddress: requireCapture(poolMemoryMatch[1], "pool memory"),
+    });
+  }
+
+  const poolNoteMatch = normalized.match(/^pool\s+note\s+(\S+)\s+(.+)$/s);
+  if (poolNoteMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "POOL_NOTE",
+      poolAddress: requireCapture(poolNoteMatch[1], "pool note"),
+      note: requireCapture(poolNoteMatch[2], "pool note").trim(),
+    });
+  }
+
+  const poolCooldownMatch = normalized.match(/^pool\s+cooldown\s+(\S+)\s+(\d+(?:\.\d+)?)$/);
+  if (poolCooldownMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "POOL_COOLDOWN",
+      poolAddress: requireCapture(poolCooldownMatch[1], "pool cooldown"),
+      hours: Number(requireCapture(poolCooldownMatch[2], "pool cooldown")),
+    });
+  }
+
+  const poolCooldownClearMatch = normalized.match(/^pool\s+cooldown_clear\s+(\S+)$/);
+  if (poolCooldownClearMatch !== null) {
+    return OperatorCommandSchema.parse({
+      kind: "POOL_COOLDOWN_CLEAR",
+      poolAddress: requireCapture(poolCooldownClearMatch[1], "pool cooldown_clear"),
+    });
   }
 
   const performanceHistoryMatch = normalized.match(/^performance-history(?:\s+(\d+))?(?:\s+(\d+))?$/);
@@ -319,7 +395,7 @@ export function parseOperatorCommand(
   }
 
   throw new Error(
-    "unknown command; supported commands: status, positions, pending-actions, close, deploy, rebalance, lessons list/pin/unpin/add/remove/remove-by-keyword/clear, performance summary, performance-history",
+    "unknown command; supported commands: status, positions, pending-actions, close, deploy, rebalance, lessons list/pin/unpin/add/remove/remove-by-keyword/clear, performance summary, performance-history, policy show, policy reset, pool memory/note/cooldown/cooldown_clear",
   );
 }
 
@@ -338,6 +414,36 @@ function requirePerformanceRepository(
 ): PerformanceRepositoryInterface {
   if (repository === undefined) {
     throw new Error("performance repository is required for performance commands");
+  }
+
+  return repository;
+}
+
+function requireRuntimePolicyStore(
+  runtimePolicyStore: RuntimePolicyStore | undefined,
+): RuntimePolicyStore {
+  if (runtimePolicyStore === undefined) {
+    throw new Error("runtime policy store is required for policy commands");
+  }
+
+  return runtimePolicyStore;
+}
+
+function requirePolicyProvider(
+  policyProvider: PolicyProvider | undefined,
+): PolicyProvider {
+  if (policyProvider === undefined) {
+    throw new Error("policy provider is required for policy commands");
+  }
+
+  return policyProvider;
+}
+
+function requirePoolMemoryRepository(
+  repository: PoolMemoryRepository | undefined,
+): PoolMemoryRepository {
+  if (repository === undefined) {
+    throw new Error("pool memory repository is required for pool commands");
   }
 
   return repository;
@@ -646,6 +752,91 @@ export async function executeOperatorCommand(
                   ].join(" | "),
                 )
                 .join("\n"),
+        actionId: null,
+      };
+    }
+    case "POLICY_SHOW": {
+      const runtimePolicyStore = requireRuntimePolicyStore(input.runtimePolicyStore);
+      const policyProvider = requirePolicyProvider(input.policyProvider);
+      const snapshot = await runtimePolicyStore.snapshot();
+      const resolvedPolicy = await policyProvider.resolveScreeningPolicy();
+
+      return {
+        command: input.command.kind,
+        text: JSON.stringify({
+          policy: resolvedPolicy,
+          overrides: snapshot.overrides,
+          ...(snapshot.lastEvolvedAt === undefined
+            ? {}
+            : { lastEvolvedAt: snapshot.lastEvolvedAt }),
+          ...(snapshot.positionsAtEvolution === undefined
+            ? {}
+            : { positionsAtEvolution: snapshot.positionsAtEvolution }),
+          rationale: snapshot.rationale,
+        }, null, 2),
+        actionId: null,
+      };
+    }
+    case "POLICY_RESET": {
+      const runtimePolicyStore = requireRuntimePolicyStore(input.runtimePolicyStore);
+      await runtimePolicyStore.reset();
+      return {
+        command: input.command.kind,
+        text: "policy overrides reset",
+        actionId: null,
+      };
+    }
+    case "POOL_MEMORY": {
+      const poolMemoryRepository = requirePoolMemoryRepository(
+        input.poolMemoryRepository,
+      );
+      const entry = await poolMemoryRepository.get(input.command.poolAddress);
+      return {
+        command: input.command.kind,
+        text:
+          entry === null
+            ? "no pool memory"
+            : JSON.stringify(entry, null, 2),
+        actionId: null,
+      };
+    }
+    case "POOL_NOTE": {
+      const poolMemoryRepository = requirePoolMemoryRepository(
+        input.poolMemoryRepository,
+      );
+      await poolMemoryRepository.addNote(
+        input.command.poolAddress,
+        input.command.note,
+        requestedAt,
+      );
+      return {
+        command: input.command.kind,
+        text: "pool note added",
+        actionId: null,
+      };
+    }
+    case "POOL_COOLDOWN": {
+      const poolMemoryRepository = requirePoolMemoryRepository(
+        input.poolMemoryRepository,
+      );
+      const untilIso = new Date(
+        Date.parse(requestedAt) + input.command.hours * 60 * 60 * 1000,
+      ).toISOString();
+      await poolMemoryRepository.setCooldown(input.command.poolAddress, untilIso);
+      return {
+        command: input.command.kind,
+        text: `pool cooldown set until ${untilIso}`,
+        actionId: null,
+      };
+    }
+    case "POOL_COOLDOWN_CLEAR": {
+      const poolMemoryRepository = requirePoolMemoryRepository(
+        input.poolMemoryRepository,
+      );
+      await poolMemoryRepository.setCooldown(input.command.poolAddress, null);
+      return {
+        command: input.command.kind,
+        text: "pool cooldown cleared",
         actionId: null,
       };
     }

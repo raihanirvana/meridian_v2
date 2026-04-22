@@ -16,6 +16,7 @@ import {
 } from "../../src/app/services/AiAdvisoryService.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
 import { FileLessonRepository } from "../../src/adapters/storage/LessonRepository.js";
+import { FilePoolMemoryRepository } from "../../src/adapters/storage/PoolMemoryRepository.js";
 import { runManagementWorker } from "../../src/app/workers/managementWorker.js";
 import { type Candidate } from "../../src/domain/entities/Candidate.js";
 import { type Position } from "../../src/domain/entities/Position.js";
@@ -38,6 +39,9 @@ function createEmptyLessonPromptService(directory: string) {
   return new DefaultLessonPromptService(
     new FileLessonRepository({
       filePath: path.join(directory, "lessons.json"),
+    }),
+    new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
     }),
   );
 }
@@ -202,6 +206,9 @@ describe("AI advisory service", () => {
     const lessonRepository = new FileLessonRepository({
       filePath: path.join(directory, "lessons.json"),
     });
+    const poolMemoryRepository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
     await lessonRepository.append({
       id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       rule: "PREFER pools with sustained fee density",
@@ -221,7 +228,10 @@ describe("AI advisory service", () => {
     const result = await rankShortlistWithAi({
       shortlist,
       aiMode: "advisory",
-      lessonPromptService: new DefaultLessonPromptService(lessonRepository),
+      lessonPromptService: new DefaultLessonPromptService(
+        lessonRepository,
+        poolMemoryRepository,
+      ),
       llmGateway: {
         rankCandidates: async (input) => {
           capturedSystemPrompt = input.systemPrompt;
@@ -313,6 +323,9 @@ describe("AI advisory service", () => {
     const lessonRepository = new FileLessonRepository({
       filePath: path.join(directory, "lessons.json"),
     });
+    const poolMemoryRepository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
     await lessonRepository.append({
       id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
       rule: "FAILED: close OOR positions sooner when efficiency collapses",
@@ -329,7 +342,10 @@ describe("AI advisory service", () => {
       evaluation: buildEvaluation(),
       position: buildPosition(),
       triggerReasons: ["stop loss reached"],
-      lessonPromptService: new DefaultLessonPromptService(lessonRepository),
+      lessonPromptService: new DefaultLessonPromptService(
+        lessonRepository,
+        poolMemoryRepository,
+      ),
       llmGateway: {
         rankCandidates: async () => ({
           rankedCandidateIds: [],

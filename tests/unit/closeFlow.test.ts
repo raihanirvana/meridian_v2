@@ -8,6 +8,7 @@ import {
   MockDlmmGateway,
   type MockDlmmGatewayBehaviors,
 } from "../../src/adapters/dlmm/DlmmGateway.js";
+import { FileRuntimePolicyStore } from "../../src/adapters/config/RuntimePolicyStore.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import { FileLessonRepository } from "../../src/adapters/storage/LessonRepository.js";
@@ -18,7 +19,9 @@ import { createRecordPositionPerformanceLessonHook } from "../../src/app/service
 import { finalizeClose } from "../../src/app/usecases/finalizeClose.js";
 import { processCloseAction } from "../../src/app/usecases/processCloseAction.js";
 import { requestClose } from "../../src/app/usecases/requestClose.js";
+import { type PerformanceRecord } from "../../src/domain/entities/PerformanceRecord.js";
 import { type Position } from "../../src/domain/entities/Position.js";
+import { type ScreeningPolicy } from "../../src/domain/rules/screeningRules.js";
 
 const tempDirs: string[] = [];
 
@@ -28,7 +31,10 @@ async function makeTempDir(): Promise<string> {
   return directory;
 }
 
-function buildOpenPosition(positionId: string): Position {
+function buildOpenPosition(
+  positionId: string,
+  overrides: Partial<Position> = {},
+): Position {
   return {
     positionId,
     poolAddress: "pool_001",
@@ -62,6 +68,7 @@ function buildOpenPosition(positionId: string): Position {
     lastManagementReason: null,
     lastWriteActionId: null,
     needsReconciliation: false,
+    ...overrides,
   };
 }
 
@@ -148,6 +155,62 @@ function buildGateway(
   });
 }
 
+function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy {
+  return {
+    minMarketCapUsd: 150_000,
+    maxMarketCapUsd: 10_000_000,
+    minTvlUsd: 10_000,
+    minVolumeUsd: 5_000,
+    minFeeActiveTvlRatio: 0.1,
+    minOrganic: 60,
+    minHolderCount: 500,
+    allowedBinSteps: [80, 100, 125],
+    blockedLaunchpads: [],
+    blockedTokenMints: [],
+    blockedDeployers: [],
+    allowedPairTypes: ["volatile", "stable"],
+    maxTopHolderPct: 35,
+    maxBotHolderPct: 20,
+    maxBundleRiskPct: 20,
+    maxWashTradingRiskPct: 20,
+    rejectDuplicatePoolExposure: true,
+    rejectDuplicateTokenExposure: true,
+    shortlistLimit: 2,
+    ...overrides,
+  };
+}
+
+function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+  return {
+    positionId: "seed_pos",
+    wallet: "wallet_001",
+    pool: "pool_001",
+    poolName: "SOL-USDC",
+    baseMint: "mint_base",
+    strategy: "bid_ask",
+    binStep: 100,
+    binRangeLower: 10,
+    binRangeUpper: 20,
+    volatility: 12,
+    feeTvlRatio: 0.12,
+    organicScore: 75,
+    amountSol: 1,
+    initialValueUsd: 100,
+    finalValueUsd: 105,
+    feesEarnedUsd: 2,
+    pnlUsd: 5,
+    pnlPct: 5,
+    rangeEfficiencyPct: 80,
+    minutesHeld: 120,
+    minutesInRange: 96,
+    closeReason: "take_profit",
+    deployedAt: "2026-04-19T00:00:00.000Z",
+    closedAt: "2026-04-19T02:00:00.000Z",
+    recordedAt: "2026-04-19T02:00:00.000Z",
+    ...overrides,
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirs.splice(0, tempDirs.length).map((directory) =>
@@ -172,7 +235,18 @@ describe("close flow", () => {
       actionRepository,
       journalRepository,
     });
-    await stateRepository.upsert(buildOpenPosition("pos_001"));
+    await stateRepository.upsert(
+      buildOpenPosition("pos_001", {
+        entryMetadata: {
+          poolName: "SOL-USDC",
+          binStep: 100,
+          volatility: 12,
+          feeTvlRatio: 0.14,
+          organicScore: 78,
+          amountSol: 1.5,
+        },
+      }),
+    );
 
     const action = await requestClose({
       actionQueue,
@@ -286,7 +360,18 @@ describe("close flow", () => {
       actionRepository,
       journalRepository,
     });
-    await stateRepository.upsert(buildOpenPosition("pos_001"));
+    await stateRepository.upsert(
+      buildOpenPosition("pos_001", {
+        entryMetadata: {
+          poolName: "SOL-USDC",
+          binStep: 100,
+          volatility: 12,
+          feeTvlRatio: 0.14,
+          organicScore: 78,
+          amountSol: 1.5,
+        },
+      }),
+    );
 
     const action = await requestClose({
       actionQueue,
@@ -348,10 +433,135 @@ describe("close flow", () => {
     });
 
     expect(finalized.outcome).toBe("FINALIZED");
-    expect((await performanceRepository.list())).toHaveLength(1);
+    const performance = await performanceRepository.list();
+    expect(performance).toHaveLength(1);
+    expect(performance[0]).toMatchObject({
+      poolName: "SOL-USDC",
+      binStep: 100,
+      volatility: 12,
+      feeTvlRatio: 0.14,
+      organicScore: 78,
+      amountSol: 1.5,
+    });
     expect((await lessonRepository.list())).toHaveLength(1);
     expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
       "LESSON_RECORDED",
+    );
+  });
+
+  it("auto-evolves runtime policy after the fifth recorded close performance", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const lessonsFilePath = path.join(directory, "lessons.json");
+    const lessonRepository = new FileLessonRepository({
+      filePath: lessonsFilePath,
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: lessonsFilePath,
+    });
+    const runtimePolicyStore = new FileRuntimePolicyStore({
+      filePath: path.join(directory, "policy-overrides.json"),
+      basePolicy: buildPolicy({
+        minFeeActiveTvlRatio: 0.06,
+      }),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    for (const record of [
+      buildPerformance({ positionId: "w1", pnlPct: 10, feeTvlRatio: 0.30, organicScore: 88 }),
+      buildPerformance({ positionId: "w2", pnlPct: 9, feeTvlRatio: 0.28, organicScore: 86 }),
+      buildPerformance({ positionId: "w3", pnlPct: 8, feeTvlRatio: 0.32, organicScore: 84 }),
+      buildPerformance({ positionId: "l1", pnlPct: -8, pnlUsd: -8, feeTvlRatio: 0.07, organicScore: 61 }),
+    ]) {
+      await performanceRepository.append(record);
+    }
+
+    await stateRepository.upsert(buildOpenPosition("pos_001"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: {
+        reason: "take profit close",
+      },
+      requestedBy: "operator",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close_profit"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: {
+            ...buildCloseConfirmedPosition("pos_001"),
+            feesClaimedUsd: 0,
+            realizedPnlUsd: -10,
+            currentValueUsd: 90,
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_001",
+            txIds: ["tx_close_profit"],
+          },
+        },
+      }),
+      journalRepository,
+      lessonHook: createRecordPositionPerformanceLessonHook({
+        lessonRepository,
+        performanceRepository,
+        runtimePolicyStore,
+        journalRepository,
+      }),
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect((await performanceRepository.list())).toHaveLength(5);
+    expect((await lessonRepository.list()).some((lesson) => lesson.outcome === "evolution")).toBe(
+      true,
+    );
+    expect(Object.keys((await runtimePolicyStore.snapshot()).overrides).length).toBeGreaterThan(0);
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "POLICY_EVOLVED",
     );
   });
 

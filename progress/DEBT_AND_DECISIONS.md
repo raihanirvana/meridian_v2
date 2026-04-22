@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-22 (Batch 17.1 lesson memory applied)
+Last updated: 2026-04-22 (Batch 17.4 Darwin applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -212,11 +212,6 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: Batch 17 PRD memang fokus pada lifecycle stop-loss/rebalance/timeout/circuit-breaker, jadi harness sekarang cukup dengan `DlmmGateway` + valuation inputs. Namun advisory AI, post-close swap, screening, dan token-intel path belum bisa direpro lewat replay fixture yang sama.
   Revisit: saat simulator mulai dipakai sebagai regression platform yang lebih luas untuk Batch 18+ atau saat swap/screening/advisory flow perlu skenario replay resmi.
 
-- `N45` `buildPerformanceRecordFromClose()` masih mengisi sebagian field lesson/performance dengan best-effort placeholder karena `finalizeClose()` belum membawa metadata deploy/screening awal secara penuh di [PerformanceLessonHook.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PerformanceLessonHook.ts:62>)
-  Status: deferred
-  Kenapa ditunda: Batch 17.1 sudah menutup fondasi memory dan audit trail, tetapi field seperti `binStep`, `volatility`, `feeTvlRatio`, `organicScore`, dan `amountSol` belum semuanya tersedia secara canonical di close finalizer. Daripada menghambat wiring lesson memory total, hook sekarang memakai fallback konservatif/best-effort yang masih cukup untuk derivasi lesson dasar.
-  Revisit: saat Batch 17.2/17.3 mulai memakai performance historis untuk evolusi threshold atau pool-memory yang lebih sensitif terhadap metadata entry asli.
-
 - `T8` coverage gap risk engine setelah hardening Batch 12 di [riskRules.test.ts](<c:/Users/PC/Desktop/meridian_v2/tests/unit/riskRules.test.ts:1>)
   Status: deferred
   Kenapa ditunda: core semantics Batch 12 sudah diregresikan, tetapi beberapa branch penting dan ambiguity cases belum diuji eksplisit.
@@ -231,7 +226,25 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   `dryRun`, `BLOCKED_BY_RISK`, `RECONCILE_ONLY`, planner `null`, multiple open positions in one cycle, signalProvider failure boundary, gateway failure propagation, dan journal events untuk unsupported/skipped actions.
   Revisit: sebelum worker orchestration dipakai sebagai loop runtime utama atau mulai dihubungkan ke reporter/operator surface.
 
+- `N48` Darwin recalibration saat ini baru bisa menyesuaikan signal yang memang sudah punya metadata canonical di `PerformanceRecord` (`feeToTvl`, `organicScore`); signal lain masih bertahan di weight default karena histori entry-nya belum dipersist konsisten di [signalWeightRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/signalWeightRules.ts:1>)
+  Status: deferred
+  Kenapa ditunda: Batch 17.4 menutup fondasi entity/store/rule/usecase/provider dan menjaga perubahan scoring tetap deterministic, tetapi belum ada source historis yang bersih untuk `volumeConsistency`, `liquidityDepth`, `holderQuality`, `tokenAuditHealth`, `smartMoney`, `poolMaturity`, `launchpadPenalty`, atau `overlapPenalty`.
+  Revisit: saat screening worker / candidate snapshot persistence resmi dibangun, supaya entry snapshot per kandidat bisa ditautkan ke `PerformanceRecord` close dan Darwin bisa belajar dari seluruh sinyal.
+
+- `N49` Darwin weights sudah bisa dipakai oleh scorer via parameter/provider, tetapi belum ada screening worker/runtime composition root yang menginjeksikan `SignalWeightsProvider` secara default di [screeningRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/screeningRules.ts:1>) dan [SignalWeightsProvider.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/SignalWeightsProvider.ts:1>)
+  Status: deferred
+  Kenapa ditunda: repo saat ini belum punya `screeningWorker` aktif, jadi Darwin path baru terverifikasi di integration/usecase layer dan pada caller yang sengaja menginjeksikan provider.
+  Revisit: saat `screeningWorker` atau composition root runtime screening resmi dirakit, kemungkinan bersama Batch 18 atau batch worker berikutnya.
+
 ## Design Decisions
+- Batch 17.2 menstandarkan naming screening threshold ke istilah PRD yang baru: `minFeeActiveTvlRatio` dan `minOrganic`
+  Rationale: spec 17.2 dan heuristik repo lama memakai istilah itu secara eksplisit; menyelaraskan naming sekarang lebih murah daripada membawa alias lama (`minFeeToTvlRatio` / `minOrganicScore`) ke runtime policy store dan evolution layer.
+  Tradeoff: config fixture, tests, dan operator docs harus ikut bergerak ke naming baru, tetapi surface screening menjadi lebih konsisten dengan PRD 17.2+.
+
+- Runtime overrides screening disimpan terpisah di `policy-overrides.json`, bukan memutasi `user-config.json`
+  Rationale: base config tetap immutable dan audit-friendly, sementara hasil evolution adalah state runtime yang bisa di-reset tanpa menyentuh source config operator.
+  Tradeoff: caller sekarang harus melewati `PolicyProvider` jika ingin screening policy final; membaca config base saja tidak lagi cukup untuk mencerminkan policy aktif.
+
 - Batch 17.1 menyimpan `lessons` dan `performance` dalam satu file shared `lessons.json`, bukan dua store terpisah
   Rationale: ini mengikuti spec Batch 17.1 agar snapshot memory + performance selalu konsisten dan migrasi dari repo lama lebih mudah.
   Tradeoff: file ini sekarang memegang dua concern yang berbeda, sehingga corruption/backup handling perlu lebih hati-hati dan memang sengaja dibiarkan jadi concern Batch 18 jika store rusak.
@@ -239,6 +252,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - AI advisory tidak boleh memanggil LLM tanpa hasil konsultasi lesson; jika `LessonPromptService` gagal, sistem harus log `ai_lesson_injection_failed` lalu fallback ke deterministic
   Rationale: PRD Batch 17.1 menegaskan bahwa AI harus belajar dulu sebelum entry/management reasoning. Safety yang dipilih adalah “no lessons -> no LLM”, bukan “LLM jalan tanpa konteks”.
   Tradeoff: jika lesson store unavailable, kualitas advisory turun ke deterministic penuh sampai store pulih, tetapi boundary keselamatan dan auditability tetap jelas.
+
+- Batch 17.4 memperlakukan `signalWeights` sebagai multiplier di atas `scoringPolicy.weights`, bukan mengganti policy base weight mentah, di [candidateScore.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/scoring/candidateScore.ts:1>)
+  Rationale: policy base tetap source of truth yang bisa diaudit operator, sementara Darwin menjadi lapisan adaptif kecil yang menggeser sensitivitas scorer secara perlahan.
+  Tradeoff: perubahan Darwin tidak pernah benar-benar meniadakan policy weight dasar; jika operator ingin mematikan atau merombak sebuah signal total, itu tetap dilakukan di config/policy, bukan menunggu Darwin.
 
 - Simulation harness Batch 17 sengaja menjalankan urutan cycle `reconcile -> manage -> queue` di [runDryRunSimulation.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runDryRunSimulation.ts:1>)
   Rationale: replay fixture jadi lebih deterministik karena action yang disubmit pada cycle N baru dikonfirmasi atau di-recover pada cycle N+1, sesuai model worker periodik yang lebih realistis.
@@ -340,6 +357,16 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Rationale: domain/worker layer tetap bergantung pada interface, sementara pemilihan service live, base URL, key, dan execution bridge menjadi tanggung jawab composition root atau runtime supervisor.
   Tradeoff: “real adapter available” tidak sama dengan “runtime default sudah live”; wiring ke service nyata tetap langkah terpisah.
 
+- Batch 17.3 memilih `volume_collapse` sebagai default trigger cooldown pool, bukan `low_yield` seperti di spec literal, di [poolMemoryRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/poolMemoryRules.ts:48>)
+  Rationale: `CloseReasonSchema` V2 hanya berisi enum `manual | stop_loss | take_profit | out_of_range | volume_collapse | timeout | operator` — tidak ada `low_yield`. Spec Batch 17.3 sendiri memberi escape hatch eksplisit: “`"low_yield"` bila ada; atau kriteria lain yang lebih jelas”. `volume_collapse` memenuhi semangat repo lama (`close_reason === "low yield"` = pool tidak lagi profitable) tanpa memaksa menambah enum baru yang belum punya produsen di lifecycle V2.
+  Tradeoff: `shouldCooldown()` default hanya menyalakan cooldown saat volume collapse; operator yang ingin kriteria tambahan (mis. loser cepat dengan `pnlPct < 0 && minutesHeld < N`) harus memberi `closeReasonSet` atau memperluas rule secara eksplisit.
+  Files: [poolMemoryRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/poolMemoryRules.ts:44>), [recordPoolDeploy.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/recordPoolDeploy.ts:1>)
+
+- Batch 17.3 menegakkan bahwa `rankShortlistWithAi` WAJIB membawa `includePoolMemory` ke `LessonPromptService`, dan `DefaultLessonPromptService` tidak boleh lagi return `null` hanya karena lesson kosong bila pool memory diminta di [LessonPromptService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/LessonPromptService.ts:1>) dan [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:1>)
+  Rationale: spec Batch 17.3 menetapkan pool memory sebagai injection mandatory kedua setelah lessons. Kalau fresh install punya pool-memory tapi belum punya lessons, AI harus tetap melihat konteks pool-nya — tidak boleh jatuh ke LLM tanpa konteks sama sekali.
+  Tradeoff: header `### LESSONS LEARNED` yang dibungkuskan `AiAdvisoryService` sekarang bisa membawa konten yang hanya berisi blok `### POOL MEMORY`; header itu berfungsi sebagai wrapper “context block”, bukan label literal lessons. Jika nanti ingin header lebih jujur, perlu refactor terpisah di AiAdvisoryService agar memisahkan kedua blok.
+  Files: [LessonPromptService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/LessonPromptService.ts:32>), [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:192>)
+
 ## Closed
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
 - `F2` gateway position hanya dianggap confirmed jika status benar-benar `OPEN`.
@@ -365,6 +392,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `N34d` duplicate operator config `maxRebalancesPerPosition` sudah dikurangi; field canonical sekarang hanya ada di section `risk`.
 - `N24` circuit breaker lifecycle worker sekarang lengkap sampai `COOLDOWN -> OFF` melalui snapshot state + cooldown timestamp.
 - `N35` `dailyRealizedPnl` worker sekarang dihitung dari journal realized-PnL delta harian, sehingga tidak lagi mengandalkan `closedAt` snapshot yang rawan under/overcount.
+- `N45` close performance metadata sekarang dibawa lewat `entryMetadata` pada payload deploy/redeploy -> posisi -> `buildPerformanceRecordFromClose()`, sehingga field seperti `poolName`, `binStep`, `volatility`, `feeTvlRatio`, `organicScore`, dan `amountSol` tidak lagi hardcoded placeholder saat metadata entry tersedia.
+- `N46` `maybeEvolvePolicy()` sekarang sudah di-wire otomatis dari `createRecordPositionPerformanceLessonHook()`, sehingga close finalization yang berhasil bisa langsung memicu evolusi policy setelah performance tercatat.
+- `N47` `recordPoolSnapshot()` sekarang sudah di-wire ke `runManagementCycle()` secara opt-in lewat `poolMemorySnapshotsEnabled` + `poolMemoryRepository`, sehingga snapshot pool bisa direkam selama management cycle aktif.
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.

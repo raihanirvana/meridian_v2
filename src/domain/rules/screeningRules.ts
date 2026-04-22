@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { CandidateSchema, type Candidate } from "../entities/Candidate.js";
+import { type PoolMemoryEntry } from "../entities/PoolMemory.js";
 import { PortfolioStateSchema } from "../entities/PortfolioState.js";
+import { type SignalWeights } from "../entities/SignalWeights.js";
+import { applyCooldownFilter } from "./poolMemoryRules.js";
 import { scoreCandidate, CandidateScorePolicySchema, ScreeningCandidateInputSchema } from "../scoring/candidateScore.js";
 
 export const ScreeningPolicySchema = z
@@ -10,8 +13,8 @@ export const ScreeningPolicySchema = z
     maxMarketCapUsd: z.number().positive(),
     minTvlUsd: z.number().positive(),
     minVolumeUsd: z.number().positive(),
-    minFeeToTvlRatio: z.number().positive(),
-    minOrganicScore: z.number().min(0).max(100),
+    minFeeActiveTvlRatio: z.number().positive(),
+    minOrganic: z.number().min(0).max(100),
     minHolderCount: z.number().int().positive(),
     allowedBinSteps: z.array(z.number().int().positive()).min(1),
     blockedLaunchpads: z.array(z.string().min(1)),
@@ -82,10 +85,10 @@ export function evaluateScreeningHardFilters(input: {
   if (candidate.volumeUsd < policy.minVolumeUsd) {
     rejectionReasons.push("volume below minimum");
   }
-  if (candidate.feeToTvlRatio < policy.minFeeToTvlRatio) {
+  if (candidate.feeToTvlRatio < policy.minFeeActiveTvlRatio) {
     rejectionReasons.push("fee-to-tvl ratio below minimum");
   }
-  if (candidate.organicScore < policy.minOrganicScore) {
+  if (candidate.organicScore < policy.minOrganic) {
     rejectionReasons.push("organic score below minimum");
   }
   if (candidate.holderCount < policy.minHolderCount) {
@@ -223,13 +226,23 @@ export function screenAndScoreCandidates(input: {
   portfolio: z.infer<typeof PortfolioStateSchema>;
   screeningPolicy: ScreeningPolicy;
   scoringPolicy: z.infer<typeof CandidateScorePolicySchema>;
+  signalWeights?: SignalWeights;
+  poolMemoryMap?: Record<string, Pick<PoolMemoryEntry, "cooldownUntil">>;
   createdAt?: string;
+  now?: string;
 }): ScreenAndScoreCandidatesResult {
-  const candidates = ScreeningCandidateInputSchema.array().parse(input.candidates);
+  const parsedCandidates = ScreeningCandidateInputSchema.array().parse(input.candidates);
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const screeningPolicy = ScreeningPolicySchema.parse(input.screeningPolicy);
   const scoringPolicy = CandidateScorePolicySchema.parse(input.scoringPolicy);
   const createdAt = input.createdAt ?? new Date().toISOString();
+  const candidates = input.poolMemoryMap === undefined
+    ? parsedCandidates
+    : applyCooldownFilter({
+        candidates: parsedCandidates,
+        poolMemoryMap: input.poolMemoryMap,
+        now: input.now ?? createdAt,
+      });
 
   const evaluatedCandidates = candidates.map((candidate) => {
     const hardFilter = evaluateScreeningHardFilters({
@@ -250,6 +263,9 @@ export function screenAndScoreCandidates(input: {
       candidate,
       portfolio,
       policy: scoringPolicy,
+      ...(input.signalWeights === undefined
+        ? {}
+        : { signalWeights: input.signalWeights }),
     });
 
     return buildCandidateEntity({

@@ -193,6 +193,11 @@ export async function rankShortlistWithAi(
   try {
     lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
       role: "SCREENER",
+      includePoolMemory: {
+        candidates: shortlist.map((candidate) => ({
+          poolAddress: candidate.poolAddress,
+        })),
+      },
     });
   } catch (error) {
     logLessonInjectionFailure(error);

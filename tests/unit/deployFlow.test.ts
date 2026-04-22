@@ -41,6 +41,14 @@ const deployPayload: DeployActionRequestPayload = {
   rangeUpperBin: 20,
   initialActiveBin: 15,
   estimatedValueUsd: 100,
+  entryMetadata: {
+    poolName: "SOL-USDC",
+    binStep: 100,
+    volatility: 12,
+    feeTvlRatio: 0.14,
+    organicScore: 78,
+    amountSol: 1.5,
+  },
 };
 
 function buildConfirmedPosition(positionId: string): Position {
@@ -216,6 +224,7 @@ describe("deploy flow", () => {
 
     expect(persistedAction?.status).toBe("DONE");
     expect(persistedPosition?.status).toBe("OPEN");
+    expect(persistedPosition?.entryMetadata).toEqual(deployPayload.entryMetadata);
     expect(journalEvents.map((event) => event.eventType)).toContain(
       "DEPLOY_CONFIRMED",
     );

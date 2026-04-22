@@ -54,8 +54,8 @@ function writeFixtureFiles(directory: string, overrides?: { userConfig?: string;
             maxMarketCapUsd: 10000000,
             minTvlUsd: 10000,
             minVolumeUsd: 500,
-            minFeeToTvlRatio: 0.05,
-            minOrganicScore: 60,
+            minFeeActiveTvlRatio: 0.05,
+            minOrganic: 60,
             minHolderCount: 500,
             allowedBinSteps: [80, 100, 125],
             blockedLaunchpads: [],
@@ -84,6 +84,12 @@ function writeFixtureFiles(directory: string, overrides?: { userConfig?: string;
           },
           notifications: {
             telegramEnabled: false,
+          },
+          poolMemory: {
+            snapshotsEnabled: false,
+          },
+          darwin: {
+            enabled: false,
           },
           runtime: {
             dryRun: true,
@@ -167,8 +173,8 @@ describe("loadConfig", () => {
           maxMarketCapUsd: 10000000,
           minTvlUsd: 10000,
           minVolumeUsd: 500,
-          minFeeToTvlRatio: 0.05,
-          minOrganicScore: 60,
+          minFeeActiveTvlRatio: 0.05,
+          minOrganic: 60,
           minHolderCount: 500,
           allowedBinSteps: [80, 100, 125],
           blockedLaunchpads: [],
@@ -198,6 +204,12 @@ describe("loadConfig", () => {
         },
         notifications: {
           telegramEnabled: false,
+        },
+        poolMemory: {
+          snapshotsEnabled: false,
+        },
+        darwin: {
+          enabled: false,
         },
         runtime: {
           dryRun: true,

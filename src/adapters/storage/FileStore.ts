@@ -86,6 +86,14 @@ export class FileStore {
     });
   }
 
+  public async remove(filePath: string): Promise<void> {
+    await FileStore.fileLock.withLock(filePath, async () => {
+      await this.safeCleanup(filePath);
+      await this.safeCleanup(`${filePath}.tmp`);
+      await this.safeCleanup(`${filePath}.bak`);
+    });
+  }
+
   private async ensureParentDirectory(filePath: string): Promise<void> {
     const parentDir = path.dirname(filePath);
     await this.fs.mkdir(parentDir, { recursive: true });
