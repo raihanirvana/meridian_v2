@@ -78,6 +78,37 @@ function deriveSnapshotPnlPct(position: Position): number {
   return (position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
 }
 
+const MAX_TRAILING_SNAPSHOT_AGE_MINUTES = 15;
+
+function tryDeriveFreshSnapshotPnlPct(input: {
+  position: Position;
+  now: string;
+}): number | null {
+  const { position, now } = input;
+  if (position.lastSyncedAt === null) {
+    return null;
+  }
+
+  const nowMs = Date.parse(now);
+  const syncedMs = Date.parse(position.lastSyncedAt);
+  if (Number.isNaN(nowMs) || Number.isNaN(syncedMs)) {
+    return null;
+  }
+
+  const ageMinutes = Math.max(0, Math.floor((nowMs - syncedMs) / 60_000));
+  if (ageMinutes > MAX_TRAILING_SNAPSHOT_AGE_MINUTES) {
+    return null;
+  }
+
+  const estimatedInitialValueUsd = position.currentValueUsd - position.unrealizedPnlUsd;
+  if (!Number.isFinite(estimatedInitialValueUsd) || estimatedInitialValueUsd <= 0) {
+    return null;
+  }
+
+  const pnlPct = (position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
+  return Number.isFinite(pnlPct) ? pnlPct : null;
+}
+
 function maybeRefreshPeakPnl(input: {
   position: Position;
   now: string;
@@ -87,7 +118,14 @@ function maybeRefreshPeakPnl(input: {
     return input.position;
   }
 
-  const currentPnlPct = deriveSnapshotPnlPct(input.position);
+  const currentPnlPct = tryDeriveFreshSnapshotPnlPct({
+    position: input.position,
+    now: input.now,
+  });
+  if (currentPnlPct === null) {
+    return input.position;
+  }
+
   const previousPeak = input.position.peakPnlPct ?? null;
   if (previousPeak !== null && currentPnlPct <= previousPeak) {
     return input.position;
@@ -97,6 +135,30 @@ function maybeRefreshPeakPnl(input: {
     ...input.position,
     peakPnlPct: currentPnlPct,
     peakPnlRecordedAt: input.now,
+  };
+}
+
+function sanitizePositionForTrailingEvaluation(input: {
+  position: Position;
+  now: string;
+  policy: ManagementPolicy;
+}): Position {
+  if (input.policy.trailingTakeProfitEnabled !== true) {
+    return input.position;
+  }
+
+  const currentPnlPct = tryDeriveFreshSnapshotPnlPct({
+    position: input.position,
+    now: input.now,
+  });
+  if (currentPnlPct !== null) {
+    return input.position;
+  }
+
+  return {
+    ...input.position,
+    peakPnlPct: null,
+    peakPnlRecordedAt: null,
   };
 }
 
@@ -287,7 +349,11 @@ export async function runManagementCycle(
     }
     const evaluation = evaluateManagementAction({
       now,
-      position: managedPosition,
+      position: sanitizePositionForTrailingEvaluation({
+        position: managedPosition,
+        now,
+        policy: input.managementPolicy,
+      }),
       portfolio,
       signals,
       policy: input.managementPolicy,
@@ -628,6 +694,9 @@ export async function runManagementCycle(
       ...(input.journalRepository === undefined
         ? {}
         : { journalRepository: input.journalRepository }),
+      ...(input.runtimeControlStore === undefined
+        ? {}
+        : { runtimeControlStore: input.runtimeControlStore }),
     });
 
     positionResults.push({

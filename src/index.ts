@@ -308,12 +308,20 @@ export {
   type SolPriceQuote,
 } from "./adapters/pricing/PriceGateway.js";
 export {
+  JupiterSolPriceGateway,
+  type JupiterSolPriceGatewayOptions,
+} from "./adapters/pricing/JupiterSolPriceGateway.js";
+export {
   MockWalletGateway,
   WalletBalanceSnapshotSchema,
   type MockWalletGatewayBehaviors,
   type WalletBalanceSnapshot,
   type WalletGateway,
 } from "./adapters/wallet/WalletGateway.js";
+export {
+  SolanaRpcWalletGateway,
+  type SolanaRpcWalletGatewayOptions,
+} from "./adapters/wallet/SolanaRpcWalletGateway.js";
 export {
   MockLlmGateway,
   CandidateRankingInputSchema,
@@ -346,6 +354,11 @@ export {
   HttpTelegramNotifierGateway,
   type HttpTelegramNotifierGatewayOptions,
 } from "./adapters/telegram/HttpTelegramNotifierGateway.js";
+export {
+  HttpTelegramOperatorGateway,
+  type HttpTelegramOperatorGatewayOptions,
+  type TelegramOperatorUpdate,
+} from "./adapters/telegram/HttpTelegramOperatorGateway.js";
 export {
   ActionRepository,
   type ActionRepositoryOptions,

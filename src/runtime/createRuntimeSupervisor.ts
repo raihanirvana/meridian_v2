@@ -208,6 +208,7 @@ export function createRuntimeSupervisor(
           dlmmGateway: input.gateways.dlmmGateway,
           stateRepository: input.stores.stateRepository,
           journalRepository: input.stores.journalRepository,
+          runtimeControlStore: input.stores.runtimeControlStore,
           ...(input.now === undefined ? {} : { now: input.now }),
         });
       default:
@@ -255,6 +256,7 @@ export function createRuntimeSupervisor(
         journalRepository: input.stores.journalRepository,
         walletGateway: input.gateways.walletGateway,
         priceGateway: input.gateways.priceGateway,
+        riskPolicy: input.config.risk,
         policyProvider,
         signalWeightsProvider,
         aiMode: input.config.ai.mode,

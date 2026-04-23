@@ -429,4 +429,26 @@ describe("risk rules", () => {
     expect(result.blockingRules).toContain("daily realized loss reached 0.2500 SOL");
     expect(result.state.dailyLossSol).toBe(0.25);
   });
+
+  it("blocks deploy conservatively when maxDailyLossSol is configured but SOL price is unavailable", () => {
+    const result = evaluatePortfolioRisk({
+      action: "DEPLOY",
+      portfolio: buildPortfolio({
+        dailyRealizedPnl: -5,
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 90,
+        maxDailyLossSol: 0.2,
+      }),
+      proposedAllocationUsd: 1,
+      proposedPoolAddress: "pool_new",
+      proposedTokenMints: ["mint_a", "mint_b"],
+      recentNewDeploys: 0,
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.blockingRules).toContain(
+      "daily SOL loss guard cannot be evaluated because solPriceUsd is unavailable",
+    );
+  });
 });

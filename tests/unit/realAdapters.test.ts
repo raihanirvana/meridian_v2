@@ -5,7 +5,10 @@ import { HttpDlmmGateway } from "../../src/adapters/dlmm/HttpDlmmGateway.js";
 import { HttpLlmGateway } from "../../src/adapters/llm/HttpLlmGateway.js";
 import { AdapterHttpStatusError, AdapterResponseValidationError, AdapterTransportError } from "../../src/adapters/http/HttpJsonClient.js";
 import { JupiterApiSwapGateway } from "../../src/adapters/jupiter/JupiterApiSwapGateway.js";
+import { JupiterSolPriceGateway } from "../../src/adapters/pricing/JupiterSolPriceGateway.js";
 import { HttpScreeningGateway } from "../../src/adapters/screening/HttpScreeningGateway.js";
+import { HttpTelegramOperatorGateway } from "../../src/adapters/telegram/HttpTelegramOperatorGateway.js";
+import { SolanaRpcWalletGateway } from "../../src/adapters/wallet/SolanaRpcWalletGateway.js";
 
 function createFetchFromResponse(response: Response) {
   return async () => response;
@@ -93,6 +96,47 @@ describe("real adapters", () => {
     await expect(
       screening.listCandidates({ limit: 1 }),
     ).resolves.toHaveLength(1);
+
+    const priceGateway = new JupiterSolPriceGateway({
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            outAmount: "150000000",
+          }),
+          { status: 200 },
+        ),
+      ),
+      now: () => "2026-04-23T00:00:00.000Z",
+    });
+
+    await expect(priceGateway.getSolPriceUsd()).resolves.toEqual({
+      symbol: "SOL",
+      priceUsd: 150,
+      asOf: "2026-04-23T00:00:00.000Z",
+    });
+
+    const walletGateway = new SolanaRpcWalletGateway({
+      rpcUrl: "https://rpc.example.com",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            result: {
+              value: 2500000000,
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+      now: () => "2026-04-23T00:00:00.000Z",
+    });
+
+    await expect(
+      walletGateway.getWalletBalance("wallet_001"),
+    ).resolves.toEqual({
+      wallet: "wallet_001",
+      balanceSol: 2.5,
+      asOf: "2026-04-23T00:00:00.000Z",
+    });
 
     const intel = new HttpTokenIntelGateway({
       baseUrl: "https://intel.example.com/v1/",
@@ -243,6 +287,38 @@ describe("real adapters", () => {
         systemPrompt: "rank",
       }),
     ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+
+    const telegram = new HttpTelegramOperatorGateway({
+      botToken: "telegram-token",
+      baseUrl: "https://api.telegram.test",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: [
+              {
+                update_id: 1,
+                message: {
+                  text: "/status",
+                  chat: {
+                    id: "chat_001",
+                  },
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(telegram.getUpdates()).resolves.toEqual([
+      {
+        updateId: 1,
+        chatId: "chat_001",
+        text: "/status",
+      },
+    ]);
   });
 
   it("maps transport failures into AdapterTransportError", async () => {

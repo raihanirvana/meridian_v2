@@ -18,6 +18,7 @@ import {
 } from "../../src/adapters/dlmm/DlmmGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import { FileRuntimeControlStore } from "../../src/adapters/storage/RuntimeControlStore.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
 import { finalizeRebalance } from "../../src/app/usecases/finalizeRebalance.js";
@@ -365,6 +366,93 @@ describe("rebalance flow", () => {
     expect(finalized.newPosition).toBeNull();
   });
 
+  it("blocks manual rebalance requests when the manual circuit breaker is active", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-control.json"),
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_manual_block"));
+    await runtimeControlStore.tripStopAllDeploys({
+      updatedAt: "2026-04-20T00:00:00.000Z",
+      reason: "panic",
+    });
+
+    await expect(
+      requestRebalance({
+        actionQueue,
+        stateRepository,
+        wallet: "wallet_001",
+        positionId: "pos_manual_block",
+        payload: rebalancePayload,
+        requestedBy: "operator",
+        runtimeControlStore,
+      }),
+    ).rejects.toThrow(/manual circuit breaker is active/i);
+  });
+
+  it("aborts queued rebalance before close submission when the manual circuit breaker is active", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-control.json"),
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_queue_block"));
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_queue_block",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+    await runtimeControlStore.tripStopAllDeploys({
+      updatedAt: "2026-04-20T00:01:00.000Z",
+      reason: "panic",
+    });
+
+    const queuedResult = await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        runtimeControlStore,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    expect(queuedResult?.status).toBe("ABORTED");
+    expect((await actionRepository.get(action.actionId))?.status).toBe("ABORTED");
+    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
+      "REBALANCE_BLOCKED_MANUAL_CIRCUIT_BREAKER",
+    );
+  });
+
   it("resumes rebalance redeploy confirmation when the new OPEN leg was committed before the action finished", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -578,5 +666,77 @@ describe("rebalance flow", () => {
     expect(finalized.oldPosition?.status).toBe("CLOSED");
     expect(finalized.newPosition).toBeNull();
     expect(await stateRepository.get("pos_new")).toBeNull();
+  });
+
+  it("aborts redeploy leg when manual circuit breaker is activated after the old leg closes", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-control.json"),
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_redeploy_block"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_redeploy_block",
+      txIds: ["tx_close_block"],
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_redeploy_block",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_redeploy_block",
+      buildCloseConfirmedPosition("pos_redeploy_block"),
+    );
+    await runtimeControlStore.tripStopAllDeploys({
+      updatedAt: "2026-04-20T00:04:00.000Z",
+      reason: "panic",
+    });
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      runtimeControlStore,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("REBALANCE_ABORTED");
+    expect(finalized.action.status).toBe("FAILED");
+    expect(finalized.oldPosition?.status).toBe("CLOSED");
+    expect(finalized.newPosition).toBeNull();
   });
 });

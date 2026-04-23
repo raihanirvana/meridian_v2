@@ -30,10 +30,11 @@ export async function runScreeningWorker(
   });
 
   if (scheduled.status === "SKIPPED_ALREADY_RUNNING") {
+    const screeningPolicy = await input.policyProvider.resolveScreeningPolicy();
     return {
       wallet: input.wallet,
       evaluatedAt: input.now?.() ?? new Date().toISOString(),
-      timeframe: "24h",
+      timeframe: screeningPolicy.timeframe,
       candidates: [],
       shortlist: [],
       aiSource: "DISABLED",

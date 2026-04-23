@@ -1,27 +1,29 @@
 import path from "node:path";
 import process from "node:process";
+import { createInterface } from "node:readline";
 import { z } from "zod";
 
 import { HttpTokenIntelGateway } from "../adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../adapters/dlmm/HttpDlmmGateway.js";
 import { JupiterApiSwapGateway } from "../adapters/jupiter/JupiterApiSwapGateway.js";
 import { HttpLlmGateway } from "../adapters/llm/HttpLlmGateway.js";
+import { JupiterSolPriceGateway } from "../adapters/pricing/JupiterSolPriceGateway.js";
 import { HttpTelegramNotifierGateway } from "../adapters/telegram/HttpTelegramNotifierGateway.js";
-import {
-  type SolPriceQuote,
-  type PriceGateway,
-} from "../adapters/pricing/PriceGateway.js";
-import {
-  type WalletBalanceSnapshot,
-  type WalletGateway,
-} from "../adapters/wallet/WalletGateway.js";
+import { HttpTelegramOperatorGateway } from "../adapters/telegram/HttpTelegramOperatorGateway.js";
+import { type PriceGateway } from "../adapters/pricing/PriceGateway.js";
+import { type WalletGateway } from "../adapters/wallet/WalletGateway.js";
+import { SolanaRpcWalletGateway } from "../adapters/wallet/SolanaRpcWalletGateway.js";
 import { HttpScreeningGateway } from "../adapters/screening/HttpScreeningGateway.js";
 import type { ManagementSignals } from "../domain/rules/managementRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
+import type { UserConfig } from "../infra/config/configSchema.js";
 import { loadConfig, redactSecretsForLogging } from "../infra/config/loadConfig.js";
 import { createLogger } from "../infra/logging/logger.js";
 import { DefaultLessonPromptService } from "../app/services/LessonPromptService.js";
+import { DefaultPolicyProvider } from "../app/services/PolicyProvider.js";
 import { resolveAdaptiveScreeningIntervalSec } from "../app/services/AdaptiveScreeningInterval.js";
+import { handleCliOperatorCommand } from "../app/usecases/handleCliOperatorCommand.js";
+import { handleTelegramOperatorCommand } from "../app/usecases/handleTelegramOperatorCommand.js";
 
 import { createRuntimeStores } from "./createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "./createRuntimeSupervisor.js";
@@ -35,8 +37,6 @@ const RuntimeBootstrapEnvSchema = z
     ANALYTICS_API_BASE_URL: z.url().optional(),
     JUPITER_QUOTE_BASE_URL: z.url().optional(),
     JUPITER_EXECUTE_BASE_URL: z.url().optional(),
-    MOCK_SOL_PRICE_USD: z.coerce.number().positive().default(150),
-    MOCK_WALLET_BALANCE_SOL: z.coerce.number().nonnegative().default(1),
     ACTION_QUEUE_INTERVAL_SEC: z.coerce.number().int().positive().default(5),
     DLMM_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   })
@@ -62,42 +62,9 @@ function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
     ANALYTICS_API_BASE_URL: emptyToUndefined(env.ANALYTICS_API_BASE_URL),
     JUPITER_QUOTE_BASE_URL: emptyToUndefined(env.JUPITER_QUOTE_BASE_URL),
     JUPITER_EXECUTE_BASE_URL: emptyToUndefined(env.JUPITER_EXECUTE_BASE_URL),
-    MOCK_SOL_PRICE_USD: emptyToUndefined(env.MOCK_SOL_PRICE_USD),
-    MOCK_WALLET_BALANCE_SOL: emptyToUndefined(env.MOCK_WALLET_BALANCE_SOL),
     ACTION_QUEUE_INTERVAL_SEC: emptyToUndefined(env.ACTION_QUEUE_INTERVAL_SEC),
     DLMM_TIMEOUT_MS: emptyToUndefined(env.DLMM_TIMEOUT_MS),
   });
-}
-
-class StaticEnvWalletGateway implements WalletGateway {
-  public constructor(
-    private readonly wallet: string,
-    private readonly balanceSol: number,
-    private readonly now: () => string,
-  ) {}
-
-  public async getWalletBalance(wallet: string): Promise<WalletBalanceSnapshot> {
-    return {
-      wallet,
-      balanceSol: wallet === this.wallet ? this.balanceSol : 0,
-      asOf: this.now(),
-    };
-  }
-}
-
-class StaticEnvPriceGateway implements PriceGateway {
-  public constructor(
-    private readonly priceUsd: number,
-    private readonly now: () => string,
-  ) {}
-
-  public async getSolPriceUsd(): Promise<SolPriceQuote> {
-    return {
-      symbol: "SOL",
-      priceUsd: this.priceUsd,
-      asOf: this.now(),
-    };
-  }
 }
 
 function createConservativeSignalProvider(): (
@@ -149,6 +116,189 @@ function toRuntimeScreeningPolicy(
   };
 }
 
+function startOperatorStdinLoop(input: {
+  enabled: boolean;
+  logger: ReturnType<typeof createLogger>;
+  wallet: string;
+  actionQueue: ReturnType<typeof createRuntimeStores>["actionQueue"];
+  stateRepository: ReturnType<typeof createRuntimeStores>["stateRepository"];
+  actionRepository: ReturnType<typeof createRuntimeStores>["actionRepository"];
+  journalRepository: ReturnType<typeof createRuntimeStores>["journalRepository"];
+  walletGateway: WalletGateway;
+  priceGateway: PriceGateway;
+  riskPolicy: UserConfig["risk"];
+  lessonRepository: ReturnType<typeof createRuntimeStores>["lessonRepository"];
+  performanceRepository: ReturnType<typeof createRuntimeStores>["performanceRepository"];
+  poolMemoryRepository: ReturnType<typeof createRuntimeStores>["poolMemoryRepository"];
+  runtimePolicyStore: ReturnType<typeof createRuntimeStores>["runtimePolicyStore"];
+  runtimeControlStore: ReturnType<typeof createRuntimeStores>["runtimeControlStore"];
+  policyProvider: DefaultPolicyProvider;
+  reportingSolMode: boolean;
+}): (() => void) | null {
+  if (!input.enabled) {
+    return null;
+  }
+
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: Boolean(process.stdin.isTTY),
+  });
+
+  input.logger.info(
+    "operator stdin loop enabled; type commands like `status`, `positions`, or `circuit_breaker_trip reason`",
+  );
+
+  rl.on("line", (line) => {
+    const rawCommand = line.trim();
+    if (rawCommand.length === 0) {
+      return;
+    }
+
+    void handleCliOperatorCommand({
+      rawCommand,
+      wallet: input.wallet,
+      requestedBy: "operator",
+      actionQueue: input.actionQueue,
+      stateRepository: input.stateRepository,
+      actionRepository: input.actionRepository,
+      journalRepository: input.journalRepository,
+      walletGateway: input.walletGateway,
+      priceGateway: input.priceGateway,
+      riskPolicy: input.riskPolicy,
+      lessonRepository: input.lessonRepository,
+      performanceRepository: input.performanceRepository,
+      poolMemoryRepository: input.poolMemoryRepository,
+      runtimePolicyStore: input.runtimePolicyStore,
+      runtimeControlStore: input.runtimeControlStore,
+      policyProvider: input.policyProvider,
+      previousPortfolioState: null,
+      reportingSolMode: input.reportingSolMode,
+    })
+      .then((result) => {
+        process.stdout.write(`${result.text}\n`);
+      })
+      .catch((error) => {
+        const message =
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "operator command failed";
+        input.logger.warn({ err: error, rawCommand }, "operator stdin command failed");
+        process.stderr.write(`${message}\n`);
+      });
+  });
+
+  rl.on("close", () => {
+    input.logger.info("operator stdin loop closed");
+  });
+
+  return () => {
+    rl.close();
+  };
+}
+
+function startTelegramOperatorPolling(input: {
+  enabled: boolean;
+  logger: ReturnType<typeof createLogger>;
+  wallet: string;
+  operatorGateway: HttpTelegramOperatorGateway;
+  notifierGateway: HttpTelegramNotifierGateway;
+  authorizedChatId: string;
+  actionQueue: ReturnType<typeof createRuntimeStores>["actionQueue"];
+  stateRepository: ReturnType<typeof createRuntimeStores>["stateRepository"];
+  actionRepository: ReturnType<typeof createRuntimeStores>["actionRepository"];
+  journalRepository: ReturnType<typeof createRuntimeStores>["journalRepository"];
+  walletGateway: WalletGateway;
+  priceGateway: PriceGateway;
+  riskPolicy: UserConfig["risk"];
+  lessonRepository: ReturnType<typeof createRuntimeStores>["lessonRepository"];
+  performanceRepository: ReturnType<typeof createRuntimeStores>["performanceRepository"];
+  poolMemoryRepository: ReturnType<typeof createRuntimeStores>["poolMemoryRepository"];
+  runtimePolicyStore: ReturnType<typeof createRuntimeStores>["runtimePolicyStore"];
+  runtimeControlStore: ReturnType<typeof createRuntimeStores>["runtimeControlStore"];
+  policyProvider: DefaultPolicyProvider;
+  reportingSolMode: boolean;
+}): (() => void) | null {
+  if (!input.enabled) {
+    return null;
+  }
+
+  let stopped = false;
+  let nextOffset: number | undefined;
+
+  const poll = async () => {
+    if (stopped) {
+      return;
+    }
+
+    try {
+      const updates = await input.operatorGateway.getUpdates({
+        ...(nextOffset === undefined ? {} : { offset: nextOffset }),
+        timeoutSec: 30,
+      });
+
+      for (const update of updates) {
+        nextOffset = update.updateId + 1;
+
+        if (update.chatId !== input.authorizedChatId) {
+          input.logger.warn(
+            {
+              chatId: update.chatId,
+              authorizedChatId: input.authorizedChatId,
+            },
+            "ignoring Telegram operator command from unauthorized chat",
+          );
+          continue;
+        }
+
+        await handleTelegramOperatorCommand({
+          notifierGateway: input.notifierGateway,
+          recipient: update.chatId,
+          rawCommand: update.text,
+          wallet: input.wallet,
+          requestedBy: "operator",
+          actionQueue: input.actionQueue,
+          stateRepository: input.stateRepository,
+          actionRepository: input.actionRepository,
+          journalRepository: input.journalRepository,
+          walletGateway: input.walletGateway,
+          priceGateway: input.priceGateway,
+          riskPolicy: input.riskPolicy,
+          lessonRepository: input.lessonRepository,
+          performanceRepository: input.performanceRepository,
+          poolMemoryRepository: input.poolMemoryRepository,
+          runtimePolicyStore: input.runtimePolicyStore,
+          runtimeControlStore: input.runtimeControlStore,
+          policyProvider: input.policyProvider,
+          previousPortfolioState: null,
+          reportingSolMode: input.reportingSolMode,
+        });
+      }
+    } catch (error) {
+      input.logger.warn(
+        { err: error },
+        "telegram operator polling failed; continuing",
+      );
+    } finally {
+      if (!stopped) {
+        setTimeout(() => {
+          void poll();
+        }, 1000);
+      }
+    }
+  };
+
+  void poll();
+  input.logger.info(
+    { authorizedChatId: input.authorizedChatId },
+    "telegram operator polling enabled",
+  );
+
+  return () => {
+    stopped = true;
+  };
+}
+
 async function main() {
   const cwd = process.cwd();
   const envFilePath = path.join(cwd, ".env");
@@ -165,9 +315,9 @@ async function main() {
     {
       config: redactSecretsForLogging(config),
       wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
-      envBridge: {
-        usingStaticWalletBalance: true,
-        usingStaticSolPrice: true,
+      liveBridges: {
+        walletBalance: "rpc",
+        solPrice: "jupiter-quote",
       },
     },
     "runtime bootstrap configuration loaded",
@@ -175,6 +325,25 @@ async function main() {
 
   const stores = createRuntimeStores({
     baseScreeningPolicy: toRuntimeScreeningPolicy(config.user.screening),
+  });
+  const policyProvider = new DefaultPolicyProvider({
+    basePolicy: toRuntimeScreeningPolicy(config.user.screening),
+    runtimePolicyStore: stores.runtimePolicyStore,
+  });
+  const walletGateway = new SolanaRpcWalletGateway({
+    rpcUrl: config.secrets.RPC_URL,
+    timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+    now,
+  });
+  const priceGateway = new JupiterSolPriceGateway({
+    ...(runtimeEnv.JUPITER_QUOTE_BASE_URL === undefined
+      ? {}
+      : { quoteBaseUrl: runtimeEnv.JUPITER_QUOTE_BASE_URL }),
+    ...(config.secrets.JUPITER_API_KEY === undefined
+      ? {}
+      : { apiKey: config.secrets.JUPITER_API_KEY }),
+    timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+    now,
   });
   const screeningGateway =
     runtimeEnv.SCREENING_API_BASE_URL === undefined
@@ -231,6 +400,20 @@ async function main() {
             : { timeoutMs: config.user.ai.timeoutMs }),
         })
       : undefined;
+  const liveTelegramNotifier =
+    config.secrets.TELEGRAM_BOT_TOKEN === undefined
+      ? undefined
+      : new HttpTelegramNotifierGateway({
+          botToken: config.secrets.TELEGRAM_BOT_TOKEN,
+          timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+        });
+  const liveTelegramOperatorGateway =
+    config.secrets.TELEGRAM_BOT_TOKEN === undefined
+      ? undefined
+      : new HttpTelegramOperatorGateway({
+          botToken: config.secrets.TELEGRAM_BOT_TOKEN,
+          timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+        });
   const supervisor = createRuntimeSupervisorFromUserConfig({
     wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
     userConfig: config.user,
@@ -245,24 +428,15 @@ async function main() {
       }),
       ...(screeningGateway === undefined ? {} : { screeningGateway }),
       ...(tokenIntelGateway === undefined ? {} : { tokenIntelGateway }),
-      walletGateway: new StaticEnvWalletGateway(
-        runtimeEnv.PUBLIC_WALLET_ADDRESS,
-        runtimeEnv.MOCK_WALLET_BALANCE_SOL,
-        now,
-      ),
-      priceGateway: new StaticEnvPriceGateway(
-        runtimeEnv.MOCK_SOL_PRICE_USD,
-        now,
-      ),
+      walletGateway,
+      priceGateway,
       ...(swapGateway === undefined ? {} : { swapGateway }),
       ...(liveLlmGateway === undefined ? {} : { llmGateway: liveLlmGateway }),
       ...(config.user.notifications.telegramEnabled &&
-      config.secrets.TELEGRAM_BOT_TOKEN !== undefined &&
+      liveTelegramNotifier !== undefined &&
       config.user.notifications.alertChatId !== undefined
         ? {
-            notifierGateway: new HttpTelegramNotifierGateway({
-              botToken: config.secrets.TELEGRAM_BOT_TOKEN,
-            }),
+            notifierGateway: liveTelegramNotifier,
           }
         : {}),
     },
@@ -280,6 +454,54 @@ async function main() {
       : { aiTimeoutMs: config.user.ai.timeoutMs }),
     now,
   });
+  const stopOperatorStdinLoop = startOperatorStdinLoop({
+    enabled: config.user.runtime.operatorStdinEnabled,
+    logger,
+    wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
+    actionQueue: stores.actionQueue,
+    stateRepository: stores.stateRepository,
+    actionRepository: stores.actionRepository,
+    journalRepository: stores.journalRepository,
+    walletGateway,
+    priceGateway,
+    riskPolicy: config.user.risk,
+    lessonRepository: stores.lessonRepository,
+    performanceRepository: stores.performanceRepository,
+    poolMemoryRepository: stores.poolMemoryRepository,
+    runtimePolicyStore: stores.runtimePolicyStore,
+    runtimeControlStore: stores.runtimeControlStore,
+    policyProvider,
+    reportingSolMode: config.user.reporting.solMode,
+  });
+  const stopTelegramOperatorPolling =
+    config.user.notifications.telegramEnabled &&
+    config.user.notifications.telegramOperatorCommandsEnabled &&
+    liveTelegramOperatorGateway !== undefined &&
+    liveTelegramNotifier !== undefined &&
+    config.user.notifications.alertChatId !== undefined
+      ? startTelegramOperatorPolling({
+          enabled: true,
+          logger,
+          wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
+          operatorGateway: liveTelegramOperatorGateway,
+          notifierGateway: liveTelegramNotifier,
+          authorizedChatId: config.user.notifications.alertChatId,
+          actionQueue: stores.actionQueue,
+          stateRepository: stores.stateRepository,
+          actionRepository: stores.actionRepository,
+          journalRepository: stores.journalRepository,
+          walletGateway,
+          priceGateway,
+          riskPolicy: config.user.risk,
+          lessonRepository: stores.lessonRepository,
+          performanceRepository: stores.performanceRepository,
+          poolMemoryRepository: stores.poolMemoryRepository,
+          runtimePolicyStore: stores.runtimePolicyStore,
+          runtimeControlStore: stores.runtimeControlStore,
+          policyProvider,
+          reportingSolMode: config.user.reporting.solMode,
+        })
+      : null;
 
   if (
     config.user.notifications.telegramEnabled &&
@@ -294,6 +516,24 @@ async function main() {
         hasAlertChatId: config.user.notifications.alertChatId !== undefined,
       },
       "telegramEnabled=true but Telegram notifier is not fully configured; alerts stay in logs/report only",
+    );
+  }
+
+  if (
+    config.user.notifications.telegramOperatorCommandsEnabled &&
+    (
+      config.user.notifications.telegramEnabled !== true ||
+      config.secrets.TELEGRAM_BOT_TOKEN === undefined ||
+      config.user.notifications.alertChatId === undefined
+    )
+  ) {
+    logger.warn(
+      {
+        telegramEnabled: config.user.notifications.telegramEnabled,
+        hasTelegramBotToken: config.secrets.TELEGRAM_BOT_TOKEN !== undefined,
+        hasAlertChatId: config.user.notifications.alertChatId !== undefined,
+      },
+      "telegramOperatorCommandsEnabled=true but inbound Telegram operator polling is not fully configured",
     );
   }
 
@@ -360,6 +600,9 @@ async function main() {
   );
 
   let queueTickRunning = false;
+  let reconciliationTickRunning = false;
+  let managementTickRunning = false;
+  let reportingTickRunning = false;
   let screeningTimer: ReturnType<typeof setTimeout> | null = null;
 
   const queueTimer = setInterval(() => {
@@ -387,9 +630,19 @@ async function main() {
   }, runtimeEnv.ACTION_QUEUE_INTERVAL_SEC * 1000);
 
   const reconciliationTimer = setInterval(() => {
-    void supervisor.runReconciliationTick("cron").catch((error) => {
-      logger.error({ err: error }, "reconciliation tick failed");
-    });
+    if (reconciliationTickRunning) {
+      return;
+    }
+
+    reconciliationTickRunning = true;
+    void supervisor
+      .runReconciliationTick("cron")
+      .catch((error) => {
+        logger.error({ err: error }, "reconciliation tick failed");
+      })
+      .finally(() => {
+        reconciliationTickRunning = false;
+      });
   }, config.user.schedule.reconciliationIntervalSec * 1000);
 
   const scheduleNextScreeningTick = () => {
@@ -432,15 +685,35 @@ async function main() {
   scheduleNextScreeningTick();
 
   const managementTimer = setInterval(() => {
-    void supervisor.runManagementTick("cron").catch((error) => {
-      logger.error({ err: error }, "management tick failed");
-    });
+    if (managementTickRunning) {
+      return;
+    }
+
+    managementTickRunning = true;
+    void supervisor
+      .runManagementTick("cron")
+      .catch((error) => {
+        logger.error({ err: error }, "management tick failed");
+      })
+      .finally(() => {
+        managementTickRunning = false;
+      });
   }, config.user.schedule.managementIntervalSec * 1000);
 
   const reportingTimer = setInterval(() => {
-    void supervisor.runReportingTick("cron").catch((error) => {
-      logger.error({ err: error }, "reporting tick failed");
-    });
+    if (reportingTickRunning) {
+      return;
+    }
+
+    reportingTickRunning = true;
+    void supervisor
+      .runReportingTick("cron")
+      .catch((error) => {
+        logger.error({ err: error }, "reporting tick failed");
+      })
+      .finally(() => {
+        reportingTickRunning = false;
+      });
   }, config.user.schedule.reportingIntervalSec * 1000);
 
   const stop = (signal: string) => {
@@ -451,6 +724,8 @@ async function main() {
     clearInterval(reconciliationTimer);
     clearInterval(managementTimer);
     clearInterval(reportingTimer);
+    stopOperatorStdinLoop?.();
+    stopTelegramOperatorPolling?.();
     logger.info({ signal }, "runtime supervisor stopped");
     process.exit(0);
   };

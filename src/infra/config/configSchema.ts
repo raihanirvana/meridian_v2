@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ManagementPolicySchema } from "../../domain/rules/managementRules.js";
+import { BaseManagementPolicySchema } from "../../domain/rules/managementRules.js";
 
 const PositiveNumber = z.number().positive();
 const PercentNumber = z.number().min(0).max(100);
@@ -75,7 +75,7 @@ export const UserConfigSchema = z
         reportingIntervalSec: z.number().int().positive(),
       })
       .strict(),
-    management: ManagementPolicySchema.omit({
+    management: BaseManagementPolicySchema.omit({
       maxRebalancesPerPosition: true,
     }),
     ai: z
@@ -97,6 +97,7 @@ export const UserConfigSchema = z
       .object({
         telegramEnabled: z.boolean(),
         alertChatId: z.string().min(1).optional(),
+        telegramOperatorCommandsEnabled: z.boolean().default(false),
       })
       .strict(),
     reporting: z
@@ -134,6 +135,7 @@ export const UserConfigSchema = z
       .object({
         dryRun: z.boolean(),
         logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]),
+        operatorStdinEnabled: z.boolean().default(true),
       })
       .strict(),
   })
@@ -165,6 +167,24 @@ export const UserConfigSchema = z
         path: ["screening", "maxTokenAgeHours"],
         message: "must be greater than or equal to minTokenAgeHours",
       });
+    }
+
+    if (config.management.trailingTakeProfitEnabled === true) {
+      if ((config.management.trailingTriggerPct ?? 0) <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["management", "trailingTriggerPct"],
+          message: "must be greater than zero when trailingTakeProfitEnabled is true",
+        });
+      }
+
+      if ((config.management.trailingDropPct ?? 0) <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["management", "trailingDropPct"],
+          message: "must be greater than zero when trailingTakeProfitEnabled is true",
+        });
+      }
     }
 
     for (const [index, window] of config.screening.peakHours.entries()) {

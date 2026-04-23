@@ -15,7 +15,9 @@ This checklist assumes:
 - Confirm `MERIDIAN_DATA_DIR` points to the intended runtime directory.
 - Confirm only one process will use that data dir.
 - Confirm `runtime.dryRun = true` for the first supervised boot.
+- Decide whether `runtime.operatorStdinEnabled` should stay on for this run.
 - If `notifications.telegramEnabled = true`, confirm both `TELEGRAM_BOT_TOKEN` and `notifications.alertChatId` are set.
+- If `notifications.telegramOperatorCommandsEnabled = true`, confirm `notifications.telegramEnabled = true` and the configured `alertChatId` is the only Telegram chat authorized to issue commands.
 - If you do not want Telegram delivery yet, keep `notifications.telegramEnabled = false`.
 - Confirm `claim.autoSwapAfterClaim = false`.
 - Confirm `claim.autoCompoundFees = false`.
@@ -56,12 +58,14 @@ Check:
 - management tick runs
 - reporting tick runs
 - screening tick runs if screening gateway is configured
+- operator stdin commands respond if `runtime.operatorStdinEnabled = true`
 - no uncontrolled queue growth
 - no repeated `MANUAL_REVIEW_REQUIRED` from the same path without explanation
 
 Expected acceptable warnings during this stage:
 - AI fallback warnings in advisory paths
 - Telegram configuration warning if Telegram is enabled but token or chat id is missing
+- Telegram operator polling warning if inbound commands are enabled but token/chat-id wiring is incomplete
 
 ## Phase 5: Transition To Live
 Only after dry-run observation is stable:

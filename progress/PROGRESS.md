@@ -10,6 +10,18 @@ Status: Complete
 - Make claim finalization/reconciliation able to resume compounding safely after interruption
 
 ## Completed
+- Post-Batch 21 runtime hardening pass selesai:
+  - manual circuit breaker sekarang memblok rebalance manual, queued rebalance close leg, dan redeploy leg finalizer
+  - live runtime sekarang punya operator stdin loop yang configurable
+  - live runtime sekarang mengambil wallet balance dari Solana RPC dan harga SOL dari Jupiter quote
+  - live runtime sekarang punya Telegram inbound operator command loop yang configurable
+  - live runtime timers untuk reconciliation/management/reporting sekarang punya overlap guard
+  - screening cycle sekarang membangun portfolio snapshot dengan risk policy nyata, bukan dummy constants
+  - risk engine sekarang fail-safe bila `maxDailyLossSol` aktif tetapi `solPriceUsd` tidak tersedia
+  - trailing take-profit sekarang hanya refresh peak dan evaluate trigger dari snapshot posisi yang fresh, jadi data stale tidak bisa memicu close palsu
+  - reporting worker sekarang best-effort per alert; satu delivery gagal tidak menjatuhkan seluruh tick
+  - `HttpTelegramNotifierGateway` tidak lagi menyimpan bot token di base URL internal
+  - verifikasi terbaru: `npm test` ✅ `224/224`, `npm run build` ✅, `npm run lint` ✅
 - PRD V2 sudah dibaca dan dijadikan source of truth
 - Repo lama `Desktop/meridian` sudah diaudit sebagai referensi perilaku dan anti-pattern
 - Batch 0 selesai:

@@ -14,6 +14,7 @@ import { MockTokenIntelGateway } from "../../src/adapters/analytics/TokenIntelGa
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 import { type Candidate } from "../../src/domain/entities/Candidate.js";
 import { type ScreeningPolicy } from "../../src/domain/rules/screeningRules.js";
+import { type PortfolioRiskPolicy } from "../../src/domain/rules/riskRules.js";
 import { runScreeningCycle } from "../../src/app/usecases/runScreeningCycle.js";
 
 const tempDirs: string[] = [];
@@ -105,6 +106,23 @@ function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
   };
 }
 
+function buildRiskPolicy(
+  overrides: Partial<PortfolioRiskPolicy> = {},
+): PortfolioRiskPolicy {
+  return {
+    maxConcurrentPositions: 3,
+    maxCapitalUsagePct: 80,
+    minReserveUsd: 50,
+    maxTokenExposurePct: 45,
+    maxPoolExposurePct: 35,
+    maxRebalancesPerPosition: 2,
+    dailyLossLimitPct: 10,
+    circuitBreakerCooldownMin: 60,
+    maxNewDeploysPerHour: 3,
+    ...overrides,
+  };
+}
+
 describe("screening worker", () => {
   it("blocks candidates that are in a downtrend below minVolumeTrendPct", async () => {
     const directory = await makeTempDir();
@@ -161,6 +179,7 @@ describe("screening worker", () => {
           },
         },
       }),
+      riskPolicy: buildRiskPolicy(),
       policyProvider: {
         async resolveScreeningPolicy() {
           return buildPolicy({
@@ -277,6 +296,7 @@ describe("screening worker", () => {
           },
         },
       }),
+      riskPolicy: buildRiskPolicy(),
       policyProvider: {
         async resolveScreeningPolicy() {
           return buildPolicy({
@@ -408,6 +428,7 @@ describe("screening worker", () => {
           },
         },
       }),
+      riskPolicy: buildRiskPolicy(),
       policyProvider: {
         async resolveScreeningPolicy() {
           return buildPolicy({

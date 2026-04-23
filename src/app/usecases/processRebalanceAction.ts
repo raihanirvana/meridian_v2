@@ -5,6 +5,7 @@ import {
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
@@ -35,6 +36,7 @@ export interface ProcessRebalanceActionInput {
   dlmmGateway: DlmmGateway;
   stateRepository: StateRepository;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
   now?: () => string;
 }
 
@@ -153,6 +155,34 @@ export async function processRebalanceAction(
   }
 
   assertRebalanceRequestablePosition(currentPosition);
+
+  if (
+    input.runtimeControlStore !== undefined &&
+    (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
+  ) {
+    await appendJournalEvent(input.journalRepository, {
+      timestamp: now,
+      eventType: "REBALANCE_BLOCKED_MANUAL_CIRCUIT_BREAKER",
+      actor: input.action.requestedBy,
+      wallet: input.action.wallet,
+      positionId: input.action.positionId,
+      actionId: input.action.actionId,
+      before: toJournalRecord({
+        actionId: input.action.actionId,
+        requestPayload: payload,
+      }),
+      after: null,
+      txIds: [],
+      resultStatus: "ABORTED",
+      error: "manual circuit breaker is active",
+    });
+    return {
+      nextStatus: "ABORTED",
+      txIds: [],
+      resultPayload: null,
+      error: "manual circuit breaker is active",
+    };
+  }
 
   let closeResult: z.infer<typeof CloseActionResultPayloadSchema> | null = null;
 

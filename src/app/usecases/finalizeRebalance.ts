@@ -7,6 +7,7 @@ import {
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
@@ -87,6 +88,7 @@ export interface FinalizeRebalanceInput {
   stateRepository: StateRepository;
   dlmmGateway: DlmmGateway;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
   walletLock?: WalletLock;
   positionLock?: PositionLock;
   now?: () => string;
@@ -685,6 +687,56 @@ export async function finalizeRebalance(
             txIds: latestAction.txIds,
             resultStatus: failedAction.status,
             error: validationError,
+          });
+
+          return {
+            action: failedAction,
+            oldPosition: closeLeg.closedPosition,
+            newPosition: null,
+            outcome: "REBALANCE_ABORTED" as const,
+          };
+        }
+
+        if (
+          input.runtimeControlStore !== undefined &&
+          (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
+        ) {
+          const failureReason =
+            "manual circuit breaker is active; rebalance redeploy is blocked";
+          const abortedPayload = buildAbortedPayload({
+            closeSubmitted: latestPayload,
+            closeAccounting: closeLeg.closeAccounting,
+            closedPositionId: closeLeg.closedPosition.positionId,
+            availableCapitalUsd: closeLeg.availableCapitalUsd,
+            failureReason,
+          });
+          const failedAction = {
+            ...latestAction,
+            status: transitionActionStatus(latestAction.status, "FAILED"),
+            resultPayload: toJournalRecord(abortedPayload),
+            txIds: latestAction.txIds,
+            error: failureReason,
+            completedAt: now,
+          } satisfies Action;
+          await input.actionRepository.upsert(failedAction);
+
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "REBALANCE_ABORTED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestAction.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+            }),
+            after: toJournalRecord({
+              action: failedAction,
+              oldPosition: closeLeg.closedPosition,
+            }),
+            txIds: latestAction.txIds,
+            resultStatus: failedAction.status,
+            error: failureReason,
           });
 
           return {

@@ -4,8 +4,6 @@
 This runbook explains how to boot `meridian_v2` in supervised runtime mode using the built-in `runLive.ts` entrypoint.
 
 This repo is ready for supervised live operation, but the current bootstrap still has a few intentional constraints:
-- wallet balance is currently sourced from `MOCK_WALLET_BALANCE_SOL`
-- SOL/USD pricing is currently sourced from `MOCK_SOL_PRICE_USD`
 - `runLive.ts` wires a conservative `signalProvider`
 - `rebalancePlanner` is currently `null`
 
@@ -46,8 +44,6 @@ Recommended for runtime clarity:
 
 ```dotenv
 MERIDIAN_DATA_DIR=/absolute/path/to/runtime-data
-MOCK_SOL_PRICE_USD=150
-MOCK_WALLET_BALANCE_SOL=1
 ACTION_QUEUE_INTERVAL_SEC=5
 DLMM_TIMEOUT_MS=15000
 ```
@@ -72,6 +68,12 @@ Telegram delivery becomes active only when all three are true:
 - `notifications.alertChatId` is set in `user-config.json`
 - `TELEGRAM_BOT_TOKEN` is set in `.env`
 
+Telegram inbound operator commands become active only when all four are true:
+- `notifications.telegramEnabled = true`
+- `notifications.telegramOperatorCommandsEnabled = true`
+- `notifications.alertChatId` is set in `user-config.json`
+- `TELEGRAM_BOT_TOKEN` is set in `.env`
+
 ## Recommended First Config
 For first supervised deployment, keep:
 - `runtime.dryRun = true`
@@ -85,6 +87,16 @@ Suggested first-pass runtime behavior:
 - deploys blocked manually until health checks are clean
 - no auto-compounding
 - no AI-driven changes beyond advisory
+
+Operator command surface:
+- `runtime.operatorStdinEnabled = true` enables stdin commands inside `npm run live`
+- `notifications.telegramOperatorCommandsEnabled = true` enables inbound Telegram operator commands from the configured `alertChatId`
+- examples:
+  - `status`
+  - `positions`
+  - `pending-actions`
+  - `circuit_breaker_trip panic`
+  - `circuit_breaker_clear`
 
 ## Boot Commands
 Install dependencies if needed:
@@ -126,6 +138,7 @@ On successful boot, logs should show:
 
 Expected warnings that are currently non-fatal:
 - `telegramEnabled=true but Telegram notifier is not fully configured`
+- `telegramOperatorCommandsEnabled=true but inbound Telegram operator polling is not fully configured`
 - `AI mode is enabled but live LlmGateway is not fully configured`
 
 Those warnings are intentional signals about incomplete runtime wiring, not immediate boot failures.
@@ -199,10 +212,9 @@ Avoid hard kill unless the process is wedged.
 
 ## Known Runtime Constraints
 Current `runLive.ts` constraints:
-- static env bridge for wallet balance
-- static env bridge for SOL/USD price
 - rebalance planner not wired
 - signal provider is conservative
+- Telegram inbound uses long-polling only; webhook mode is not implemented
 
 This means the runtime is suited for supervised operation, but not yet full unattended production autonomy.
 

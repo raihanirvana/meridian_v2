@@ -17,6 +17,7 @@ import {
   screenAndScoreCandidates,
   type ScreeningPolicy,
 } from "../../domain/rules/screeningRules.js";
+import type { PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import {
   ScreeningCandidateInputSchema,
   type ScreeningCandidateInput,
@@ -191,6 +192,7 @@ export interface RunScreeningCycleInput {
   journalRepository: JournalRepository;
   walletGateway: WalletGateway;
   priceGateway: PriceGateway;
+  riskPolicy: PortfolioRiskPolicy;
   policyProvider: PolicyProvider;
   signalWeightsProvider?: SignalWeightsProvider;
   tokenIntelGateway?: TokenIntelGateway;
@@ -220,9 +222,9 @@ export async function runScreeningCycle(
   const screeningPolicy = await input.policyProvider.resolveScreeningPolicy();
   const portfolio = await buildPortfolioState({
     wallet: input.wallet,
-    minReserveUsd: 0.01,
-    dailyLossLimitPct: 1,
-    circuitBreakerCooldownMin: 1,
+    minReserveUsd: input.riskPolicy.minReserveUsd,
+    dailyLossLimitPct: input.riskPolicy.dailyLossLimitPct,
+    circuitBreakerCooldownMin: input.riskPolicy.circuitBreakerCooldownMin,
     stateRepository: input.stateRepository,
     actionRepository: input.actionRepository,
     journalRepository: input.journalRepository,

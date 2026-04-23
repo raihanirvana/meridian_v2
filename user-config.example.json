@@ -62,7 +62,8 @@
     "minAmountSol": 0.2
   },
   "notifications": {
-    "telegramEnabled": false
+    "telegramEnabled": false,
+    "telegramOperatorCommandsEnabled": false
   },
   "reporting": {
     "solMode": false,
@@ -82,6 +83,7 @@
   },
   "runtime": {
     "dryRun": true,
-    "logLevel": "info"
+    "logLevel": "info",
+    "operatorStdinEnabled": true
   }
 }

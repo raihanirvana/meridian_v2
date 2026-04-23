@@ -32,23 +32,28 @@ export interface HttpTelegramNotifierGatewayOptions {
 
 export class HttpTelegramNotifierGateway implements NotifierGateway {
   private readonly client: JsonHttpClient;
+  private readonly botToken: string;
 
   public constructor(options: HttpTelegramNotifierGatewayOptions) {
-    const botToken = z.string().min(1).parse(options.botToken);
+    this.botToken = z.string().min(1).parse(options.botToken);
     const baseUrl = options.baseUrl ?? "https://api.telegram.org";
     this.client = new JsonHttpClient({
       adapterName: "HttpTelegramNotifierGateway",
-      baseUrl: `${z.url().parse(baseUrl).replace(/\/$/, "")}/bot${botToken}/`,
+      baseUrl: `${z.url().parse(baseUrl).replace(/\/$/, "")}/`,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
+  }
+
+  private buildPath(path: string): string {
+    return `bot${this.botToken}/${path}`;
   }
 
   public async sendMessage(input: SendMessageInput): Promise<NotificationResult> {
     const parsed = SendMessageInputSchema.parse(input);
     await this.client.request({
       method: "POST",
-      path: "sendMessage",
+      path: this.buildPath("sendMessage"),
       body: {
         chat_id: parsed.recipient,
         text: parsed.message,

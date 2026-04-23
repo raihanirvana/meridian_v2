@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Position } from "../../domain/entities/Position.js";
 import type { Actor } from "../../domain/types/enums.js";
@@ -31,6 +32,7 @@ export interface RequestRebalanceInput {
   requestedAt?: string;
   idempotencyKey?: string;
   journalRepository?: JournalRepository;
+  runtimeControlStore?: RuntimeControlStore;
 }
 
 const REBALANCE_REQUESTABLE_STATUSES = new Set<Position["status"]>([
@@ -87,6 +89,13 @@ export async function requestRebalance(input: RequestRebalanceInput) {
   }
 
   assertRebalanceRequestablePosition(position);
+
+  if (
+    input.runtimeControlStore !== undefined &&
+    (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
+  ) {
+    throw new Error("manual circuit breaker is active; rebalance requests are blocked");
+  }
 
   const idempotencyKey =
     input.idempotencyKey ??

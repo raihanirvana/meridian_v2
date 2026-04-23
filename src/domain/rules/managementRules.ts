@@ -23,7 +23,7 @@ export const ManagementSignalsSchema = z
   })
   .strict();
 
-export const ManagementPolicySchema = z
+export const BaseManagementPolicySchema = z
   .object({
     stopLossUsd: z.number().nonnegative(),
     maxHoldMinutes: z.number().int().nonnegative(),
@@ -38,6 +38,29 @@ export const ManagementPolicySchema = z
     maxRebalancesPerPosition: z.number().int().nonnegative(),
   })
   .strict();
+
+export const ManagementPolicySchema = BaseManagementPolicySchema
+  .superRefine((policy, ctx) => {
+    if (policy.trailingTakeProfitEnabled !== true) {
+      return;
+    }
+
+    if ((policy.trailingTriggerPct ?? 0) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trailingTriggerPct"],
+        message: "must be greater than zero when trailingTakeProfitEnabled is true",
+      });
+    }
+
+    if ((policy.trailingDropPct ?? 0) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trailingDropPct"],
+        message: "must be greater than zero when trailingTakeProfitEnabled is true",
+      });
+    }
+  });
 
 export const ManagementEvaluationInputSchema = z
   .object({

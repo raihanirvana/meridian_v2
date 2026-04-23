@@ -374,8 +374,16 @@ export function updatePortfolioDailyRiskState(input: {
     dailyLossPct,
     dailyLossLimitPct: policy.dailyLossLimitPct,
   });
+  const resolvedSolPriceUsd = portfolio.solPriceUsd ?? null;
+  const dailyLossSol =
+    resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
+      ? null
+      : Math.max(-nextDailyRealizedPnl, 0) / resolvedSolPriceUsd;
   const circuitBreakerState =
-    dailyLossPct >= policy.dailyLossLimitPct
+    dailyLossPct >= policy.dailyLossLimitPct ||
+      (policy.maxDailyLossSol !== undefined &&
+        dailyLossSol !== null &&
+        dailyLossSol >= policy.maxDailyLossSol)
       ? "ON"
       : portfolio.circuitBreakerState === "COOLDOWN"
         ? "COOLDOWN"
@@ -471,6 +479,14 @@ export function evaluatePortfolioRisk(
   }
 
   if (
+    input.policy.maxDailyLossSol !== undefined &&
+    ((input.solPriceUsd ?? input.portfolio.solPriceUsd ?? null) === null ||
+      (input.solPriceUsd ?? input.portfolio.solPriceUsd ?? 0) <= 0)
+  ) {
+    blockingRules.push(
+      "daily SOL loss guard cannot be evaluated because solPriceUsd is unavailable",
+    );
+  } else if (
     input.policy.maxDailyLossSol !== undefined &&
     state.dailyLossSol >= input.policy.maxDailyLossSol
   ) {

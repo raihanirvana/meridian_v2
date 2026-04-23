@@ -90,6 +90,7 @@ export class FileRuntimeControlStore implements RuntimeControlStore {
     reason?: string;
     updatedAt: string;
   }): Promise<RuntimeDeployControl> {
+    let snapshot: RuntimeDeployControl | null = null;
     await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
       const current = parseStore(raw, this.filePath);
       const next = RuntimeControlStoreFileSchema.parse({
@@ -100,13 +101,15 @@ export class FileRuntimeControlStore implements RuntimeControlStore {
           updatedAt: input.updatedAt,
         },
       });
+      snapshot = next.stopAllDeploys;
       return JSON.stringify(next, null, 2);
     });
 
-    return (await this.snapshot()).stopAllDeploys;
+    return RuntimeDeployControlSchema.parse(snapshot);
   }
 
   public async clearStopAllDeploys(updatedAt: string): Promise<RuntimeDeployControl> {
+    let snapshot: RuntimeDeployControl | null = null;
     await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
       const current = parseStore(raw, this.filePath);
       const next = RuntimeControlStoreFileSchema.parse({
@@ -116,9 +119,10 @@ export class FileRuntimeControlStore implements RuntimeControlStore {
           updatedAt,
         },
       });
+      snapshot = next.stopAllDeploys;
       return JSON.stringify(next, null, 2);
     });
 
-    return (await this.snapshot()).stopAllDeploys;
+    return RuntimeDeployControlSchema.parse(snapshot);
   }
 }

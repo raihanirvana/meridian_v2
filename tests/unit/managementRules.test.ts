@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateManagementAction } from "../../src/domain/rules/managementRules.js";
+import {
+  evaluateManagementAction,
+  ManagementPolicySchema,
+} from "../../src/domain/rules/managementRules.js";
 import { type PortfolioState } from "../../src/domain/entities/PortfolioState.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 
@@ -279,5 +282,16 @@ describe("management rules", () => {
         }),
       ),
     ).toThrow(/only accepts OPEN positions/i);
+  });
+
+  it("rejects trailing take profit config when enabled without positive thresholds", () => {
+    expect(() =>
+      ManagementPolicySchema.parse({
+        ...buildInput().policy,
+        trailingTakeProfitEnabled: true,
+        trailingTriggerPct: 0,
+        trailingDropPct: 0,
+      }),
+    ).toThrow(/trailing/i);
   });
 });

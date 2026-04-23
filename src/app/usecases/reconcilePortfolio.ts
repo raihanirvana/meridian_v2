@@ -436,6 +436,9 @@ export async function reconcilePortfolio(
           ...(input.journalRepository === undefined
             ? {}
             : { journalRepository: input.journalRepository }),
+          ...(input.runtimeControlStore === undefined
+            ? {}
+            : { runtimeControlStore: input.runtimeControlStore }),
         });
 
         records.push(

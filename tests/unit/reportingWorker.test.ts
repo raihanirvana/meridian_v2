@@ -14,6 +14,7 @@ import { type Action } from "../../src/domain/entities/Action.js";
 import { type PerformanceRecord } from "../../src/domain/entities/PerformanceRecord.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 import { FileSchedulerMetadataStore } from "../../src/infra/scheduler/SchedulerMetadataStore.js";
+import type { NotifierGateway } from "../../src/adapters/telegram/NotifierGateway.js";
 
 const tempDirs: string[] = [];
 
@@ -245,5 +246,48 @@ describe("reporting worker", () => {
     expect(result.report.alerts.map((alert) => alert.kind)).toContain(
       "DAILY_PROFIT_TARGET",
     );
+  });
+
+  it("continues delivering later alerts when one notification fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    await stateRepository.upsert(buildReconPosition());
+    await actionRepository.upsert(buildStuckAction());
+
+    let attempts = 0;
+    const notifierGateway: NotifierGateway = {
+      async sendMessage() {
+        throw new Error("unused");
+      },
+      async sendAlert(input) {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("telegram unavailable");
+        }
+        return {
+          delivered: true,
+          channel: "telegram",
+          recipient: input.recipient,
+        };
+      },
+    };
+
+    const result = await runReportingWorker({
+      wallet: "wallet_001",
+      stateRepository,
+      actionRepository,
+      notifierGateway,
+      alertRecipient: "chat_001",
+      now: () => "2026-04-22T09:00:00.000Z",
+    });
+
+    expect(result.report.alerts).toHaveLength(2);
+    expect(result.deliveredAlerts).toHaveLength(1);
+    expect(attempts).toBe(2);
   });
 });

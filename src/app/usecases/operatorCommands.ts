@@ -666,6 +666,9 @@ export async function executeOperatorCommand(
         requestedBy,
         requestedAt,
         journalRepository: input.journalRepository,
+        ...(runtimeControlStore === undefined
+          ? {}
+          : { runtimeControlStore }),
       });
 
       return {

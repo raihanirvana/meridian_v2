@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-23 (Batch 21 trailing take-profit and claim auto-compound applied)
+Last updated: 2026-04-23 (post-Batch 21 runtime hardening pass applied)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -274,6 +274,63 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: caller current path umumnya memakai timestamp valid, jadi ini lebih ke defensive hardening. Namun operator/manual path yang mem-parse timestamp bebas tetap berpotensi memicu ID jelek.
   Revisit: saat operator/manual timestamp surface diperluas atau sebelum ULID helper dipakai lebih luas.
 
+- `N58` semantik `peakPnlPct` setelah `CLAIM_FEES` belum dipilih eksplisit; trailing take-profit sekarang mempertahankan peak lintas claim, padahal claim bisa menggeser basis nilai posisi di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:1>) dan [finalizeClaimFees.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeClaimFees.ts:1>)
+  Status: deferred
+  Kenapa ditunda: ada tradeoff produk yang belum diputuskan apakah peak harus dibaca sebagai "sejak posisi dibuka" atau "sejak claim terakhir". Mengubahnya sekarang akan mengubah perilaku trailing TP yang sudah hidup di Batch 21.
+  Revisit: sebelum trailing take-profit dipakai live dengan `CLAIM_FEES` aktif.
+
+- `N59` runtime live semula memakai env bridge statis untuk wallet balance dan harga SOL di `runLive.ts`, tetapi sekarang sudah ditutup dengan `SolanaRpcWalletGateway` + `JupiterSolPriceGateway`
+  Status: closed
+  Kenapa ditutup: bootstrap live sekarang mengambil wallet balance dari Solana RPC dan harga SOL dari Jupiter quote, jadi risk/reporting tidak lagi bergantung pada mock env bridge.
+
+- `N60` payload ke LLM masih terlalu gemuk karena membawa snapshot posisi mentah yang dapat memuat metadata berlebih di [HttpLlmGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/llm/HttpLlmGateway.ts:1>)
+  Status: deferred
+  Kenapa ditunda: advisory layer sudah aman secara write boundary, tetapi minimisasi data outbound ke LLM pihak ketiga belum selesai.
+  Revisit: sebelum AI advisory dipakai pada environment live yang lebih sensitif; ringkas prompt ke field yang benar-benar relevan untuk reasoning.
+
+- `N61` screening runtime masih mengunci beberapa caps/candidate knobs di code (`allowedPairTypes`, holder caps, shortlist limit, duplicate exposure flags) di [createRuntimeSupervisor.ts](<c:/Users/PC/Desktop/meridian_v2/src/runtime/createRuntimeSupervisor.ts:1>)
+  Status: deferred
+  Kenapa ditunda: Batch 20 sudah menutup banyak parity knobs, tetapi beberapa screening cap masih belum user-configurable dan butuh keputusan surface config supaya tidak meledakkan `user-config.json`.
+  Revisit: saat ada permintaan parity knob lanjutan atau sebelum operator ingin men-tune screening live tanpa edit source.
+
+- `N62` inbound Telegram operator commands semula belum ada, tetapi sekarang sudah ditutup lewat long-poll operator surface di `runLive.ts`
+  Status: closed
+  Kenapa ditutup: runtime live sekarang bisa menerima command operator dari Telegram secara configurable (`telegramOperatorCommandsEnabled`) dengan gate `alertChatId`. Webhook mode belum ada, tetapi remote operator control tidak lagi terbatas pada stdin.
+
+- `N63` screening enrichment detail masih berjalan serial per candidate (`getCandidateDetails()` lalu `tokenIntelGateway`) di [runScreeningCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runScreeningCycle.ts:1>)
+  Status: deferred
+  Kenapa ditunda: correctness hasil screening tetap aman, tetapi pada shortlist source yang lebih ramai path ini akan menambah latency cycle secara linear karena roundtrip gateway tidak diparalelkan atau dibatasi concurrency.
+  Revisit: saat screening runtime dipakai lebih sering/live atau ketika latency screening mulai terasa di operator logs.
+
+- `N64` guard freshness untuk snapshot PnL trailing sekarang sudah ditutup di `runManagementCycle.ts`; peak refresh dan trailing evaluation tidak lagi memakai snapshot yang stale
+  Status: closed
+  Kenapa ditutup: refresh peak dan firing trailing sekarang mensyaratkan snapshot posisi yang masih fresh (`lastSyncedAt` dalam jendela aman), sehingga kombinasi `currentValueUsd` / `unrealizedPnlUsd` yang stale tidak lagi bisa mengangkat peak atau memicu close palsu.
+
+- `N65` adaptive screening interval saat ini membaca window `start === end` sebagai match selalu, bukan no-op, di [AdaptiveScreeningInterval.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AdaptiveScreeningInterval.ts:1>)
+  Status: deferred
+  Kenapa ditunda: edge case ini tidak umum jika config benar, tetapi semantics-nya tidak intuitif dan pantas dikunci lewat validation atau dokumentasi eksplisit.
+  Revisit: saat config scheduler/screening disentuh lagi atau sebelum adaptive interval dipakai lebih luas lintas timezone.
+
+- `N66` opsi `reporting.briefingEmoji` masih bernama seolah menghasilkan emoji, padahal formatter sekarang memakai label teks pendek, di [renderDailyBriefing.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/renderDailyBriefing.ts:1>)
+  Status: deferred
+  Kenapa ditunda: ini lebih ke naming/UX mismatch, bukan correctness bug.
+  Revisit: saat template briefing/reporting disentuh lagi; pilih antara rename flag atau benar-benar render emoji saat enabled.
+
+- `N67` `ActionTypeSchema` masih membawa enum future/dead path seperti `SWAP`, `SYNC`, `CANCEL_REBALANCE`, dan `PARTIAL_CLOSE` tanpa lifecycle/runtime penuh di [enums.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/types/enums.ts:1>)
+  Status: deferred
+  Kenapa ditunda: tidak merusak runtime saat ini, tetapi memperlebar surface enum dan bisa membingungkan konsumer baru tentang fitur yang benar-benar didukung.
+  Revisit: saat cleanup lifecycle berikutnya; putuskan apakah enum itu segera dihidupkan atau dibuang dari surface publik.
+
+- `N68` nama path `lessonsFilePath` sekarang misleading karena file gabungan menyimpan `lessons` sekaligus `performance`, bukan lessons saja, di [createRuntimeStores.ts](<c:/Users/PC/Desktop/meridian_v2/src/runtime/createRuntimeStores.ts:1>)
+  Status: deferred
+  Kenapa ditunda: ini naming/ergonomics issue, bukan data-integrity bug, karena shared schema file tetap konsisten dan aman dipakai sekarang.
+  Revisit: saat knowledge/performance storage disentuh lagi; pilih rename ke nama yang lebih netral atau split file bila manfaatnya jelas.
+
+- `N69` `JournalEvent.resultStatus` masih free-form string sehingga operator/manual events menambah entropy nilai status di journal, di [operatorCommands.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/operatorCommands.ts:1>)
+  Status: deferred
+  Kenapa ditunda: downstream parser internal saat ini belum mengandalkan enum sempit untuk seluruh journal, tetapi permissive string akan makin mahal dirapikan jika event surface terus bertambah.
+  Revisit: saat format journal/reporting distabilkan untuk tooling operator atau ekspor analytics.
+
 ## Design Decisions
 - Batch 21 memilih `claim succeeded, compound failed` sebagai outcome yang sah; kegagalan swap/enqueue deploy tidak membatalkan finalisasi claim yang sudah confirmed on-chain
   Rationale: setelah claim on-chain confirmed, mencoba memaksa seluruh action menjadi `FAILED` justru mengaburkan fakta bahwa fee sebenarnya sudah berhasil diklaim. V2 lebih memilih claim ditutup `DONE` dengan metadata compound `FAILED` atau `MANUAL_REVIEW_REQUIRED`, lalu follow-up compound ditangani terpisah.
@@ -448,6 +505,15 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `F9` confirmation/finalization recovery sekarang bisa melanjutkan commit yang sudah setengah selesai tanpa menjatuhkan posisi sehat ke `RECONCILIATION_REQUIRED`; deploy, close, dan rebalance redeploy leg sekarang punya resume path saat posisi final lokal sudah ter-commit tetapi action belum sempat ditutup.
 - `F10` close performance reconstruction sekarang memakai snapshot posisi pre-close (`performanceSnapshotPosition`) sehingga `initialValueUsd`, `finalValueUsd`, dan `pnlPct` tidak lagi dihitung dari posisi lokal yang sudah di-zero-kan saat `CLOSED`.
 - `F11` startup recovery checklist sekarang otomatis menurunkan stale scheduler worker state `RUNNING` menjadi `FAILED` dengan error recovery, sehingga crash sebelumnya tidak membuat worker deadlock permanen.
+- `F12` manual circuit breaker sekarang menghormati rebalance end-to-end: request manual, queued close leg, dan redeploy leg finalizer sama-sama diblok di [requestRebalance.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestRebalance.ts:1>), [processRebalanceAction.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processRebalanceAction.ts:1>), dan [finalizeRebalance.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeRebalance.ts:1>).
+- `F13` risk engine sekarang memblok konservatif saat `maxDailyLossSol` diset tetapi `solPriceUsd` tidak tersedia, dan helper state harian juga ikut menghormati ambang SOL di [riskRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/riskRules.ts:1>).
+- `F14` screening cycle sekarang memakai risk policy runtime nyata saat membangun snapshot portfolio, bukan dummy reserve/loss/cooldown constants di [runScreeningCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runScreeningCycle.ts:1>).
+- `F15` trailing take-profit sekarang tervalidasi ketat; ketika enabled, `trailingTriggerPct` dan `trailingDropPct` wajib > 0 di [managementRules.ts](<c:/Users/PC/Desktop/meridian_v2/src/domain/rules/managementRules.ts:1>) dan [configSchema.ts](<c:/Users/PC/Desktop/meridian_v2/src/infra/config/configSchema.ts:1>).
+- `F16` token bot Telegram tidak lagi disimpan sebagai bagian dari base URL adapter; `HttpTelegramNotifierGateway` sekarang membangun path request per call sehingga token tidak menempel di client base URL internal di [HttpTelegramNotifierGateway.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/telegram/HttpTelegramNotifierGateway.ts:1>).
+- `F17` live runtime sekarang punya operator stdin loop yang configurable, sehingga handler CLI/operator tidak lagi unreachable dari proses `runLive.ts` sendiri di [runLive.ts](<c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1>).
+- `F18` reporting worker sekarang mengirim alert secara best-effort per item; satu failure delivery tidak lagi menggagalkan seluruh reporting tick di [reportingWorker.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/workers/reportingWorker.ts:1>).
+- `F19` reconciliation, management, dan reporting timers di live runtime sekarang punya in-process overlap guard seperti action queue, sehingga tick lambat tidak menumpuk liar di [runLive.ts](<c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1>).
+- `F20` screening worker `SKIPPED_ALREADY_RUNNING` tidak lagi mengembalikan timeframe hardcoded; worker sekarang mereport timeframe policy aktual saat skip di [screeningWorker.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/workers/screeningWorker.ts:1>).
 
 ## Next Review Gate
 - Review file ini sebelum mulai Batch 7.

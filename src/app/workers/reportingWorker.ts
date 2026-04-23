@@ -6,6 +6,7 @@ import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { NotifierGateway, NotificationResult } from "../../adapters/telegram/NotifierGateway.js";
 import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
+import { logger } from "../../infra/logging/logger.js";
 import { runWithSchedulerMetadata } from "../../infra/scheduler/runWithSchedulerMetadata.js";
 
 import {
@@ -104,14 +105,25 @@ export async function runReportingWorker(
         report.alerts.length > 0
       ) {
         for (const alert of report.alerts) {
-          deliveredAlerts.push(
-            await sendOperatorAlert({
-              notifierGateway: input.notifierGateway,
-              recipient: input.alertRecipient,
-              title: alert.title,
-              body: alert.body,
-            }),
-          );
+          try {
+            deliveredAlerts.push(
+              await sendOperatorAlert({
+                notifierGateway: input.notifierGateway,
+                recipient: input.alertRecipient,
+                title: alert.title,
+                body: alert.body,
+              }),
+            );
+          } catch (error) {
+            logger.warn(
+              {
+                err: error,
+                recipient: input.alertRecipient,
+                alertKind: alert.kind,
+              },
+              "reporting alert delivery failed; continuing with remaining alerts",
+            );
+          }
         }
       }
 
