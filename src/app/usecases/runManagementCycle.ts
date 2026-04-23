@@ -274,6 +274,18 @@ const missingLessonPromptService: LessonPromptService = {
   },
 };
 
+function fallbackIncompleteSignals(): ManagementSignals {
+  return {
+    forcedManualClose: false,
+    severeTokenRisk: false,
+    liquidityCollapse: false,
+    severeNegativeYield: false,
+    claimableFeesUsd: 0,
+    expectedRebalanceImprovement: false,
+    dataIncomplete: true,
+  };
+}
+
 export async function runManagementCycle(
   input: RunManagementCycleInput,
 ): Promise<RunManagementCycleResult> {
@@ -318,11 +330,29 @@ export async function runManagementCycle(
       actionRepository: input.actionRepository,
       now,
     });
-    const signals = await input.signalProvider({
-      position: managedPosition,
-      portfolio,
-      now,
-    });
+    let signals: ManagementSignals;
+    try {
+      signals = await input.signalProvider({
+        position: managedPosition,
+        portfolio,
+        now,
+      });
+    } catch (error) {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "MANAGEMENT_SIGNAL_PROVIDER_FAILED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: managedPosition.positionId,
+        actionId: null,
+        before: null,
+        after: null,
+        txIds: [],
+        resultStatus: "RECONCILE_ONLY",
+        error: error instanceof Error ? error.message : "signal provider failed",
+      });
+      signals = fallbackIncompleteSignals();
+    }
     if (
       input.poolMemoryRepository !== undefined &&
       input.poolMemorySnapshotsEnabled === true

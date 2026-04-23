@@ -9,7 +9,10 @@ import {
   type FileSystemAdapter,
   FileStore,
 } from "../../src/adapters/storage/FileStore.js";
-import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
+import {
+  JournalRepository,
+} from "../../src/adapters/storage/JournalRepository.js";
+import type { JournalStoreCorruptError } from "../../src/adapters/storage/JournalRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { type Action } from "../../src/domain/entities/Action.js";
 import { type JournalEvent } from "../../src/domain/entities/JournalEvent.js";
@@ -235,7 +238,7 @@ describe("storage repositories", () => {
     expect(recoveredFromBackup).toContain("from_backup");
   });
 
-  it("skips malformed journal lines instead of failing the entire journal read", async () => {
+  it("tolerates a malformed trailing journal line", async () => {
     const directory = await makeTempDir();
     const journalPath = path.join(directory, "journal.jsonl");
     await fs.writeFile(
@@ -249,5 +252,28 @@ describe("storage repositories", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]?.eventType).toBe("ACTION_QUEUED");
+  });
+
+  it("throws a corruption error for malformed journal lines in the middle of the file", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      [
+        JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001")),
+        "{bad json}",
+        JSON.stringify(buildJournalEvent("ACTION_STARTED", "act_001")),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const journalRepository = new JournalRepository({ filePath: journalPath });
+
+    await expect(journalRepository.list()).rejects.toMatchObject({
+      name: "JournalStoreCorruptError",
+      filePath: journalPath,
+      lineNumber: 2,
+    } satisfies Partial<JournalStoreCorruptError>);
   });
 });

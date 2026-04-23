@@ -171,15 +171,13 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Status: closed
   Kenapa ditutup: runtime screening sekarang sudah punya worker resmi, scheduler metadata, policy/signal-weight injection, candidate detail enrichment, AI rerank, dan live bootstrap wiring opsional via env-backed gateways.
 
-- `N37` `PortfolioStateBuilder` belum mengecek staleness `asOf` dari `PriceGateway` dan `WalletGateway` snapshot di [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:67>)
-  Status: deferred
-  Kenapa ditunda: boundary pricing/balance sekarang sudah typed, tetapi quote/snapshot lama masih bisa lolos tanpa guard dan menghasilkan valuation basi.
-  Revisit: saat scheduler/reporting mulai mengandalkan snapshot runtime nyata, atau sebelum price adapter non-mock dipasang.
+- `N37` `PortfolioStateBuilder` sekarang sudah mengecek staleness `asOf` dari snapshot wallet dan price, lalu melempar `PortfolioSnapshotStaleError` bila data terlalu basi
+  Status: closed
+  Kenapa ditutup: portfolio snapshot tidak lagi dibangun dari balance/quote eksternal yang stale, sehingga risk/reporting runtime tidak diam-diam memakai valuation basi.
 
-- `N38` `signalProvider` throw masih menjatuhkan seluruh management cycle; belum ada per-position error boundary + journal event di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:134>)
-  Status: deferred
-  Kenapa ditunda: worker Batch 13 sekarang masih sederhana dan gagal keras ketika enrichment signal gagal, sehingga satu posisi bermasalah bisa menggagalkan satu cycle penuh.
-  Revisit: sebelum worker orchestration dipakai sebagai loop runtime utama atau dihubungkan ke reporter/operator surface.
+- `N38` `signalProvider` sekarang tidak lagi menjatuhkan seluruh management cycle; failure per posisi diubah menjadi journal `MANAGEMENT_SIGNAL_PROVIDER_FAILED` + fallback `RECONCILE_ONLY` di `runManagementCycle.ts`
+  Status: closed
+  Kenapa ditutup: satu posisi dengan signal/enrichment gagal tidak lagi menggagalkan cycle penuh; worker bisa lanjut memproses posisi lain secara aman sambil tetap memberi audit trail yang jelas.
 
 - `N39` AI advisory timeout saat ini hanya memutus promise lokal; underlying call belum bisa di-abort karena `LlmGateway` belum membawa `AbortSignal` atau cancellation contract di [AiAdvisoryService.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:70>)
   Status: deferred
@@ -239,10 +237,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: repo inti sekarang sudah menyediakan `createRuntimeStores()` + `createRuntimeSupervisor()`, tetapi belum punya adapter live native untuk semua boundary runtime yang dibutuhkan supervised-live penuh. Tanpa wiring environment itu, supervisor tetap berjalan sebagai composition root yang DI-first, bukan executable live node yang self-contained.
   Revisit: sebelum supervised live run pertama; putuskan source wallet publik, adapter balance/price live, dan notifier delivery nyata.
 
-- `N51` `JournalRepository.list()` masih menelan line malformed di tengah file tanpa sinyal apa pun; toleransi audit-friendly seharusnya minimal memberi warning atau dibatasi ke trailing line di [JournalRepository.ts](<c:/Users/PC/Desktop/meridian_v2/src/adapters/storage/JournalRepository.ts:1>)
-  Status: deferred
-  Kenapa ditunda: behavior sekarang masih fail-soft dan tidak merusak startup, tetapi observability audit menurun karena corruption parsial bisa hilang diam-diam.
-  Revisit: saat journal inspection/reporting operator mulai dipakai lebih aktif.
+- `N51` pembacaan journal sekarang hanya mentoleransi malformed trailing line; corruption di tengah file akan melempar `JournalStoreCorruptError` dengan nomor line yang jelas di `JournalRepository.ts`
+  Status: closed
+  Kenapa ditutup: observability audit sekarang tidak lagi kehilangan line tengah diam-diam; operator akan melihat corruption lebih awal dengan context file + line number.
 
 - `N52` `runManagementCycle()` masih membangun `PortfolioState` penuh per posisi, sehingga IO/gateway cost bertumbuh linear dengan jumlah posisi dan scan journal harian ikut terulang di [runManagementCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runManagementCycle.ts:1>) dan [PortfolioStateBuilder.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/services/PortfolioStateBuilder.ts:1>)
   Status: deferred
@@ -297,10 +294,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Status: closed
   Kenapa ditutup: runtime live sekarang bisa menerima command operator dari Telegram secara configurable (`telegramOperatorCommandsEnabled`) dengan gate `alertChatId`. Webhook mode belum ada, tetapi remote operator control tidak lagi terbatas pada stdin.
 
-- `N63` screening enrichment detail masih berjalan serial per candidate (`getCandidateDetails()` lalu `tokenIntelGateway`) di [runScreeningCycle.ts](<c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runScreeningCycle.ts:1>)
-  Status: deferred
-  Kenapa ditunda: correctness hasil screening tetap aman, tetapi pada shortlist source yang lebih ramai path ini akan menambah latency cycle secara linear karena roundtrip gateway tidak diparalelkan atau dibatasi concurrency.
-  Revisit: saat screening runtime dipakai lebih sering/live atau ketika latency screening mulai terasa di operator logs.
+- `N63` screening enrichment candidate sekarang tidak lagi berjalan serial; detail pool dan narrative token diproses paralel via `Promise.all` di `runScreeningCycle.ts`
+  Status: closed
+  Kenapa ditutup: latency screening tidak lagi bertumbuh murni linear karena `getCandidateDetails()` antar-candidate sekarang mulai dieksekusi paralel, dan narrative enrichment juga tidak lagi menunggu detail pool selesai lebih dulu.
 
 - `N64` guard freshness untuk snapshot PnL trailing sekarang sudah ditutup di `runManagementCycle.ts`; peak refresh dan trailing evaluation tidak lagi memakai snapshot yang stale
   Status: closed

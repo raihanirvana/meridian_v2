@@ -672,4 +672,113 @@ describe("management worker", () => {
     const actions = await actionRepository.list();
     expect(actions).toHaveLength(0);
   });
+
+  it("falls back to RECONCILE_ONLY for one position when signal provider fails and continues the cycle", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition({ positionId: "pos_001" }));
+    await stateRepository.upsert(
+      buildPosition({
+        positionId: "pos_002",
+        activeBin: 30,
+        outOfRangeSince: "2026-04-21T06:00:00.000Z",
+      }),
+    );
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        claimFeesThresholdUsd: 999,
+        maxOutOfRangeMinutes: 0,
+      }),
+      signalProvider: ({ position }) => {
+        if (position.positionId === "pos_001") {
+          throw new Error("signals unavailable");
+        }
+
+        return {
+          forcedManualClose: false,
+          severeTokenRisk: false,
+          liquidityCollapse: false,
+          severeNegativeYield: false,
+          claimableFeesUsd: 0,
+          expectedRebalanceImprovement: true,
+          dataIncomplete: false,
+        };
+      },
+      rebalancePlanner: () => ({
+        reason: "rebalance",
+        redeploy: {
+          poolAddress: "pool_002_new",
+          tokenXMint: "mint_base",
+          tokenYMint: "mint_quote",
+          strategy: "bid_ask",
+          baseMint: "mint_base",
+          quoteMint: "mint_quote",
+          amountBase: 1,
+          amountQuote: 0.5,
+          rangeLowerBin: 8,
+          rangeUpperBin: 22,
+          initialActiveBin: 15,
+          estimatedValueUsd: 25,
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults).toHaveLength(2);
+    expect(result.positionResults[0]?.positionId).toBe("pos_001");
+    expect(result.positionResults[0]?.managementAction).toBe("RECONCILE_ONLY");
+    expect(result.positionResults[0]?.status).toBe("RECONCILE_ONLY");
+    expect(result.positionResults[1]?.positionId).toBe("pos_002");
+    expect(result.positionResults[1]?.managementAction).toBe("REBALANCE");
+    expect(result.positionResults[1]?.status).toBe("DISPATCHED");
+
+    const events = await journalRepository.list();
+    expect(events.map((event) => event.eventType)).toContain(
+      "MANAGEMENT_SIGNAL_PROVIDER_FAILED",
+    );
+
+    const actions = await actionRepository.list();
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.type).toBe("REBALANCE");
+  });
 });

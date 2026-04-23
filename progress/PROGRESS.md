@@ -18,10 +18,14 @@ Status: Complete
   - live runtime timers untuk reconciliation/management/reporting sekarang punya overlap guard
   - screening cycle sekarang membangun portfolio snapshot dengan risk policy nyata, bukan dummy constants
   - risk engine sekarang fail-safe bila `maxDailyLossSol` aktif tetapi `solPriceUsd` tidak tersedia
+  - `PortfolioStateBuilder` sekarang menolak wallet/price snapshot eksternal yang stale lewat `PortfolioSnapshotStaleError`
+  - `signalProvider` failure sekarang ditangani per posisi dengan journal `MANAGEMENT_SIGNAL_PROVIDER_FAILED` + fallback `RECONCILE_ONLY`, bukan menjatuhkan seluruh management cycle
+  - screening enrichment candidate sekarang diproses paralel, jadi `getCandidateDetails()` tidak lagi serial per candidate
   - trailing take-profit sekarang hanya refresh peak dan evaluate trigger dari snapshot posisi yang fresh, jadi data stale tidak bisa memicu close palsu
+  - `JournalRepository` sekarang hanya mentoleransi malformed trailing line; corruption di tengah file akan fail keras dengan `JournalStoreCorruptError`
   - reporting worker sekarang best-effort per alert; satu delivery gagal tidak menjatuhkan seluruh tick
   - `HttpTelegramNotifierGateway` tidak lagi menyimpan bot token di base URL internal
-  - verifikasi terbaru: `npm test` ✅ `224/224`, `npm run build` ✅, `npm run lint` ✅
+  - verifikasi terbaru: `npm test` ✅ `229/229`, `npm run build` ✅, `npm run lint` ✅
 - PRD V2 sudah dibaca dan dijadikan source of truth
 - Repo lama `Desktop/meridian` sudah diaudit sebagai referensi perilaku dan anti-pattern
 - Batch 0 selesai:

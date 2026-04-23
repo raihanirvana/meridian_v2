@@ -9,6 +9,17 @@ export interface JournalRepositoryOptions extends FileStoreOptions {
   filePath: string;
 }
 
+export class JournalStoreCorruptError extends Error {
+  public constructor(
+    message: string,
+    public readonly filePath: string,
+    public readonly lineNumber: number,
+  ) {
+    super(message);
+    this.name = "JournalStoreCorruptError";
+  }
+}
+
 export class JournalRepository {
   private readonly fileStore: FileStore;
   private readonly filePath: string;
@@ -31,16 +42,32 @@ export class JournalRepository {
       return [];
     }
 
-    return raw
+    const lines = raw
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .flatMap((line) => {
-        try {
-          return [JournalEventSchema.parse(JSON.parse(line))];
-        } catch {
-          return [];
+      .filter((line) => line.length > 0);
+
+    const events: JournalEvent[] = [];
+    for (const [index, line] of lines.entries()) {
+      try {
+        events.push(JournalEventSchema.parse(JSON.parse(line)));
+      } catch (error) {
+        const isTrailingLine = index === lines.length - 1;
+        if (isTrailingLine) {
+          continue;
         }
-      });
+
+        const reason = error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "unknown parse failure";
+        throw new JournalStoreCorruptError(
+          `journal file is corrupt at line ${index + 1}: ${reason}`,
+          this.filePath,
+          index + 1,
+        );
+      }
+    }
+
+    return events;
   }
 }

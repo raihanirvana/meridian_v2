@@ -123,6 +123,16 @@ function buildRiskPolicy(
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("screening worker", () => {
   it("blocks candidates that are in a downtrend below minVolumeTrendPct", async () => {
     const directory = await makeTempDir();
@@ -453,5 +463,135 @@ describe("screening worker", () => {
     expect(
       seenRankingInput?.candidates[0]?.smartMoneySnapshot.holderDistributionSummary,
     ).toBe("Holder spread attached");
+  });
+
+  it("enriches candidate details in parallel instead of serially per candidate", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    const firstDetails = createDeferred<{
+      poolAddress: string;
+      pairLabel: string;
+      feeToTvlRatio: number;
+      feePerTvl24h: number;
+      volumeTrendPct: number;
+      organicScore: number;
+      holderCount: number;
+    }>();
+    const secondDetails = createDeferred<{
+      poolAddress: string;
+      pairLabel: string;
+      feeToTvlRatio: number;
+      feePerTvl24h: number;
+      volumeTrendPct: number;
+      organicScore: number;
+      holderCount: number;
+    }>();
+    const bothStarted = createDeferred<void>();
+    const startedPools: string[] = [];
+
+    const runPromise = runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: {
+        async listCandidates() {
+          return [
+            buildGatewayCandidate({
+              candidateId: "cand_001",
+              poolAddress: "pool_001",
+            }),
+            buildGatewayCandidate({
+              candidateId: "cand_002",
+              poolAddress: "pool_002",
+              symbolPair: "XYZ-SOL",
+              tokenRiskSnapshot: {
+                deployerAddress: "deployer_ok",
+                topHolderPct: 15,
+                botHolderPct: 3,
+                bundleRiskPct: 4,
+                washTradingRiskPct: 3,
+                auditScore: 90,
+                tokenXMint: "mint_xyz",
+                tokenYMint: "mint_sol",
+              },
+            }),
+          ];
+        },
+        async getCandidateDetails(poolAddress) {
+          startedPools.push(poolAddress);
+          if (startedPools.length === 2) {
+            bothStarted.resolve();
+          }
+          if (poolAddress === "pool_001") {
+            return firstDetails.promise;
+          }
+
+          return secondDetails.promise;
+        },
+      },
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy();
+        },
+      },
+      aiMode: "disabled",
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await bothStarted.promise;
+    expect(startedPools).toEqual(["pool_001", "pool_002"]);
+
+    firstDetails.resolve({
+      poolAddress: "pool_001",
+      pairLabel: "ABC-SOL",
+      feeToTvlRatio: 0.12,
+      feePerTvl24h: 0.03,
+      volumeTrendPct: 10,
+      organicScore: 80,
+      holderCount: 1_200,
+    });
+    secondDetails.resolve({
+      poolAddress: "pool_002",
+      pairLabel: "XYZ-SOL",
+      feeToTvlRatio: 0.12,
+      feePerTvl24h: 0.03,
+      volumeTrendPct: 10,
+      organicScore: 80,
+      holderCount: 1_200,
+    });
+
+    const result = await runPromise;
+    expect(result.candidates).toHaveLength(2);
   });
 });

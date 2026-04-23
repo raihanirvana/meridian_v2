@@ -42,6 +42,8 @@ const PENDING_ACTION_STATUSES = new Set<Action["status"]>([
   "RETRY_QUEUED",
 ]);
 
+const MAX_EXTERNAL_SNAPSHOT_AGE_MINUTES = 15;
+
 function uniqueTokenMints(position: Position): string[] {
   return [...new Set([
     position.tokenXMint,
@@ -95,6 +97,34 @@ function diffMinutes(from: string, to: string): number | null {
   }
 
   return Math.max(0, Math.floor((toMs - fromMs) / 60_000));
+}
+
+export class PortfolioSnapshotStaleError extends Error {
+  public constructor(
+    message: string,
+    public readonly source: "wallet" | "price",
+    public readonly asOf: string,
+    public readonly now: string,
+  ) {
+    super(message);
+    this.name = "PortfolioSnapshotStaleError";
+  }
+}
+
+function assertFreshExternalSnapshot(input: {
+  source: "wallet" | "price";
+  asOf: string;
+  now: string;
+}): void {
+  const ageMinutes = diffMinutes(input.asOf, input.now);
+  if (ageMinutes === null || ageMinutes > MAX_EXTERNAL_SNAPSHOT_AGE_MINUTES) {
+    throw new PortfolioSnapshotStaleError(
+      `${input.source} snapshot is stale (${input.asOf}) relative to ${input.now}`,
+      input.source,
+      input.asOf,
+      input.now,
+    );
+  }
 }
 
 function resolveCircuitBreakerLifecycle(input: {
@@ -178,6 +208,17 @@ export async function buildPortfolioState(
       input.walletGateway.getWalletBalance(input.wallet),
       input.priceGateway.getSolPriceUsd(),
     ]);
+
+  assertFreshExternalSnapshot({
+    source: "wallet",
+    asOf: walletBalanceSnapshot.asOf,
+    now,
+  });
+  assertFreshExternalSnapshot({
+    source: "price",
+    asOf: solPriceQuote.asOf,
+    now,
+  });
 
   const walletPositions = positions.filter(
     (position) => position.wallet === input.wallet,

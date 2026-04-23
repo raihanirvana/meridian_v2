@@ -239,28 +239,30 @@ export async function runScreeningCycle(
     timeframe: screeningPolicy.timeframe,
   });
 
-  const enrichedInputs: ScreeningCandidateInput[] = [];
-  const enrichedCandidates: Candidate[] = [];
-  for (const candidate of listedCandidates) {
+  const enrichedResults = await Promise.all(listedCandidates.map(async (candidate) => {
     const tokenMint = asString(candidate.tokenRiskSnapshot.tokenXMint, "tokenXMint");
-    const details = await input.screeningGateway.getCandidateDetails(candidate.poolAddress);
+    const narrativePromise = input.tokenIntelGateway === undefined
+      ? Promise.resolve(null)
+      : input.tokenIntelGateway
+          .getTokenNarrativeSnapshot(tokenMint)
+          .catch((error) => {
+            logger.warn(
+              { err: error, tokenMint, poolAddress: candidate.poolAddress },
+              "token narrative enrichment failed; continuing with gateway details",
+            );
+            return null;
+          });
+    const [details, narrative] = await Promise.all([
+      input.screeningGateway.getCandidateDetails(candidate.poolAddress),
+      narrativePromise,
+    ]);
 
     let narrativeSummary = details.narrativeSummary ?? null;
     let holderDistributionSummary = details.holderDistributionSummary ?? null;
-    if (input.tokenIntelGateway !== undefined) {
-      try {
-        const narrative = await input.tokenIntelGateway.getTokenNarrativeSnapshot(
-          tokenMint,
-        );
+    if (narrative !== null) {
         narrativeSummary = narrative.narrativeSummary ?? narrativeSummary;
         holderDistributionSummary =
           narrative.holderDistributionSummary ?? holderDistributionSummary;
-      } catch (error) {
-        logger.warn(
-          { err: error, tokenMint, poolAddress: candidate.poolAddress },
-          "token narrative enrichment failed; continuing with gateway details",
-        );
-      }
     }
 
     const screeningInput = toScreeningInput(candidate, {
@@ -281,9 +283,13 @@ export async function runScreeningCycle(
         ? {}
         : { holderDistributionSummary }),
     });
-    enrichedInputs.push(screeningInput);
-    enrichedCandidates.push(mergeCandidateContext(candidate, screeningInput, now));
-  }
+    return {
+      screeningInput,
+      enrichedCandidate: mergeCandidateContext(candidate, screeningInput, now),
+    };
+  }));
+  const enrichedInputs = enrichedResults.map((item) => item.screeningInput);
+  const enrichedCandidates = enrichedResults.map((item) => item.enrichedCandidate);
 
   const signalWeights = input.signalWeightsProvider === undefined
     ? undefined

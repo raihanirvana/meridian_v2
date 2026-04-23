@@ -9,7 +9,10 @@ import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
-import { buildPortfolioState } from "../../src/app/services/PortfolioStateBuilder.js";
+import {
+  buildPortfolioState,
+} from "../../src/app/services/PortfolioStateBuilder.js";
+import type { PortfolioSnapshotStaleError } from "../../src/app/services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../../src/app/services/RecentDeployCounter.js";
 import { type Action } from "../../src/domain/entities/Action.js";
 import { type JournalEvent } from "../../src/domain/entities/JournalEvent.js";
@@ -467,6 +470,104 @@ describe("portfolio state builder", () => {
     });
 
     expect(portfolio.dailyRealizedPnl).toBe(8);
+  });
+
+  it("rejects stale wallet snapshots instead of building a portfolio from outdated balances", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    await expect(
+      buildPortfolioState({
+        wallet: "wallet_001",
+        minReserveUsd: 10,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 5,
+              asOf: "2026-04-21T11:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        now: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      name: "PortfolioSnapshotStaleError",
+      source: "wallet",
+    } satisfies Partial<PortfolioSnapshotStaleError>);
+  });
+
+  it("rejects stale SOL price snapshots instead of building a portfolio from outdated valuation", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    await expect(
+      buildPortfolioState({
+        wallet: "wallet_001",
+        minReserveUsd: 10,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 5,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T11:00:00.000Z",
+            },
+          },
+        }),
+        now: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      name: "PortfolioSnapshotStaleError",
+      source: "price",
+    } satisfies Partial<PortfolioSnapshotStaleError>);
   });
 
   it("counts recent deploys from the last hour using deploy actions only", async () => {
