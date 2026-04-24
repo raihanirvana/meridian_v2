@@ -256,6 +256,10 @@ export {
   type HttpDlmmGatewayOptions,
 } from "./adapters/dlmm/HttpDlmmGateway.js";
 export {
+  MeteoraSdkDlmmGateway,
+  type MeteoraSdkDlmmGatewayOptions,
+} from "./adapters/dlmm/MeteoraSdkDlmmGateway.js";
+export {
   MockSwapGateway,
   ExecuteSwapRequestSchema,
   ExecuteSwapResultSchema,

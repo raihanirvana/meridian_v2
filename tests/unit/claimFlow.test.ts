@@ -264,6 +264,191 @@ describe("claim flow", () => {
     });
   });
 
+  it("finalizes claim fees when Meteora reports the position as OPEN again after claim", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition());
+
+    const action = await requestClaimFees({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: {
+        reason: "fees above threshold",
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-22T10:00:00.000Z",
+      journalRepository,
+    });
+
+    const processed = await processClaimFeesAction({
+      action,
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: {
+          type: "success",
+          value: buildOpenPosition({
+            status: "CLAIM_CONFIRMED",
+            feesClaimedBase: 1,
+            feesClaimedUsd: 12,
+          }),
+        },
+        deployLiquidity: {
+          type: "success",
+          value: {
+            actionType: "DEPLOY",
+            positionId: "unused",
+            txIds: [],
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "unused",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 1,
+            txIds: ["tx_claim"],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "unused",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "X-Y",
+            binStep: 100,
+            activeBin: 15,
+          },
+        },
+      }),
+      stateRepository,
+      journalRepository,
+      now: () => "2026-04-22T10:01:00.000Z",
+    });
+
+    await actionRepository.upsert({
+      ...action,
+      status: "WAITING_CONFIRMATION",
+      startedAt: "2026-04-22T10:00:30.000Z",
+      resultPayload: processed.resultPayload ?? null,
+      txIds: processed.txIds ?? [],
+      error: processed.error ?? null,
+      completedAt: null,
+    });
+
+    const finalized = await finalizeClaimFees({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: Object.assign(
+        new MockDlmmGateway({
+          getPosition: {
+            type: "success",
+            value: buildOpenPosition({
+              status: "OPEN",
+              feesClaimedBase: 1,
+              feesClaimedUsd: 12,
+              currentValueUsd: 101,
+            }),
+          },
+          deployLiquidity: {
+            type: "success",
+            value: {
+              actionType: "DEPLOY",
+              positionId: "unused",
+              txIds: [],
+            },
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "unused",
+              txIds: [],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 1,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "unused",
+              remainingPercentage: 50,
+              txIds: [],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "X-Y",
+              binStep: 100,
+              activeBin: 15,
+            },
+          },
+        }),
+        {
+          reconciliationReadModel: "open_only" as const,
+        },
+      ),
+      journalRepository,
+      now: () => "2026-04-22T10:02:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("OPEN");
+  });
+
   it("queues a child DEPLOY action when auto-compound succeeds", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
@@ -663,6 +848,206 @@ describe("claim flow", () => {
     expect(finalized.action.resultPayload).toMatchObject({
       autoCompound: {
         phase: "FAILED",
+      },
+    });
+
+    const actions = await actionRepository.list();
+    expect(actions.filter((item) => item.type === "DEPLOY")).toHaveLength(0);
+  });
+
+  it("marks compound as failed when claimed amount source is unavailable", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition());
+
+    const action = await requestClaimFees({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: {
+        reason: "compound claimed fees",
+        autoCompound: {
+          outputMint: "mint_y",
+        },
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-22T10:00:00.000Z",
+      journalRepository,
+    });
+
+    const processed = await processClaimFeesAction({
+      action,
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: {
+          type: "success",
+          value: buildOpenPosition({
+            status: "CLAIM_CONFIRMED",
+            feesClaimedBase: 1,
+            feesClaimedUsd: 12,
+          }),
+        },
+        deployLiquidity: {
+          type: "success",
+          value: {
+            actionType: "DEPLOY",
+            positionId: "unused",
+            txIds: [],
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "unused",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 0,
+            claimedBaseAmountSource: "unavailable",
+            txIds: ["tx_claim"],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "unused",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "X-Y",
+            binStep: 100,
+            activeBin: 15,
+          },
+        },
+      }),
+      stateRepository,
+      journalRepository,
+      now: () => "2026-04-22T10:01:00.000Z",
+    });
+
+    await actionRepository.upsert({
+      ...action,
+      status: "WAITING_CONFIRMATION",
+      startedAt: "2026-04-22T10:00:30.000Z",
+      resultPayload: processed.resultPayload ?? null,
+      txIds: processed.txIds ?? [],
+      error: processed.error ?? null,
+      completedAt: null,
+    });
+
+    const finalized = await finalizeClaimFees({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: {
+          type: "success",
+          value: buildOpenPosition({
+            status: "CLAIM_CONFIRMED",
+            feesClaimedBase: 1,
+            feesClaimedUsd: 12,
+            currentValueUsd: 101,
+          }),
+        },
+        deployLiquidity: {
+          type: "success",
+          value: {
+            actionType: "DEPLOY",
+            positionId: "unused",
+            txIds: [],
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "unused",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 0,
+            claimedBaseAmountSource: "unavailable",
+            txIds: ["tx_claim"],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "unused",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "X-Y",
+            binStep: 100,
+            activeBin: 15,
+          },
+        },
+      }),
+      actionQueue,
+      journalRepository,
+      postClaimSwapHook: async () => ({
+        txId: "tx_swap_compound",
+        inputAmount: 1,
+        outputAmount: 0.75,
+      }),
+      now: () => "2026-04-22T10:02:00.000Z",
+    });
+
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("OPEN");
+    expect(finalized.action.resultPayload).toMatchObject({
+      claimedBaseAmountSource: "unavailable",
+      autoCompound: {
+        phase: "FAILED",
+        error: "claimed base amount unavailable after claim; auto-compound skipped",
       },
     });
 

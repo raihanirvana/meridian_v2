@@ -278,6 +278,13 @@ export function createRuntimeSupervisor(
     },
 
     async runActionQueueTick() {
+      if (input.config.runtime.dryRun) {
+        logger.info(
+          "runtime dryRun=true; action queue processing skipped to prevent live writes",
+        );
+        return [];
+      }
+
       return processActionQueue({
         actionQueue: input.stores.actionQueue,
         handler: runQueueHandler,

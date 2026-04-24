@@ -56,6 +56,9 @@ const ClaimConfirmationPayloadSchema = z
   .object({
     actionType: z.literal("CLAIM_FEES"),
     claimedBaseAmount: z.number().nonnegative(),
+    claimedBaseAmountSource: z
+      .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])
+      .optional(),
     txIds: z.array(z.string().min(1)),
     reason: z.string().min(1),
     autoSwapOutputMint: z.string().min(1).nullable().optional(),
@@ -288,6 +291,25 @@ async function runClaimPostProcessing(input: {
       claimResult.claimedBaseAmount > 0 &&
       simpleSwapResult === null
     ) {
+      if (claimResult.claimedBaseAmountSource === "unavailable") {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: input.now,
+          eventType: "CLAIM_AUTO_SWAP_FAILED",
+          actor: workingAction.requestedBy,
+          wallet: workingAction.wallet,
+          positionId: workingAction.positionId,
+          actionId: workingAction.actionId,
+          before: null,
+          after: null,
+          txIds: [],
+          resultStatus: "FAILED",
+          error: "claimed base amount unavailable after claim; auto swap skipped",
+        });
+        simpleSwapResult = {
+          status: "FAILED",
+          error: "claimed base amount unavailable after claim; auto swap skipped",
+        };
+      } else {
       try {
         simpleSwapResult =
           await input.postClaimSwapHook(
@@ -317,6 +339,7 @@ async function runClaimPostProcessing(input: {
           status: "FAILED",
           error: errorMessage(error, "claim auto swap failed"),
         };
+      }
       }
 
       claimResult = ClaimConfirmationPayloadSchema.parse({
@@ -353,6 +376,12 @@ async function runClaimPostProcessing(input: {
           ...compound,
           phase: "FAILED",
           error: "post claim swap hook unavailable for auto-compound",
+        });
+      } else if (claimResult.claimedBaseAmountSource === "unavailable") {
+        compound = ClaimAutoCompoundStateSchema.parse({
+          ...compound,
+          phase: "FAILED",
+          error: "claimed base amount unavailable after claim; auto-compound skipped",
         });
       } else {
         try {
@@ -638,11 +667,22 @@ export async function finalizeClaimFees(
           };
         }
 
+        const claimConfirmedLikePosition =
+          confirmedPosition !== null &&
+          (
+            confirmedPosition.status === "CLAIM_CONFIRMED" ||
+            (
+              input.dlmmGateway.reconciliationReadModel === "open_only" &&
+              confirmedPosition.status === "OPEN"
+            )
+          )
+            ? confirmedPosition
+            : null;
+
         if (
           claimingPosition === null ||
           claimingPosition.status !== "CLAIMING" ||
-          confirmedPosition === null ||
-          confirmedPosition.status !== "CLAIM_CONFIRMED"
+          claimConfirmedLikePosition === null
         ) {
           const sourcePosition = claimingPosition ?? confirmedPosition;
           if (sourcePosition === null) {
@@ -666,9 +706,9 @@ export async function finalizeClaimFees(
                 ? `Claim finalization requires reconciliation because local claiming position is missing for ${latestAction.positionId}`
                 : claimingPosition.status !== "CLAIMING"
                   ? `Claim finalization requires reconciliation because local position status is ${claimingPosition.status} for ${latestAction.positionId}`
-                  : confirmedPosition === null
+                  : claimConfirmedLikePosition === null
                     ? `Claim confirmation not found for position ${latestAction.positionId}`
-                    : `Claim confirmation returned non-claim-confirmed status ${confirmedPosition.status} for ${latestAction.positionId}`,
+                    : `Claim confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
             completedAt: now,
           } satisfies Action;
           await input.actionRepository.upsert(timedOutAction);
@@ -701,7 +741,7 @@ export async function finalizeClaimFees(
         }
 
         const claimConfirmedPosition = buildClaimConfirmedPosition({
-          confirmedPosition,
+          confirmedPosition: claimConfirmedLikePosition,
           claimingPosition,
           actionId: latestAction.actionId,
           reason: claimResult.reason,

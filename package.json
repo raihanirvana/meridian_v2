@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "live": "npm run build && node dist/runtime/runLive.js",
+    "postinstall": "node scripts/patch-anchor.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint . --max-warnings=0",
@@ -23,6 +24,10 @@
     "format:write": "prettier --write ."
   },
   "dependencies": {
+    "@meteora-ag/dlmm": "^1.9.7",
+    "@solana/web3.js": "^1.98.4",
+    "bn.js": "^5.2.3",
+    "bs58": "^6.0.0",
     "pino": "^10.3.1",
     "zod": "^4.3.6"
   },

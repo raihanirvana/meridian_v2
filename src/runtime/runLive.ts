@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline";
@@ -5,6 +6,7 @@ import { z } from "zod";
 
 import { HttpTokenIntelGateway } from "../adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../adapters/dlmm/HttpDlmmGateway.js";
+import { MeteoraSdkDlmmGateway } from "../adapters/dlmm/MeteoraSdkDlmmGateway.js";
 import { JupiterApiSwapGateway } from "../adapters/jupiter/JupiterApiSwapGateway.js";
 import { HttpLlmGateway } from "../adapters/llm/HttpLlmGateway.js";
 import { JupiterSolPriceGateway } from "../adapters/pricing/JupiterSolPriceGateway.js";
@@ -31,8 +33,9 @@ import { createRuntimeSupervisorFromUserConfig } from "./createRuntimeSupervisor
 const RuntimeBootstrapEnvSchema = z
   .object({
     PUBLIC_WALLET_ADDRESS: z.string().min(1),
-    DLMM_API_BASE_URL: z.url(),
+    DLMM_API_BASE_URL: z.url().optional(),
     DLMM_API_KEY: z.string().min(1).optional(),
+    METEORA_DLMM_DATA_API_BASE_URL: z.url().optional(),
     SCREENING_API_BASE_URL: z.url().optional(),
     ANALYTICS_API_BASE_URL: z.url().optional(),
     JUPITER_QUOTE_BASE_URL: z.url().optional(),
@@ -53,11 +56,54 @@ function emptyToUndefined(
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+function parseRuntimeDotEnv(contents: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    parsed[key] = value;
+  }
+
+  return parsed;
+}
+
+function loadRuntimeEnv(envFilePath: string): NodeJS.ProcessEnv {
+  const envFileValues = fs.existsSync(envFilePath)
+    ? parseRuntimeDotEnv(fs.readFileSync(envFilePath, "utf8"))
+    : {};
+
+  return {
+    ...envFileValues,
+    ...process.env,
+  };
+}
+
 function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
   return RuntimeBootstrapEnvSchema.parse({
     PUBLIC_WALLET_ADDRESS: emptyToUndefined(env.PUBLIC_WALLET_ADDRESS),
     DLMM_API_BASE_URL: emptyToUndefined(env.DLMM_API_BASE_URL),
     DLMM_API_KEY: emptyToUndefined(env.DLMM_API_KEY),
+    METEORA_DLMM_DATA_API_BASE_URL: emptyToUndefined(
+      env.METEORA_DLMM_DATA_API_BASE_URL,
+    ),
     SCREENING_API_BASE_URL: emptyToUndefined(env.SCREENING_API_BASE_URL),
     ANALYTICS_API_BASE_URL: emptyToUndefined(env.ANALYTICS_API_BASE_URL),
     JUPITER_QUOTE_BASE_URL: emptyToUndefined(env.JUPITER_QUOTE_BASE_URL),
@@ -307,7 +353,7 @@ async function main() {
     envFilePath,
     userConfigPath,
   });
-  const runtimeEnv = parseRuntimeBootstrapEnv(process.env);
+  const runtimeEnv = parseRuntimeBootstrapEnv(loadRuntimeEnv(envFilePath));
   const logger = createLogger(config.user.runtime.logLevel);
   const now = () => new Date().toISOString();
 
@@ -315,6 +361,10 @@ async function main() {
     {
       config: redactSecretsForLogging(config),
       wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
+      dlmmMode:
+        runtimeEnv.DLMM_API_BASE_URL === undefined
+          ? "meteora_sdk"
+          : "http_wrapper",
       liveBridges: {
         walletBalance: "rpc",
         solPrice: "jupiter-quote",
@@ -414,18 +464,34 @@ async function main() {
           botToken: config.secrets.TELEGRAM_BOT_TOKEN,
           timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
         });
+  const dlmmGateway =
+    runtimeEnv.DLMM_API_BASE_URL === undefined
+      ? new MeteoraSdkDlmmGateway({
+          rpcUrl: config.secrets.RPC_URL,
+          walletPrivateKey: config.secrets.WALLET_PRIVATE_KEY,
+          wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
+          timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+          defaultSlippageBps: config.user.deploy.slippageBps,
+          ...(runtimeEnv.METEORA_DLMM_DATA_API_BASE_URL === undefined
+            ? {}
+            : {
+                dataApiBaseUrl:
+                  runtimeEnv.METEORA_DLMM_DATA_API_BASE_URL,
+              }),
+        })
+      : new HttpDlmmGateway({
+          baseUrl: runtimeEnv.DLMM_API_BASE_URL,
+          ...(runtimeEnv.DLMM_API_KEY === undefined
+            ? {}
+            : { apiKey: runtimeEnv.DLMM_API_KEY }),
+          timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+        });
   const supervisor = createRuntimeSupervisorFromUserConfig({
     wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
     userConfig: config.user,
     stores,
     gateways: {
-      dlmmGateway: new HttpDlmmGateway({
-        baseUrl: runtimeEnv.DLMM_API_BASE_URL,
-        ...(runtimeEnv.DLMM_API_KEY === undefined
-          ? {}
-          : { apiKey: runtimeEnv.DLMM_API_KEY }),
-        timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
-      }),
+      dlmmGateway,
       ...(screeningGateway === undefined ? {} : { screeningGateway }),
       ...(tokenIntelGateway === undefined ? {} : { tokenIntelGateway }),
       walletGateway,

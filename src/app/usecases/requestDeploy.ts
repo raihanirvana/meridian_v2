@@ -17,6 +17,7 @@ export const DeployActionRequestPayloadSchema = z
     quoteMint: z.string().min(1),
     amountBase: z.number().nonnegative(),
     amountQuote: z.number().nonnegative(),
+    slippageBps: z.number().int().positive().max(10_000).optional(),
     strategy: z.string().min(1),
     rangeLowerBin: z.number().int(),
     rangeUpperBin: z.number().int(),

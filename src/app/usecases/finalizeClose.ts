@@ -155,6 +155,39 @@ function buildCloseConfirmedPosition(input: {
   });
 }
 
+function inferCloseConfirmedPosition(
+  closingPosition: Position | null,
+  confirmedPosition: Position | null,
+  useOpenOnlyReadModel: boolean,
+  actionId: string,
+  now: string,
+): Position | null {
+  if (confirmedPosition !== null && confirmedPosition.status === "CLOSE_CONFIRMED") {
+    return confirmedPosition;
+  }
+
+  if (
+    useOpenOnlyReadModel &&
+    confirmedPosition === null &&
+    closingPosition !== null &&
+    (
+      closingPosition.status === "CLOSING" ||
+      closingPosition.status === "CLOSE_CONFIRMED" ||
+      closingPosition.status === "RECONCILING" ||
+      closingPosition.status === "CLOSED"
+    )
+  ) {
+    return buildCloseConfirmedPosition({
+      confirmedPosition: closingPosition,
+      closingPosition,
+      actionId,
+      now,
+    });
+  }
+
+  return null;
+}
+
 function buildReconcilingPosition(
   confirmedPosition: Position,
   actionId: string,
@@ -269,12 +302,18 @@ export async function finalizeClose(
       const confirmedPosition = await input.dlmmGateway.getPosition(
         latestAction.positionId,
       );
+      const closeConfirmedPositionLike = inferCloseConfirmedPosition(
+        closingPosition,
+        confirmedPosition,
+        input.dlmmGateway.reconciliationReadModel === "open_only",
+        latestAction.actionId,
+        now,
+      );
 
       if (
         closingPosition !== null &&
         closingPosition.status === "CLOSED" &&
-        confirmedPosition !== null &&
-        confirmedPosition.status === "CLOSE_CONFIRMED"
+        closeConfirmedPositionLike !== null
       ) {
         const accounting = buildCloseAccountingSummary(closingPosition, null);
         const reconcilingAction = {
@@ -325,16 +364,14 @@ export async function finalizeClose(
       const resumeReconcilingPosition =
         closingPosition !== null &&
         closingPosition.status === "RECONCILING" &&
-        confirmedPosition !== null &&
-        confirmedPosition.status === "CLOSE_CONFIRMED"
+        closeConfirmedPositionLike !== null
           ? closingPosition
           : null;
 
       if (
         closingPosition === null ||
         (closingPosition.status !== "CLOSING" && resumeReconcilingPosition === null) ||
-        confirmedPosition === null ||
-        confirmedPosition.status !== "CLOSE_CONFIRMED"
+        closeConfirmedPositionLike === null
       ) {
         const sourcePosition = closingPosition ?? confirmedPosition;
 
@@ -356,12 +393,12 @@ export async function finalizeClose(
           status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
           error:
             closingPosition === null
-              ? `Close finalization requires reconciliation because local closing position is missing for ${latestAction.positionId}`
-              : closingPosition.status !== "CLOSING"
-                ? `Close finalization requires reconciliation because local position status is ${closingPosition.status} for ${latestAction.positionId}`
-                : confirmedPosition === null
-                  ? `Close confirmation not found for position ${latestAction.positionId}`
-                  : `Close confirmation returned non-close-confirmed status ${confirmedPosition.status} for ${latestAction.positionId}`,
+                ? `Close finalization requires reconciliation because local closing position is missing for ${latestAction.positionId}`
+                : closingPosition.status !== "CLOSING"
+                  ? `Close finalization requires reconciliation because local position status is ${closingPosition.status} for ${latestAction.positionId}`
+                  : closeConfirmedPositionLike === null
+                    ? `Close confirmation not found for position ${latestAction.positionId}`
+                    : `Close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
           completedAt: now,
         } satisfies Action;
 
@@ -394,12 +431,12 @@ export async function finalizeClose(
         };
       }
 
-      const closeConfirmedPosition = resumeReconcilingPosition ?? buildCloseConfirmedPosition({
-        confirmedPosition,
-        closingPosition,
-        actionId: latestAction.actionId,
-        now,
-      });
+      const closeConfirmedPosition = resumeReconcilingPosition ?? closeConfirmedPositionLike;
+      if (closeConfirmedPosition === null) {
+        throw new Error(
+          `Close finalization could not infer confirmed close state for ${latestAction.positionId}`,
+        );
+      }
       const reconcilingPosition = resumeReconcilingPosition ?? buildReconcilingPosition(
         closeConfirmedPosition,
         latestAction.actionId,
@@ -465,10 +502,18 @@ export async function finalizeClose(
         });
 
         if (input.lessonHook !== undefined) {
+          const performanceSnapshotPosition =
+            closeConfirmedPosition.entryMetadata === undefined &&
+            closingPosition.entryMetadata !== undefined
+              ? PositionSchema.parse({
+                  ...closeConfirmedPosition,
+                  entryMetadata: closingPosition.entryMetadata,
+                })
+              : closeConfirmedPosition;
           try {
             await input.lessonHook({
               position: closedPosition,
-              performanceSnapshotPosition: closeConfirmedPosition,
+              performanceSnapshotPosition,
               closedAction: doneAction,
               reason: payload.reason,
               now,

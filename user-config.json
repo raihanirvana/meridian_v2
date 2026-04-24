@@ -59,7 +59,8 @@
   },
   "deploy": {
     "defaultAmountSol": 0.25,
-    "minAmountSol": 0.1
+    "minAmountSol": 0.1,
+    "slippageBps": 300
   },
   "notifications": {
     "telegramEnabled": false,

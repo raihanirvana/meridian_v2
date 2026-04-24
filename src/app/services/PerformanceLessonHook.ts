@@ -82,7 +82,10 @@ export function buildPerformanceRecordFromClose(input: {
   now: string;
 }): PerformanceRecord {
   const snapshotPosition = input.performanceSnapshotPosition ?? input.position;
-  const entryMetadata = resolveEntryMetadata(input.position);
+  const entryMetadata = {
+    ...resolveEntryMetadata(snapshotPosition),
+    ...resolveEntryMetadata(input.position),
+  } satisfies PositionEntryMetadata;
   const minutesHeld = diffMinutes(snapshotPosition.openedAt, input.position.closedAt ?? input.now);
   const minutesOutOfRange = diffMinutes(
     snapshotPosition.outOfRangeSince,

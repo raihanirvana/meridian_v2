@@ -91,6 +91,7 @@ export const UserConfigSchema = z
       .object({
         defaultAmountSol: PositiveNumber,
         minAmountSol: PositiveNumber,
+        slippageBps: z.number().int().positive().max(10_000).default(300),
       })
       .strict(),
     notifications: z

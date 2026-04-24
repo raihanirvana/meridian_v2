@@ -206,6 +206,39 @@ function buildCloseConfirmedPosition(input: {
   });
 }
 
+function inferCloseConfirmedPosition(
+  closingPosition: Position | null,
+  confirmedPosition: Position | null,
+  useOpenOnlyReadModel: boolean,
+  actionId: string,
+  now: string,
+): Position | null {
+  if (confirmedPosition !== null && confirmedPosition.status === "CLOSE_CONFIRMED") {
+    return confirmedPosition;
+  }
+
+  if (
+    useOpenOnlyReadModel &&
+    confirmedPosition === null &&
+    closingPosition !== null &&
+    (
+      closingPosition.status === "CLOSING_FOR_REBALANCE" ||
+      closingPosition.status === "CLOSE_CONFIRMED" ||
+      closingPosition.status === "RECONCILING" ||
+      closingPosition.status === "CLOSED"
+    )
+  ) {
+    return buildCloseConfirmedPosition({
+      confirmedPosition: closingPosition,
+      closingPosition,
+      actionId,
+      now,
+    });
+  }
+
+  return null;
+}
+
 function buildClosedOldPosition(input: {
   closeConfirmedPosition: Position;
   actionId: string;
@@ -424,12 +457,18 @@ async function finalizeCloseLeg(input: {
   const confirmedPosition = await input.dlmmGateway.getPosition(
     input.latestAction.positionId,
   );
+  const closeConfirmedPositionLike = inferCloseConfirmedPosition(
+    closingPosition,
+    confirmedPosition,
+    input.dlmmGateway.reconciliationReadModel === "open_only",
+    input.latestAction.actionId,
+    input.now,
+  );
 
   if (
     closingPosition === null ||
     closingPosition.status !== "CLOSING_FOR_REBALANCE" ||
-    confirmedPosition === null ||
-    confirmedPosition.status !== "CLOSE_CONFIRMED"
+    closeConfirmedPositionLike === null
   ) {
     const sourcePosition = closingPosition ?? confirmedPosition;
 
@@ -444,21 +483,16 @@ async function finalizeCloseLeg(input: {
         ? `Rebalance close finalization requires reconciliation because local closing position is missing for ${input.latestAction.positionId}`
         : closingPosition.status !== "CLOSING_FOR_REBALANCE"
           ? `Rebalance close finalization requires reconciliation because local position status is ${closingPosition.status} for ${input.latestAction.positionId}`
-          : confirmedPosition === null
+          : closeConfirmedPositionLike === null
             ? `Rebalance close confirmation not found for position ${input.latestAction.positionId}`
-            : `Rebalance close confirmation returned non-close-confirmed status ${confirmedPosition.status} for ${input.latestAction.positionId}`;
+            : `Rebalance close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${input.latestAction.positionId}`;
 
     throw Object.assign(new Error(detail), {
       reconciliationSourcePosition: sourcePosition,
     });
   }
 
-  const closeConfirmedPosition = buildCloseConfirmedPosition({
-    confirmedPosition,
-    closingPosition,
-    actionId: input.latestAction.actionId,
-    now: input.now,
-  });
+  const closeConfirmedPosition = closeConfirmedPositionLike;
   const availableCapitalUsd = closeConfirmedPosition.currentValueUsd;
   const closedPosition = buildClosedOldPosition({
     closeConfirmedPosition,
@@ -754,9 +788,19 @@ export async function finalizeRebalance(
             await input.dlmmGateway.deployLiquidity({
               wallet: latestAction.wallet,
               poolAddress: requestPayload.redeploy.poolAddress,
+              tokenXMint: requestPayload.redeploy.tokenXMint,
+              tokenYMint: requestPayload.redeploy.tokenYMint,
+              baseMint: requestPayload.redeploy.baseMint,
+              quoteMint: requestPayload.redeploy.quoteMint,
               amountBase: requestPayload.redeploy.amountBase,
               amountQuote: requestPayload.redeploy.amountQuote,
+              ...(requestPayload.redeploy.slippageBps === undefined
+                ? {}
+                : { slippageBps: requestPayload.redeploy.slippageBps }),
               strategy: requestPayload.redeploy.strategy,
+              rangeLowerBin: requestPayload.redeploy.rangeLowerBin,
+              rangeUpperBin: requestPayload.redeploy.rangeUpperBin,
+              initialActiveBin: requestPayload.redeploy.initialActiveBin,
             }),
           );
         } catch (error) {

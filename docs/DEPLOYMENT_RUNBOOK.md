@@ -37,8 +37,19 @@ Required in `.env`:
 WALLET_PRIVATE_KEY=...
 RPC_URL=https://...
 PUBLIC_WALLET_ADDRESS=...
-DLMM_API_BASE_URL=https://...
 ```
+
+Choose one DLMM mode:
+
+```dotenv
+# Native Meteora SDK mode
+METEORA_DLMM_DATA_API_BASE_URL=https://dlmm.datapi.meteora.ag
+
+# Optional alternate mode: custom HTTP wrapper
+DLMM_API_BASE_URL=https://your-dlmm-wrapper.example.com
+```
+
+If `DLMM_API_BASE_URL` is empty, `runLive.ts` now defaults to the native Meteora SDK gateway.
 
 Recommended for runtime clarity:
 

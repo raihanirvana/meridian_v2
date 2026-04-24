@@ -1,6 +1,6 @@
 # Meridian V2 Progress
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 Current batch: Batch 21 - Advanced exits and compounding automation
 Status: Complete
 
@@ -10,6 +10,22 @@ Status: Complete
 - Make claim finalization/reconciliation able to resume compounding safely after interruption
 
 ## Completed
+- Native Meteora gateway hardening pass sudah masuk:
+  - deploy slippage sekarang configurable via `deploy.slippageBps` / request-level `slippageBps`, dengan default konservatif 300 bps
+  - Meteora data API sekarang lewat `JsonHttpClient` dengan timeout + adapter error normalization
+  - `listPositionsForWallet()` sekarang fallback ke SDK hanya saat data API benar-benar gagal, dan SDK fallback memakai mint/range nyata dari pool/position, bukan placeholder
+  - close / partial-close sekarang fail-fast bila snapshot range posisi tidak bisa dibaca; tidak lagi memakai fallback range fabricated
+  - close path sekarang mengembalikan metadata `preCloseFeesClaimed` / `preCloseFeesClaimError`, jadi failure claim-before-close tidak lagi silent swallow
+  - amount conversion ke lamports sekarang memakai decimal-string + `BigInt`, bukan `Math.floor(amount * 10 ** decimals)`, dan decimals mint sekarang di-cache per mint
+  - gateway sekarang mensimulasikan transaksi sebelum submit on-chain; simulation failure akan stop lebih awal sebelum kirim tx
+  - decoder `WALLET_PRIVATE_KEY` sekarang menolak secret key yang tidak decode ke 64 bytes secara eksplisit
+  - SDK module load sekarang dikonsolidasikan lewat helper internal, bukan repeated dynamic import di banyak hot path
+  - compatibility patch `scripts/patch-anchor.js` sekarang ikut dibawa dari repo lama dan dijalankan via `postinstall`, sehingga `@meteora-ag/dlmm` bisa di-import di Node ESM runtime tanpa `ERR_UNSUPPORTED_DIR_IMPORT`
+  - submit transaksi Meteora sekarang retry otomatis untuk transient RPC errors seperti `Blockhash not found` / timeout confirmation
+  - cache ephemeral gateway (`recentDeploys`, `poolByPositionId`, `claimedBaseByPositionId`) sekarang punya TTL prune agar tidak tumbuh tanpa batas
+  - claim result sekarang membawa `claimedBaseAmountSource`; bila estimate amount tidak tersedia, auto-swap/auto-compound akan fail tertib alih-alih diam-diam lanjut dengan angka `0`
+  - smoke tests khusus `MeteoraSdkDlmmGateway` sekarang ada untuk slippage forwarding, SDK fallback mint mapping, fail-fast close range, dan pre-close claim observability
+  - verifikasi terbaru: `npm test` ✅ `242/242`, `npm run build` ✅, `npm run lint` ✅
 - Post-Batch 21 runtime hardening pass selesai:
   - manual circuit breaker sekarang memblok rebalance manual, queued rebalance close leg, dan redeploy leg finalizer
   - live runtime sekarang punya operator stdin loop yang configurable
@@ -661,4 +677,9 @@ Status: Complete
   - management worker sekarang mem-refresh peak PnL sebelum evaluasi, sehingga peak state survive restart dan bisa dipakai untuk close saat retrace
   - flow `CLAIM_FEES` sekarang bisa membawa `autoCompound` plan; finalizer mengeksekusi swap, lalu enqueue `DEPLOY` child action resmi dengan idempotency stabil
   - recovery `CLAIM_FEES` sekarang juga bisa resume dari status `RECONCILING`, termasuk saat chain compound terputus di tengah
-- `npm test` terakhir hijau dengan total `214` tests passed
+- Meteora native gateway hardening sekarang juga sudah masuk:
+  - claim amount untuk `CLAIM_FEES` sekarang memprioritaskan parsed post-transaction token balance delta (`claimedBaseAmountSource="post_tx"`) sebelum fallback ke cache / PnL estimate / unavailable
+  - regression test gateway mengunci jalur post-tx receipt agar auto-swap dan auto-compound tidak lagi bergantung pada estimasi pre-tx saat receipt tersedia
+  - dry-run runtime sekarang tidak memproses action queue, sehingga action manual/queued tidak bisa menembus ke write gateway saat `runtime.dryRun=true`
+  - `runLive.ts` sekarang juga membaca `.env` untuk bootstrap env (`PUBLIC_WALLET_ADDRESS`, `DLMM_API_BASE_URL`, `METEORA_DLMM_DATA_API_BASE_URL`, interval env), bukan hanya untuk secrets
+- `npm test` terakhir hijau dengan total `243` tests passed

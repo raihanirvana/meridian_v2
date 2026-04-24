@@ -260,9 +260,19 @@ export async function processDeployAction(
       await input.dlmmGateway.deployLiquidity({
         wallet: input.action.wallet,
         poolAddress: payload.poolAddress,
+        tokenXMint: payload.tokenXMint,
+        tokenYMint: payload.tokenYMint,
+        baseMint: payload.baseMint,
+        quoteMint: payload.quoteMint,
         amountBase: payload.amountBase,
         amountQuote: payload.amountQuote,
+        ...(payload.slippageBps === undefined
+          ? {}
+          : { slippageBps: payload.slippageBps }),
         strategy: payload.strategy,
+        rangeLowerBin: payload.rangeLowerBin,
+        rangeUpperBin: payload.rangeUpperBin,
+        initialActiveBin: payload.initialActiveBin,
       }),
     );
   } catch (error) {

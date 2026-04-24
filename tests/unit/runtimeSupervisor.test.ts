@@ -238,4 +238,185 @@ describe("runtime supervisor", () => {
     expect(reportingWorker.status).toBe("SUCCEEDED");
     expect(reportingWorker.manualRunCount).toBe(1);
   });
+
+  it("does not process queued write actions while runtime dryRun is enabled", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await stores.actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: "dry-run-deploy",
+      requestedBy: "operator",
+      requestedAt: "2026-04-22T10:00:00.000Z",
+      requestPayload: {
+        poolAddress: "pool_001",
+        tokenXMint: "mint_x",
+        tokenYMint: "mint_y",
+        baseMint: "mint_x",
+        quoteMint: "mint_y",
+        amountBase: 1,
+        amountQuote: 0,
+        strategy: "spot",
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        initialActiveBin: 15,
+        estimatedValueUsd: 100,
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig: {
+        risk: {
+          maxConcurrentPositions: 3,
+          maxCapitalUsagePct: 70,
+          minReserveUsd: 0.5,
+          maxTokenExposurePct: 35,
+          maxPoolExposurePct: 40,
+          maxRebalancesPerPosition: 2,
+          dailyLossLimitPct: 8,
+          circuitBreakerCooldownMin: 180,
+          maxNewDeploysPerHour: 2,
+        },
+        screening: {
+          timeframe: "5m",
+          minMarketCapUsd: 100_000,
+          maxMarketCapUsd: 10_000_000,
+          minTvlUsd: 10_000,
+          minVolumeUsd: 500,
+          minFeeActiveTvlRatio: 0.05,
+          minFeePerTvl24h: 0.01,
+          minOrganic: 60,
+          minHolderCount: 500,
+          allowedBinSteps: [80],
+          blockedLaunchpads: [],
+          intervalTimezone: "UTC",
+          peakHours: [],
+        },
+        management: {
+          stopLossUsd: 50,
+          maxHoldMinutes: 1440,
+          maxOutOfRangeMinutes: 240,
+          claimFeesThresholdUsd: 20,
+          partialCloseEnabled: false,
+          partialCloseProfitTargetUsd: 100,
+          rebalanceEnabled: true,
+        },
+        ai: {
+          mode: "disabled",
+        },
+        poolMemory: {
+          snapshotsEnabled: false,
+        },
+        schedule: {
+          screeningIntervalSec: 1800,
+          managementIntervalSec: 600,
+          reconciliationIntervalSec: 300,
+          reportingIntervalSec: 3600,
+        },
+        darwin: {
+          enabled: false,
+        },
+        notifications: {
+          telegramEnabled: false,
+        },
+        reporting: {
+          solMode: false,
+          briefingEmoji: false,
+        },
+        claim: {
+          autoSwapAfterClaim: false,
+          swapOutputMint: "So11111111111111111111111111111111111111112",
+          autoCompoundFees: false,
+          compoundToSide: "quote",
+        },
+        runtime: {
+          dryRun: true,
+          logLevel: "info",
+        },
+      },
+      stores,
+      gateways: {
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "error",
+            error: new Error("deploy should not run in dry run"),
+          },
+          closePosition: {
+            type: "error",
+            error: new Error("close should not run in dry run"),
+          },
+          claimFees: {
+            type: "error",
+            error: new Error("claim should not run in dry run"),
+          },
+          partialClosePosition: {
+            type: "error",
+            error: new Error("partial close should not run in dry run"),
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "SOL/USDC",
+              binStep: 80,
+              activeBin: 10,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    const processedActions = await supervisor.runActionQueueTick();
+    const queuedActions = await stores.actionRepository.listByStatuses(["QUEUED"]);
+
+    expect(processedActions).toEqual([]);
+    expect(queuedActions).toHaveLength(1);
+    expect(queuedActions[0]?.idempotencyKey).toBe("dry-run-deploy");
+  });
 });

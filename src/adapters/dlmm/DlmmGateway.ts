@@ -9,9 +9,17 @@ import {
 export const DeployLiquidityRequestSchema = z.object({
   wallet: z.string().min(1),
   poolAddress: z.string().min(1),
+  tokenXMint: z.string().min(1).optional(),
+  tokenYMint: z.string().min(1).optional(),
+  baseMint: z.string().min(1).optional(),
+  quoteMint: z.string().min(1).optional(),
   amountBase: z.number().nonnegative(),
   amountQuote: z.number().nonnegative(),
+  slippageBps: z.number().int().positive().max(10_000).optional(),
   strategy: z.string().min(1),
+  rangeLowerBin: z.number().int().optional(),
+  rangeUpperBin: z.number().int().optional(),
+  initialActiveBin: z.number().int().nullable().optional(),
 });
 
 export const DeployLiquidityResultSchema = z.object({
@@ -30,6 +38,8 @@ export const ClosePositionResultSchema = z.object({
   actionType: z.literal("CLOSE"),
   closedPositionId: z.string().min(1),
   txIds: z.array(z.string().min(1)),
+  preCloseFeesClaimed: z.boolean().optional(),
+  preCloseFeesClaimError: z.string().min(1).nullable().optional(),
 });
 
 export const ClaimFeesRequestSchema = z.object({
@@ -40,6 +50,9 @@ export const ClaimFeesRequestSchema = z.object({
 export const ClaimFeesResultSchema = z.object({
   actionType: z.literal("CLAIM_FEES"),
   claimedBaseAmount: z.number().nonnegative(),
+  claimedBaseAmountSource: z
+    .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])
+    .optional(),
   txIds: z.array(z.string().min(1)),
 });
 
@@ -85,6 +98,7 @@ export type WalletPositionsSnapshot = z.infer<typeof WalletPositionsSnapshotSche
 export type PoolInfo = z.infer<typeof PoolInfoSchema>;
 
 export interface DlmmGateway {
+  readonly reconciliationReadModel?: "open_only";
   getPosition(positionId: string): Promise<Position | null>;
   deployLiquidity(request: DeployLiquidityRequest): Promise<DeployLiquidityResult>;
   closePosition(request: ClosePositionRequest): Promise<ClosePositionResult>;
