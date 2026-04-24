@@ -26,12 +26,12 @@ export const EnvSecretsSchema = z.object({
 export const UserConfigSchema = z
   .object({
     risk: z
-        .object({
-          maxConcurrentPositions: z.number().int().positive(),
-          maxCapitalUsagePct: PercentNumber,
-          minReserveUsd: PositiveNumber,
-          maxTokenExposurePct: PercentNumber,
-          maxPoolExposurePct: PercentNumber,
+      .object({
+        maxConcurrentPositions: z.number().int().positive(),
+        maxCapitalUsagePct: PercentNumber,
+        minReserveUsd: PositiveNumber,
+        maxTokenExposurePct: PercentNumber,
+        maxPoolExposurePct: PercentNumber,
         maxRebalancesPerPosition: z.number().int().min(0),
         dailyLossLimitPct: PositiveNumber,
         maxDailyLossSol: PositiveNumber.optional(),
@@ -58,13 +58,17 @@ export const UserConfigSchema = z
         allowedBinSteps: z.array(z.number().int().positive()).min(1),
         blockedLaunchpads: z.array(z.string().min(1)),
         intervalTimezone: z.string().min(1).default("UTC"),
-        peakHours: z.array(
-          z.object({
-            start: TimeOfDaySchema,
-            end: TimeOfDaySchema,
-            intervalSec: z.number().int().positive(),
-          }).strict(),
-        ).default([]),
+        peakHours: z
+          .array(
+            z
+              .object({
+                start: TimeOfDaySchema,
+                end: TimeOfDaySchema,
+                intervalSec: z.number().int().positive(),
+              })
+              .strict(),
+          )
+          .default([]),
       })
       .strict(),
     schedule: z
@@ -91,6 +95,11 @@ export const UserConfigSchema = z
       .object({
         defaultAmountSol: PositiveNumber,
         minAmountSol: PositiveNumber,
+        autoDeployFromShortlist: z.boolean().default(false),
+        maxAutoDeploysPerCycle: z.number().int().positive().default(1),
+        strategy: z.enum(["spot", "curve", "bid_ask"]).default("bid_ask"),
+        binsBelow: z.number().int().positive().default(69),
+        binsAbove: z.number().int().nonnegative().default(0),
         slippageBps: z.number().int().positive().max(10_000).default(300),
       })
       .strict(),
@@ -110,9 +119,10 @@ export const UserConfigSchema = z
     claim: z
       .object({
         autoSwapAfterClaim: z.boolean().default(false),
-        swapOutputMint: z.string().min(1).default(
-          "So11111111111111111111111111111111111111112",
-        ),
+        swapOutputMint: z
+          .string()
+          .min(1)
+          .default("So11111111111111111111111111111111111111112"),
         autoCompoundFees: z.boolean().default(false),
         compoundToSide: z.enum(["base", "quote"]).default("quote"),
       })
@@ -175,7 +185,8 @@ export const UserConfigSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["management", "trailingTriggerPct"],
-          message: "must be greater than zero when trailingTakeProfitEnabled is true",
+          message:
+            "must be greater than zero when trailingTakeProfitEnabled is true",
         });
       }
 
@@ -183,7 +194,8 @@ export const UserConfigSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["management", "trailingDropPct"],
-          message: "must be greater than zero when trailingTakeProfitEnabled is true",
+          message:
+            "must be greater than zero when trailingTakeProfitEnabled is true",
         });
       }
     }
@@ -195,13 +207,15 @@ export const UserConfigSchema = z
       const startMinute = Number(startMinuteRaw ?? "");
       const endHour = Number(endHourRaw ?? "");
       const endMinute = Number(endMinuteRaw ?? "");
-      const startValid = Number.isInteger(startHour) &&
+      const startValid =
+        Number.isInteger(startHour) &&
         Number.isInteger(startMinute) &&
         startHour >= 0 &&
         startHour <= 23 &&
         startMinute >= 0 &&
         startMinute <= 59;
-      const endValid = Number.isInteger(endHour) &&
+      const endValid =
+        Number.isInteger(endHour) &&
         Number.isInteger(endMinute) &&
         endHour >= 0 &&
         endHour <= 23 &&

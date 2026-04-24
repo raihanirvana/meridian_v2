@@ -16,6 +16,7 @@ import { type PriceGateway } from "../adapters/pricing/PriceGateway.js";
 import { type WalletGateway } from "../adapters/wallet/WalletGateway.js";
 import { SolanaRpcWalletGateway } from "../adapters/wallet/SolanaRpcWalletGateway.js";
 import { HttpScreeningGateway } from "../adapters/screening/HttpScreeningGateway.js";
+import { MeteoraPoolDiscoveryScreeningGateway } from "../adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
 import type { ManagementSignals } from "../domain/rules/managementRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
 import type { UserConfig } from "../infra/config/configSchema.js";
@@ -36,12 +37,14 @@ const RuntimeBootstrapEnvSchema = z
     DLMM_API_BASE_URL: z.url().optional(),
     DLMM_API_KEY: z.string().min(1).optional(),
     METEORA_DLMM_DATA_API_BASE_URL: z.url().optional(),
+    METEORA_POOL_DISCOVERY_BASE_URL: z.url().optional(),
     SCREENING_API_BASE_URL: z.url().optional(),
     ANALYTICS_API_BASE_URL: z.url().optional(),
     JUPITER_QUOTE_BASE_URL: z.url().optional(),
     JUPITER_EXECUTE_BASE_URL: z.url().optional(),
     ACTION_QUEUE_INTERVAL_SEC: z.coerce.number().int().positive().default(5),
     DLMM_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+    MERIDIAN_DATA_DIR: z.string().min(1).optional(),
   })
   .strict();
 
@@ -104,12 +107,16 @@ function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
     METEORA_DLMM_DATA_API_BASE_URL: emptyToUndefined(
       env.METEORA_DLMM_DATA_API_BASE_URL,
     ),
+    METEORA_POOL_DISCOVERY_BASE_URL: emptyToUndefined(
+      env.METEORA_POOL_DISCOVERY_BASE_URL,
+    ),
     SCREENING_API_BASE_URL: emptyToUndefined(env.SCREENING_API_BASE_URL),
     ANALYTICS_API_BASE_URL: emptyToUndefined(env.ANALYTICS_API_BASE_URL),
     JUPITER_QUOTE_BASE_URL: emptyToUndefined(env.JUPITER_QUOTE_BASE_URL),
     JUPITER_EXECUTE_BASE_URL: emptyToUndefined(env.JUPITER_EXECUTE_BASE_URL),
     ACTION_QUEUE_INTERVAL_SEC: emptyToUndefined(env.ACTION_QUEUE_INTERVAL_SEC),
     DLMM_TIMEOUT_MS: emptyToUndefined(env.DLMM_TIMEOUT_MS),
+    MERIDIAN_DATA_DIR: emptyToUndefined(env.MERIDIAN_DATA_DIR),
   });
 }
 
@@ -162,8 +169,13 @@ function toRuntimeScreeningPolicy(
   };
 }
 
+function isDryRunWriteCommand(rawCommand: string): boolean {
+  return /^\/?(deploy|close|rebalance)\b/i.test(rawCommand.trim());
+}
+
 function startOperatorStdinLoop(input: {
   enabled: boolean;
+  dryRun: boolean;
   logger: ReturnType<typeof createLogger>;
   wallet: string;
   actionQueue: ReturnType<typeof createRuntimeStores>["actionQueue"];
@@ -198,6 +210,14 @@ function startOperatorStdinLoop(input: {
   rl.on("line", (line) => {
     const rawCommand = line.trim();
     if (rawCommand.length === 0) {
+      return;
+    }
+
+    if (input.dryRun && isDryRunWriteCommand(rawCommand)) {
+      const message =
+        "runtime dryRun=true; write operator commands are disabled and were not queued";
+      input.logger.warn({ rawCommand }, message);
+      process.stderr.write(`${message}\n`);
       return;
     }
 
@@ -245,6 +265,7 @@ function startOperatorStdinLoop(input: {
 
 function startTelegramOperatorPolling(input: {
   enabled: boolean;
+  dryRun: boolean;
   logger: ReturnType<typeof createLogger>;
   wallet: string;
   operatorGateway: HttpTelegramOperatorGateway;
@@ -294,6 +315,20 @@ function startTelegramOperatorPolling(input: {
             },
             "ignoring Telegram operator command from unauthorized chat",
           );
+          continue;
+        }
+
+        if (input.dryRun && isDryRunWriteCommand(update.text)) {
+          const message =
+            "runtime dryRun=true; write operator commands are disabled and were not queued";
+          input.logger.warn(
+            { chatId: update.chatId, rawCommand: update.text },
+            message,
+          );
+          await input.notifierGateway.sendMessage({
+            recipient: update.chatId,
+            message,
+          });
           continue;
         }
 
@@ -375,6 +410,9 @@ async function main() {
 
   const stores = createRuntimeStores({
     baseScreeningPolicy: toRuntimeScreeningPolicy(config.user.screening),
+    ...(runtimeEnv.MERIDIAN_DATA_DIR === undefined
+      ? {}
+      : { dataDir: runtimeEnv.MERIDIAN_DATA_DIR }),
   });
   const policyProvider = new DefaultPolicyProvider({
     basePolicy: toRuntimeScreeningPolicy(config.user.screening),
@@ -397,7 +435,13 @@ async function main() {
   });
   const screeningGateway =
     runtimeEnv.SCREENING_API_BASE_URL === undefined
-      ? undefined
+      ? new MeteoraPoolDiscoveryScreeningGateway({
+          ...(runtimeEnv.METEORA_POOL_DISCOVERY_BASE_URL === undefined
+            ? {}
+            : { baseUrl: runtimeEnv.METEORA_POOL_DISCOVERY_BASE_URL }),
+          timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
+          now,
+        })
       : new HttpScreeningGateway({
           baseUrl: runtimeEnv.SCREENING_API_BASE_URL,
           ...(config.secrets.SCREENING_API_KEY === undefined
@@ -522,6 +566,7 @@ async function main() {
   });
   const stopOperatorStdinLoop = startOperatorStdinLoop({
     enabled: config.user.runtime.operatorStdinEnabled,
+    dryRun: config.user.runtime.dryRun,
     logger,
     wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
     actionQueue: stores.actionQueue,
@@ -547,6 +592,7 @@ async function main() {
     config.user.notifications.alertChatId !== undefined
       ? startTelegramOperatorPolling({
           enabled: true,
+          dryRun: config.user.runtime.dryRun,
           logger,
           wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
           operatorGateway: liveTelegramOperatorGateway,

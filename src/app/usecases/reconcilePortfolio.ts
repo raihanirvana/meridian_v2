@@ -1,13 +1,19 @@
 import { z } from "zod";
 
-import { DeployLiquidityResultSchema, type DlmmGateway } from "../../adapters/dlmm/DlmmGateway.js";
+import {
+  DeployLiquidityResultSchema,
+  type DlmmGateway,
+} from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { type ReconciliationOutcome } from "../../domain/types/enums.js";
@@ -18,10 +24,7 @@ import {
   finalizeRebalance,
   type FinalizeRebalanceResult,
 } from "./finalizeRebalance.js";
-import {
-  finalizeClose,
-  type PostCloseSwapHook,
-} from "./finalizeClose.js";
+import { finalizeClose, type PostCloseSwapHook } from "./finalizeClose.js";
 import {
   finalizeClaimFees,
   type PostClaimSwapHook,
@@ -74,6 +77,7 @@ export interface ReconcilePortfolioInput {
   wallets?: string[];
   postCloseSwapHook?: PostCloseSwapHook;
   postClaimSwapHook?: PostClaimSwapHook;
+  dryRun?: boolean;
 }
 
 export interface ReconcilePortfolioResult {
@@ -99,9 +103,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -123,6 +127,38 @@ function shouldCheckSnapshot(position: Position): boolean {
   return TRACKED_SNAPSHOT_STATUSES.has(position.status);
 }
 
+function shouldSyncLiveSnapshot(position: Position): boolean {
+  return (
+    position.status === "OPEN" ||
+    position.status === "HOLD" ||
+    position.status === "MANAGEMENT_REVIEW"
+  );
+}
+
+function mergeLiveSnapshotPosition(input: {
+  localPosition: Position;
+  snapshotPosition: Position;
+  now: string;
+}): Position {
+  return PositionSchema.parse({
+    ...input.localPosition,
+    tokenXMint: input.snapshotPosition.tokenXMint,
+    tokenYMint: input.snapshotPosition.tokenYMint,
+    currentValueUsd: input.snapshotPosition.currentValueUsd,
+    feesClaimedUsd: input.snapshotPosition.feesClaimedUsd,
+    unrealizedPnlUsd: input.snapshotPosition.unrealizedPnlUsd,
+    rangeLowerBin: input.snapshotPosition.rangeLowerBin,
+    rangeUpperBin: input.snapshotPosition.rangeUpperBin,
+    activeBin: input.snapshotPosition.activeBin,
+    outOfRangeSince:
+      input.snapshotPosition.outOfRangeSince !== null
+        ? (input.localPosition.outOfRangeSince ?? input.now)
+        : null,
+    lastSyncedAt: input.now,
+    needsReconciliation: false,
+  });
+}
+
 function buildReconciliationRequiredPosition(
   position: Position,
   actionId: string | null,
@@ -130,7 +166,10 @@ function buildReconciliationRequiredPosition(
 ): Position {
   return PositionSchema.parse({
     ...position,
-    status: transitionPositionStatus(position.status, "RECONCILIATION_REQUIRED"),
+    status: transitionPositionStatus(
+      position.status,
+      "RECONCILIATION_REQUIRED",
+    ),
     lastSyncedAt: now,
     lastWriteActionId: actionId ?? position.lastWriteActionId,
     needsReconciliation: true,
@@ -226,7 +265,9 @@ async function recoverReconcilingAction(
   const targetPositionId = getActionPositionId(input.action);
 
   const work = async (): Promise<ReconciliationRecord> => {
-    const latestAction = await input.actionRepository.get(input.action.actionId);
+    const latestAction = await input.actionRepository.get(
+      input.action.actionId,
+    );
     if (latestAction === null) {
       return createRecord({
         scope: "ACTION",
@@ -306,7 +347,8 @@ async function recoverReconcilingAction(
     const failedAction = {
       ...latestAction,
       status: transitionActionStatus(latestAction.status, "FAILED"),
-      error: "Startup recovery requires reconciliation for interrupted reconciling action",
+      error:
+        "Startup recovery requires reconciliation for interrupted reconciling action",
       completedAt: input.now,
     } satisfies Action;
     await input.actionRepository.upsert(failedAction);
@@ -363,138 +405,8 @@ export async function reconcilePortfolio(
     "WAITING_CONFIRMATION",
   ]);
 
-  for (const action of waitingActions) {
-    try {
-      if (action.type === "DEPLOY") {
-        const result = await confirmDeployAction({
-          actionId: action.actionId,
-          actionRepository: input.actionRepository,
-          stateRepository: input.stateRepository,
-          dlmmGateway: input.dlmmGateway,
-          walletLock,
-          positionLock,
-          now: () => now,
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-        });
-
-        records.push(
-          createRecord({
-            scope: "ACTION",
-            entityId: result.action.actionId,
-            wallet: result.action.wallet,
-            positionId: result.position?.positionId ?? getDeployPositionId(result.action),
-            actionId: result.action.actionId,
-            outcome: mapDeployReconciliationOutcome(result.outcome),
-            detail: `Deploy confirmation recovery finished with ${result.outcome}`,
-          }),
-        );
-        continue;
-      }
-
-      if (action.type === "CLOSE") {
-        const result = await finalizeClose({
-          actionId: action.actionId,
-          actionRepository: input.actionRepository,
-          stateRepository: input.stateRepository,
-          dlmmGateway: input.dlmmGateway,
-          walletLock,
-          positionLock,
-          now: () => now,
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          ...(input.postCloseSwapHook === undefined
-            ? {}
-            : { postCloseSwapHook: input.postCloseSwapHook }),
-        });
-
-        records.push(
-          createRecord({
-            scope: "ACTION",
-            entityId: result.action.actionId,
-            wallet: result.action.wallet,
-            positionId: result.position?.positionId ?? result.action.positionId,
-            actionId: result.action.actionId,
-            outcome: mapCloseReconciliationOutcome(result.outcome),
-            detail: `Close confirmation recovery finished with ${result.outcome}`,
-          }),
-        );
-        continue;
-      }
-
-      if (action.type === "REBALANCE") {
-        const result = await finalizeRebalance({
-          actionId: action.actionId,
-          actionRepository: input.actionRepository,
-          stateRepository: input.stateRepository,
-          dlmmGateway: input.dlmmGateway,
-          walletLock,
-          positionLock,
-          now: () => now,
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          ...(input.runtimeControlStore === undefined
-            ? {}
-            : { runtimeControlStore: input.runtimeControlStore }),
-        });
-
-        records.push(
-          createRecord({
-            scope: "ACTION",
-            entityId: result.action.actionId,
-            wallet: result.action.wallet,
-            positionId:
-              result.newPosition?.positionId ??
-              result.oldPosition?.positionId ??
-              result.action.positionId,
-            actionId: result.action.actionId,
-            outcome: mapRebalanceReconciliationOutcome(result),
-            detail: `Rebalance recovery finished with ${result.outcome}`,
-          }),
-        );
-        continue;
-      }
-
-      if (action.type === "CLAIM_FEES") {
-        const result = await finalizeClaimFees({
-          actionId: action.actionId,
-          actionRepository: input.actionRepository,
-          stateRepository: input.stateRepository,
-          dlmmGateway: input.dlmmGateway,
-          walletLock,
-          positionLock,
-          now: () => now,
-          ...(input.actionQueue === undefined
-            ? {}
-            : { actionQueue: input.actionQueue }),
-          ...(input.runtimeControlStore === undefined
-            ? {}
-            : { runtimeControlStore: input.runtimeControlStore }),
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          ...(input.postClaimSwapHook === undefined
-            ? {}
-            : { postClaimSwapHook: input.postClaimSwapHook }),
-        });
-
-        records.push(
-          createRecord({
-            scope: "ACTION",
-            entityId: result.action.actionId,
-            wallet: result.action.wallet,
-            positionId: result.position?.positionId ?? result.action.positionId,
-            actionId: result.action.actionId,
-            outcome: mapClaimReconciliationOutcome(result.outcome),
-            detail: `Claim-fees recovery finished with ${result.outcome}`,
-          }),
-        );
-        continue;
-      }
-
+  if (input.dryRun === true) {
+    for (const action of waitingActions) {
       records.push(
         createRecord({
           scope: "ACTION",
@@ -502,25 +414,176 @@ export async function reconcilePortfolio(
           wallet: action.wallet,
           positionId: getActionPositionId(action),
           actionId: action.actionId,
-          outcome: "MANUAL_REVIEW_REQUIRED",
-          detail: `Unsupported WAITING_CONFIRMATION action type ${action.type} during reconciliation`,
-        }),
-      );
-    } catch (error) {
-      records.push(
-        createRecord({
-          scope: "ACTION",
-          entityId: action.actionId,
-          wallet: action.wallet,
-          positionId: getActionPositionId(action),
-          actionId: action.actionId,
-          outcome: "MANUAL_REVIEW_REQUIRED",
+          outcome: "REQUIRES_RETRY",
           detail:
-            error instanceof Error
-              ? error.message
-              : "Unexpected reconciliation error while recovering waiting action",
+            "Dry-run reconciliation skipped WAITING_CONFIRMATION recovery to prevent live writes",
         }),
       );
+    }
+  } else {
+    for (const action of waitingActions) {
+      try {
+        if (action.type === "DEPLOY") {
+          const result = await confirmDeployAction({
+            actionId: action.actionId,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            dlmmGateway: input.dlmmGateway,
+            walletLock,
+            positionLock,
+            now: () => now,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+          });
+
+          records.push(
+            createRecord({
+              scope: "ACTION",
+              entityId: result.action.actionId,
+              wallet: result.action.wallet,
+              positionId:
+                result.position?.positionId ??
+                getDeployPositionId(result.action),
+              actionId: result.action.actionId,
+              outcome: mapDeployReconciliationOutcome(result.outcome),
+              detail: `Deploy confirmation recovery finished with ${result.outcome}`,
+            }),
+          );
+          continue;
+        }
+
+        if (action.type === "CLOSE") {
+          const result = await finalizeClose({
+            actionId: action.actionId,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            dlmmGateway: input.dlmmGateway,
+            walletLock,
+            positionLock,
+            now: () => now,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            ...(input.postCloseSwapHook === undefined
+              ? {}
+              : { postCloseSwapHook: input.postCloseSwapHook }),
+          });
+
+          records.push(
+            createRecord({
+              scope: "ACTION",
+              entityId: result.action.actionId,
+              wallet: result.action.wallet,
+              positionId:
+                result.position?.positionId ?? result.action.positionId,
+              actionId: result.action.actionId,
+              outcome: mapCloseReconciliationOutcome(result.outcome),
+              detail: `Close confirmation recovery finished with ${result.outcome}`,
+            }),
+          );
+          continue;
+        }
+
+        if (action.type === "REBALANCE") {
+          const result = await finalizeRebalance({
+            actionId: action.actionId,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            dlmmGateway: input.dlmmGateway,
+            walletLock,
+            positionLock,
+            now: () => now,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            ...(input.runtimeControlStore === undefined
+              ? {}
+              : { runtimeControlStore: input.runtimeControlStore }),
+          });
+
+          records.push(
+            createRecord({
+              scope: "ACTION",
+              entityId: result.action.actionId,
+              wallet: result.action.wallet,
+              positionId:
+                result.newPosition?.positionId ??
+                result.oldPosition?.positionId ??
+                result.action.positionId,
+              actionId: result.action.actionId,
+              outcome: mapRebalanceReconciliationOutcome(result),
+              detail: `Rebalance recovery finished with ${result.outcome}`,
+            }),
+          );
+          continue;
+        }
+
+        if (action.type === "CLAIM_FEES") {
+          const result = await finalizeClaimFees({
+            actionId: action.actionId,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            dlmmGateway: input.dlmmGateway,
+            walletLock,
+            positionLock,
+            now: () => now,
+            ...(input.actionQueue === undefined
+              ? {}
+              : { actionQueue: input.actionQueue }),
+            ...(input.runtimeControlStore === undefined
+              ? {}
+              : { runtimeControlStore: input.runtimeControlStore }),
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            ...(input.postClaimSwapHook === undefined
+              ? {}
+              : { postClaimSwapHook: input.postClaimSwapHook }),
+          });
+
+          records.push(
+            createRecord({
+              scope: "ACTION",
+              entityId: result.action.actionId,
+              wallet: result.action.wallet,
+              positionId:
+                result.position?.positionId ?? result.action.positionId,
+              actionId: result.action.actionId,
+              outcome: mapClaimReconciliationOutcome(result.outcome),
+              detail: `Claim-fees recovery finished with ${result.outcome}`,
+            }),
+          );
+          continue;
+        }
+
+        records.push(
+          createRecord({
+            scope: "ACTION",
+            entityId: action.actionId,
+            wallet: action.wallet,
+            positionId: getActionPositionId(action),
+            actionId: action.actionId,
+            outcome: "MANUAL_REVIEW_REQUIRED",
+            detail: `Unsupported WAITING_CONFIRMATION action type ${action.type} during reconciliation`,
+          }),
+        );
+      } catch (error) {
+        records.push(
+          createRecord({
+            scope: "ACTION",
+            entityId: action.actionId,
+            wallet: action.wallet,
+            positionId: getActionPositionId(action),
+            actionId: action.actionId,
+            outcome: "MANUAL_REVIEW_REQUIRED",
+            detail:
+              error instanceof Error
+                ? error.message
+                : "Unexpected reconciliation error while recovering waiting action",
+          }),
+        );
+      }
     }
   }
 
@@ -528,32 +591,8 @@ export async function reconcilePortfolio(
     "RECONCILING",
   ]);
 
-  for (const action of reconcilingActions) {
-    try {
-      records.push(
-        await recoverReconcilingAction({
-          action,
-          actionRepository: input.actionRepository,
-          stateRepository: input.stateRepository,
-          dlmmGateway: input.dlmmGateway,
-          ...(input.actionQueue === undefined
-            ? {}
-            : { actionQueue: input.actionQueue }),
-          walletLock,
-          positionLock,
-          now,
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          ...(input.runtimeControlStore === undefined
-            ? {}
-            : { runtimeControlStore: input.runtimeControlStore }),
-          ...(input.postClaimSwapHook === undefined
-            ? {}
-            : { postClaimSwapHook: input.postClaimSwapHook }),
-        }),
-      );
-    } catch (error) {
+  if (input.dryRun === true) {
+    for (const action of reconcilingActions) {
       records.push(
         createRecord({
           scope: "ACTION",
@@ -561,13 +600,54 @@ export async function reconcilePortfolio(
           wallet: action.wallet,
           positionId: getActionPositionId(action),
           actionId: action.actionId,
-          outcome: "MANUAL_REVIEW_REQUIRED",
+          outcome: "REQUIRES_RETRY",
           detail:
-            error instanceof Error
-              ? error.message
-              : "Unexpected startup recovery error for reconciling action",
+            "Dry-run reconciliation skipped RECONCILING recovery to prevent live writes",
         }),
       );
+    }
+  } else {
+    for (const action of reconcilingActions) {
+      try {
+        records.push(
+          await recoverReconcilingAction({
+            action,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            dlmmGateway: input.dlmmGateway,
+            ...(input.actionQueue === undefined
+              ? {}
+              : { actionQueue: input.actionQueue }),
+            walletLock,
+            positionLock,
+            now,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            ...(input.runtimeControlStore === undefined
+              ? {}
+              : { runtimeControlStore: input.runtimeControlStore }),
+            ...(input.postClaimSwapHook === undefined
+              ? {}
+              : { postClaimSwapHook: input.postClaimSwapHook }),
+          }),
+        );
+      } catch (error) {
+        records.push(
+          createRecord({
+            scope: "ACTION",
+            entityId: action.actionId,
+            wallet: action.wallet,
+            positionId: getActionPositionId(action),
+            actionId: action.actionId,
+            outcome: "MANUAL_REVIEW_REQUIRED",
+            detail:
+              error instanceof Error
+                ? error.message
+                : "Unexpected startup recovery error for reconciling action",
+          }),
+        );
+      }
     }
   }
 
@@ -578,17 +658,48 @@ export async function reconcilePortfolio(
   for (const wallet of wallets) {
     try {
       const snapshot = await input.dlmmGateway.listPositionsForWallet(wallet);
-      const snapshotIds = new Set(snapshot.positions.map((position) => position.positionId));
+      const snapshotById = new Map(
+        snapshot.positions.map((position) => [position.positionId, position]),
+      );
       const positionsForWallet = allPositions.filter(
-        (position) => position.wallet === wallet && shouldCheckSnapshot(position),
+        (position) =>
+          position.wallet === wallet && shouldCheckSnapshot(position),
       );
 
       for (const position of positionsForWallet) {
-        if (snapshotIds.has(position.positionId)) {
+        const liveSnapshot = snapshotById.get(position.positionId);
+        if (liveSnapshot !== undefined) {
+          const latestPosition = await input.stateRepository.get(
+            position.positionId,
+          );
+          if (
+            latestPosition !== null &&
+            shouldSyncLiveSnapshot(latestPosition)
+          ) {
+            const syncedPosition = mergeLiveSnapshotPosition({
+              localPosition: latestPosition,
+              snapshotPosition: liveSnapshot,
+              now,
+            });
+            await input.stateRepository.upsert(syncedPosition);
+            records.push(
+              createRecord({
+                scope: "POSITION",
+                entityId: syncedPosition.positionId,
+                wallet,
+                positionId: syncedPosition.positionId,
+                actionId: syncedPosition.lastWriteActionId,
+                outcome: "RECONCILED_OK",
+                detail: "Local open position synced from live DLMM snapshot",
+              }),
+            );
+          }
           continue;
         }
 
-        const latestPosition = await input.stateRepository.get(position.positionId);
+        const latestPosition = await input.stateRepository.get(
+          position.positionId,
+        );
         if (
           latestPosition === null ||
           latestPosition.status === "RECONCILIATION_REQUIRED" ||

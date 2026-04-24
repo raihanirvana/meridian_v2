@@ -60,6 +60,11 @@
   "deploy": {
     "defaultAmountSol": 0.25,
     "minAmountSol": 0.1,
+    "autoDeployFromShortlist": false,
+    "maxAutoDeploysPerCycle": 1,
+    "strategy": "bid_ask",
+    "binsBelow": 69,
+    "binsAbove": 0,
     "slippageBps": 300
   },
   "notifications": {

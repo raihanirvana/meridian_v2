@@ -7,6 +7,7 @@ import { AdapterHttpStatusError, AdapterResponseValidationError, AdapterTranspor
 import { JupiterApiSwapGateway } from "../../src/adapters/jupiter/JupiterApiSwapGateway.js";
 import { JupiterSolPriceGateway } from "../../src/adapters/pricing/JupiterSolPriceGateway.js";
 import { HttpScreeningGateway } from "../../src/adapters/screening/HttpScreeningGateway.js";
+import { MeteoraPoolDiscoveryScreeningGateway } from "../../src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
 import { HttpTelegramOperatorGateway } from "../../src/adapters/telegram/HttpTelegramOperatorGateway.js";
 import { SolanaRpcWalletGateway } from "../../src/adapters/wallet/SolanaRpcWalletGateway.js";
 
@@ -365,6 +366,113 @@ describe("real adapters", () => {
 
     expect(requestedUrl).toContain("timeframe=1h");
     expect(requestedUrl).toContain("limit=5");
+  });
+
+  it("maps Meteora Pool Discovery pools into screening candidates", async () => {
+    let requestedUrl = "";
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      now: () => "2026-04-24T00:00:00.000Z",
+      fetchFn: async (url) => {
+        requestedUrl = String(url);
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                pool_address: "pool_001",
+                name: "MEME-SOL",
+                active_tvl: 25_000,
+                volume: 80_000,
+                fee: 250,
+                fee_active_tvl_ratio: 1,
+                volume_change_pct: 12,
+                base_token_holders: 1_200,
+                dlmm_params: { bin_step: 100 },
+                token_x: {
+                  address: "mint_meme",
+                  symbol: "MEME",
+                  organic_score: 72,
+                  market_cap: 500_000,
+                  created_at: "2026-04-23T00:00:00.000Z",
+                  dev: "deployer_001",
+                },
+                token_y: {
+                  address: "So11111111111111111111111111111111111111112",
+                  symbol: "SOL",
+                  organic_score: 90,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const candidates = await screening.listCandidates({
+      limit: 3,
+      timeframe: "5m",
+    });
+
+    expect(new URL(requestedUrl).searchParams.get("timeframe")).toBe("5m");
+    expect(new URL(requestedUrl).searchParams.get("category")).toBe("trending");
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.poolAddress).toBe("pool_001");
+    expect(candidates[0]?.tokenRiskSnapshot.tokenXMint).toBe("mint_meme");
+    expect(candidates[0]?.screeningSnapshot.binStep).toBe(100);
+    expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBe(1);
+    expect(candidates[0]?.smartMoneySnapshot.tokenAgeHours).toBe(24);
+  });
+
+  it("maps Meteora Pool Discovery details for enrichment", async () => {
+    let filterBy: string | null = null;
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      now: () => "2026-04-24T00:00:00.000Z",
+      fetchFn: async (url) => {
+        const parsedUrl = new URL(String(url));
+        filterBy = parsedUrl.searchParams.get("filter_by");
+        return new Response(
+          JSON.stringify([
+            {
+              pool_address: "pool_001",
+              name: "MEME-SOL",
+              active_tvl: 25_000,
+              volume: 80_000,
+              fee_active_tvl_ratio: 1.2,
+              fee_per_tvl_24h: 1.4,
+              volume_change_pct: 18,
+              base_token_holders: 1_500,
+              dlmm_params: { bin_step: 100 },
+              token_x: {
+                address: "mint_meme",
+                symbol: "MEME",
+                organic_score: 74,
+                market_cap: 600_000,
+                created_at: "2026-04-22T00:00:00.000Z",
+              },
+              token_y: {
+                address: "So11111111111111111111111111111111111111112",
+                symbol: "SOL",
+              },
+            },
+          ]),
+          { status: 200 },
+        );
+      },
+    });
+
+    await expect(screening.getCandidateDetails("pool_001")).resolves.toMatchObject({
+      poolAddress: "pool_001",
+      pairLabel: "MEME-SOL",
+      feeToTvlRatio: 1.2,
+      feePerTvl24h: 1.4,
+      volumeTrendPct: 18,
+      organicScore: 74,
+      holderCount: 1_500,
+      tokenAgeHours: 48,
+    });
+    expect(filterBy).toBe("pool_address=pool_001");
   });
 
   it("treats DLMM 404 getPosition as null to preserve reconciliation semantics", async () => {

@@ -7,6 +7,7 @@ import type { TokenIntelGateway } from "../adapters/analytics/TokenIntelGateway.
 import type { WalletGateway } from "../adapters/wallet/WalletGateway.js";
 import type { SwapGateway } from "../adapters/jupiter/SwapGateway.js";
 import type { Action } from "../domain/entities/Action.js";
+import type { Candidate } from "../domain/entities/Candidate.js";
 import type { PortfolioState } from "../domain/entities/PortfolioState.js";
 import type {
   ManagementEvaluationResult,
@@ -14,13 +15,12 @@ import type {
   ManagementSignals,
 } from "../domain/rules/managementRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
-import type {
-  PortfolioRiskPolicy,
-} from "../domain/rules/riskRules.js";
+import type { PortfolioRiskPolicy } from "../domain/rules/riskRules.js";
 import type { UserConfig } from "../infra/config/configSchema.js";
 import { createLogger } from "../infra/logging/logger.js";
 import type { Position } from "../domain/entities/Position.js";
 import type { RuntimeStores } from "./createRuntimeStores.js";
+import { buildPortfolioState } from "../app/services/PortfolioStateBuilder.js";
 import { processActionQueue } from "../app/usecases/processActionQueue.js";
 import { processCloseAction } from "../app/usecases/processCloseAction.js";
 import { processClaimFeesAction } from "../app/usecases/processClaimFeesAction.js";
@@ -33,6 +33,10 @@ import { runScreeningWorker } from "../app/workers/screeningWorker.js";
 import { runStartupRecoveryChecklist } from "../app/usecases/runStartupRecoveryChecklist.js";
 import type { RunScreeningCycleResult } from "../app/usecases/runScreeningCycle.js";
 import type { RebalanceActionRequestPayload } from "../app/usecases/requestRebalance.js";
+import {
+  requestDeploy,
+  type DeployActionRequestPayload,
+} from "../app/usecases/requestDeploy.js";
 import type { LessonPromptService } from "../app/services/LessonPromptService.js";
 import { DefaultPolicyProvider } from "../app/services/PolicyProvider.js";
 import { DefaultSignalWeightsProvider } from "../app/services/SignalWeightsProvider.js";
@@ -44,6 +48,7 @@ export interface RuntimeSupervisorInput {
     risk: PortfolioRiskPolicy;
     screening: UserConfig["screening"];
     managementPolicy: ManagementPolicy;
+    deploy: UserConfig["deploy"];
     claim: UserConfig["claim"];
     ai: UserConfig["ai"];
     poolMemory: UserConfig["poolMemory"];
@@ -113,13 +118,106 @@ export interface RuntimeSupervisor {
   }>;
 }
 
-export interface CreateRuntimeSupervisorFromUserConfigInput
-  extends Omit<RuntimeSupervisorInput, "config"> {
+export interface CreateRuntimeSupervisorFromUserConfigInput extends Omit<
+  RuntimeSupervisorInput,
+  "config"
+> {
   userConfig: UserConfig;
 }
 
 function nowIso(now?: () => string): string {
   return now?.() ?? new Date().toISOString();
+}
+
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+
+const TERMINAL_ACTION_STATUSES = new Set<Action["status"]>([
+  "DONE",
+  "FAILED",
+  "ABORTED",
+  "TIMED_OUT",
+]);
+
+function asOptionalNumberFromRecord(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function asOptionalStringFromRecord(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
+}
+
+function buildAutoDeployPayload(input: {
+  candidate: Candidate;
+  poolInfo: Awaited<ReturnType<DlmmGateway["getPoolInfo"]>>;
+  deployConfig: UserConfig["deploy"];
+  solPriceUsd: number;
+}): DeployActionRequestPayload {
+  const tokenXMint = asOptionalStringFromRecord(
+    input.candidate.tokenRiskSnapshot,
+    "tokenXMint",
+  );
+  const tokenYMint = asOptionalStringFromRecord(
+    input.candidate.tokenRiskSnapshot,
+    "tokenYMint",
+  );
+  if (tokenXMint === undefined || tokenYMint === undefined) {
+    throw new Error("shortlisted candidate is missing token mints");
+  }
+
+  const amountBase =
+    tokenXMint === SOL_MINT ? input.deployConfig.defaultAmountSol : 0;
+  const amountQuote =
+    tokenYMint === SOL_MINT ? input.deployConfig.defaultAmountSol : 0;
+  if (amountBase <= 0 && amountQuote <= 0) {
+    throw new Error("auto deploy currently only supports SOL-paired pools");
+  }
+
+  const activeBin = input.poolInfo.activeBin;
+  const rangeLowerBin = activeBin - input.deployConfig.binsBelow;
+  const rangeUpperBin = activeBin + input.deployConfig.binsAbove;
+  const feeTvlRatio = asOptionalNumberFromRecord(
+    input.candidate.screeningSnapshot,
+    "feeToTvlRatio",
+  );
+  const organicScore = asOptionalNumberFromRecord(
+    input.candidate.screeningSnapshot,
+    "organicScore",
+  );
+
+  return {
+    poolAddress: input.candidate.poolAddress,
+    tokenXMint,
+    tokenYMint,
+    baseMint: tokenXMint,
+    quoteMint: tokenYMint,
+    amountBase,
+    amountQuote,
+    slippageBps: input.deployConfig.slippageBps,
+    strategy: input.deployConfig.strategy,
+    rangeLowerBin,
+    rangeUpperBin,
+    initialActiveBin: activeBin,
+    estimatedValueUsd: input.deployConfig.defaultAmountSol * input.solPriceUsd,
+    entryMetadata: {
+      poolName: input.candidate.symbolPair,
+      binStep: input.poolInfo.binStep,
+      ...(feeTvlRatio === undefined ? {} : { feeTvlRatio }),
+      ...(organicScore === undefined ? {} : { organicScore }),
+      amountSol: input.deployConfig.defaultAmountSol,
+    },
+  };
 }
 
 export function createRuntimeSupervisor(
@@ -174,6 +272,231 @@ export function createRuntimeSupervisor(
     input.gateways.swapGateway === undefined
       ? undefined
       : createPostClaimSwapHook(input.gateways.swapGateway);
+
+  async function appendAutoDeployJournal(inputEvent: {
+    timestamp: string;
+    candidate: Candidate | null;
+    actionId: string | null;
+    resultStatus: string;
+    detail: string;
+    payload?: DeployActionRequestPayload;
+    error?: string | null;
+  }): Promise<void> {
+    await input.stores.journalRepository.append({
+      timestamp: inputEvent.timestamp,
+      eventType: "AUTO_DEPLOY_FROM_SHORTLIST",
+      actor: "system",
+      wallet: input.wallet,
+      positionId: null,
+      actionId: inputEvent.actionId,
+      before: null,
+      after: {
+        candidateId: inputEvent.candidate?.candidateId ?? null,
+        poolAddress: inputEvent.candidate?.poolAddress ?? null,
+        symbolPair: inputEvent.candidate?.symbolPair ?? null,
+        resultStatus: inputEvent.resultStatus,
+        detail: inputEvent.detail,
+        ...(inputEvent.payload === undefined
+          ? {}
+          : { requestPayload: inputEvent.payload }),
+      },
+      txIds: [],
+      resultStatus: inputEvent.resultStatus,
+      error: inputEvent.error ?? null,
+    });
+  }
+
+  async function maybeAutoDeployFromShortlist(
+    screening: RunScreeningCycleResult,
+  ): Promise<void> {
+    if (!input.config.deploy.autoDeployFromShortlist) {
+      return;
+    }
+
+    const timestamp = nowIso(input.now);
+    if (screening.shortlist.length === 0) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: null,
+        actionId: null,
+        resultStatus: "SKIPPED",
+        detail: "auto deploy skipped because shortlist is empty",
+      });
+      return;
+    }
+
+    if (
+      (await input.stores.runtimeControlStore.snapshot()).stopAllDeploys.active
+    ) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "BLOCKED",
+        detail: "auto deploy blocked by manual circuit breaker",
+        error: "manual circuit breaker is active",
+      });
+      return;
+    }
+
+    const portfolio = await buildPortfolioState({
+      wallet: input.wallet,
+      minReserveUsd: input.config.risk.minReserveUsd,
+      dailyLossLimitPct: input.config.risk.dailyLossLimitPct,
+      circuitBreakerCooldownMin: input.config.risk.circuitBreakerCooldownMin,
+      stateRepository: input.stores.stateRepository,
+      actionRepository: input.stores.actionRepository,
+      journalRepository: input.stores.journalRepository,
+      walletGateway: input.gateways.walletGateway,
+      priceGateway: input.gateways.priceGateway,
+      now: timestamp,
+    });
+    if (
+      portfolio.circuitBreakerState === "ON" ||
+      portfolio.circuitBreakerState === "COOLDOWN"
+    ) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "BLOCKED",
+        detail: `auto deploy blocked by portfolio circuit breaker ${portfolio.circuitBreakerState}`,
+        error: "portfolio circuit breaker is active",
+      });
+      return;
+    }
+    if (portfolio.openPositions >= input.config.risk.maxConcurrentPositions) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "BLOCKED",
+        detail: "auto deploy blocked by maxConcurrentPositions",
+        error: "max concurrent positions reached",
+      });
+      return;
+    }
+
+    const actions = await input.stores.actionRepository.list();
+    const pendingActions = actions.filter(
+      (action) =>
+        action.wallet === input.wallet &&
+        !TERMINAL_ACTION_STATUSES.has(action.status),
+    );
+    if (pendingActions.length > 0) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "SKIPPED",
+        detail: "auto deploy skipped because pending actions exist",
+      });
+      return;
+    }
+
+    const oneHourAgo = Date.parse(timestamp) - 60 * 60 * 1000;
+    const recentDeploys = actions.filter((action) => {
+      const requestedAtMs = Date.parse(action.requestedAt);
+      return (
+        action.wallet === input.wallet &&
+        action.type === "DEPLOY" &&
+        action.status !== "FAILED" &&
+        action.status !== "ABORTED" &&
+        action.status !== "TIMED_OUT" &&
+        Number.isFinite(requestedAtMs) &&
+        requestedAtMs >= oneHourAgo
+      );
+    });
+    if (recentDeploys.length >= input.config.risk.maxNewDeploysPerHour) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "BLOCKED",
+        detail: "auto deploy blocked by maxNewDeploysPerHour",
+        error: "hourly deploy limit reached",
+      });
+      return;
+    }
+
+    const solPrice = await input.gateways.priceGateway.getSolPriceUsd();
+    let deployedThisCycle = 0;
+    for (const candidate of screening.shortlist) {
+      if (deployedThisCycle >= input.config.deploy.maxAutoDeploysPerCycle) {
+        break;
+      }
+
+      try {
+        const poolInfo = await input.gateways.dlmmGateway.getPoolInfo(
+          candidate.poolAddress,
+        );
+        const payload = buildAutoDeployPayload({
+          candidate,
+          poolInfo,
+          deployConfig: input.config.deploy,
+          solPriceUsd: solPrice.priceUsd,
+        });
+
+        if (payload.estimatedValueUsd > portfolio.availableBalance) {
+          await appendAutoDeployJournal({
+            timestamp,
+            candidate,
+            actionId: null,
+            resultStatus: "BLOCKED",
+            detail: "auto deploy blocked by available balance",
+            payload,
+            error: "insufficient available balance after reserve",
+          });
+          continue;
+        }
+
+        if (input.config.runtime.dryRun) {
+          await appendAutoDeployJournal({
+            timestamp,
+            candidate,
+            actionId: null,
+            resultStatus: "DRY_RUN",
+            detail:
+              "runtime dryRun=true; auto deploy payload validated but not queued",
+            payload,
+          });
+          deployedThisCycle += 1;
+          continue;
+        }
+
+        const action = await requestDeploy({
+          actionQueue: input.stores.actionQueue,
+          wallet: input.wallet,
+          payload,
+          requestedBy: "system",
+          requestedAt: timestamp,
+          journalRepository: input.stores.journalRepository,
+          runtimeControlStore: input.stores.runtimeControlStore,
+        });
+        await appendAutoDeployJournal({
+          timestamp,
+          candidate,
+          actionId: action.actionId,
+          resultStatus: "QUEUED",
+          detail: "auto deploy queued from shortlist",
+          payload,
+        });
+        deployedThisCycle += 1;
+      } catch (error) {
+        await appendAutoDeployJournal({
+          timestamp,
+          candidate,
+          actionId: null,
+          resultStatus: "SKIPPED",
+          detail: "auto deploy candidate skipped",
+          error:
+            error instanceof Error
+              ? error.message
+              : "auto deploy candidate failed",
+        });
+      }
+    }
+  }
 
   async function runQueueHandler(action: Action) {
     switch (action.type) {
@@ -245,7 +568,7 @@ export function createRuntimeSupervisor(
         return null;
       }
 
-      return runScreeningWorker({
+      const screening = await runScreeningWorker({
         wallet: input.wallet,
         screeningGateway: input.gateways.screeningGateway,
         ...(input.gateways.tokenIntelGateway === undefined
@@ -275,6 +598,8 @@ export function createRuntimeSupervisor(
         triggerSource,
         ...(input.now === undefined ? {} : { now: input.now }),
       });
+      await maybeAutoDeployFromShortlist(screening);
+      return screening;
     },
 
     async runActionQueueTick() {
@@ -303,9 +628,8 @@ export function createRuntimeSupervisor(
         intervalSec: input.config.schedule.reconciliationIntervalSec,
         triggerSource,
         wallets: [input.wallet],
-        ...(postClaimSwapHook === undefined
-          ? {}
-          : { postClaimSwapHook }),
+        dryRun: input.config.runtime.dryRun,
+        ...(postClaimSwapHook === undefined ? {} : { postClaimSwapHook }),
         ...(input.now === undefined ? {} : { now: input.now }),
       });
     },
@@ -378,15 +702,17 @@ export function createRuntimeSupervisor(
 
     async runRecommendedCycle(cycleInput = {}) {
       const triggerSource = cycleInput.triggerSource ?? "cron";
-      const screening = cycleInput.includeScreening === false
-        ? null
-        : await this.runScreeningTick(triggerSource);
+      const screening =
+        cycleInput.includeScreening === false
+          ? null
+          : await this.runScreeningTick(triggerSource);
       const reconciliation = await this.runReconciliationTick(triggerSource);
       const management = await this.runManagementTick(triggerSource);
       const processedActions = await this.runActionQueueTick();
-      const reporting = cycleInput.includeReporting === false
-        ? null
-        : await this.runReportingTick(triggerSource);
+      const reporting =
+        cycleInput.includeReporting === false
+          ? null
+          : await this.runReportingTick(triggerSource);
 
       return {
         screening,
@@ -409,8 +735,10 @@ export function createRuntimeSupervisorFromUserConfig(
       screening: input.userConfig.screening,
       managementPolicy: {
         ...input.userConfig.management,
-        maxRebalancesPerPosition: input.userConfig.risk.maxRebalancesPerPosition,
+        maxRebalancesPerPosition:
+          input.userConfig.risk.maxRebalancesPerPosition,
       },
+      deploy: input.userConfig.deploy,
       claim: input.userConfig.claim,
       ai: input.userConfig.ai,
       poolMemory: input.userConfig.poolMemory,

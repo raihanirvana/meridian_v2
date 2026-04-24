@@ -290,6 +290,10 @@ export {
   type HttpScreeningGatewayOptions,
 } from "./adapters/screening/HttpScreeningGateway.js";
 export {
+  MeteoraPoolDiscoveryScreeningGateway,
+  type MeteoraPoolDiscoveryScreeningGatewayOptions,
+} from "./adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
+export {
   MockTokenIntelGateway,
   type MockTokenIntelGatewayBehaviors,
   SmartMoneySnapshotSchema,

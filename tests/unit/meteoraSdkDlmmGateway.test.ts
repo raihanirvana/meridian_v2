@@ -21,7 +21,7 @@ const {
   getAllLbPairPositionsByUserMock: vi.fn(),
   keypairFromSecretKeyMock: vi.fn(() => ({
     publicKey: {
-      toBase58: () => "wallet_pubkey",
+      toBase58: () => "wallet_001",
     },
   })),
   getParsedAccountInfoMock: vi.fn(async () => ({
@@ -305,6 +305,17 @@ describe("MeteoraSdkDlmmGateway", () => {
           wallet: "wallet_001",
         }),
     ).toThrow("WALLET_PRIVATE_KEY must decode to 64 bytes");
+  });
+
+  it("rejects wallet address mismatch between public wallet and signer key", () => {
+    expect(
+      () =>
+        new MeteoraSdkDlmmGateway({
+          rpcUrl: "https://rpc.example.com",
+          walletPrivateKey: JSON.stringify(new Array(64).fill(1)),
+          wallet: "wallet_other",
+        }),
+    ).toThrow("PUBLIC_WALLET_ADDRESS must match WALLET_PRIVATE_KEY");
   });
 
   it("fails before submit when transaction simulation reports an error", async () => {

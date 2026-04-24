@@ -361,7 +361,11 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
   public constructor(options: MeteoraSdkDlmmGatewayOptions) {
     this.connection = new Connection(options.rpcUrl, "confirmed");
     this.wallet = Keypair.fromSecretKey(decodeWalletPrivateKey(options.walletPrivateKey));
-    this.walletAddress = options.wallet ?? this.wallet.publicKey.toBase58();
+    const signerWallet = this.wallet.publicKey.toBase58();
+    if (options.wallet !== undefined && options.wallet !== signerWallet) {
+      throw new Error("PUBLIC_WALLET_ADDRESS must match WALLET_PRIVATE_KEY");
+    }
+    this.walletAddress = options.wallet ?? signerWallet;
     this.dataApiBaseUrl = normalizeBaseUrl(
       options.dataApiBaseUrl ?? DefaultDataApiBaseUrl,
     );

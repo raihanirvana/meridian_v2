@@ -5,11 +5,13 @@ Current batch: Batch 21 - Advanced exits and compounding automation
 Status: Complete
 
 ## Scope Batch 21
+
 - Add trailing take profit with persisted peak-PnL state on positions
 - Add queue-safe auto-compound on claim finalization (`CLAIM_FEES -> swap -> enqueue DEPLOY same pool`)
 - Make claim finalization/reconciliation able to resume compounding safely after interruption
 
 ## Completed
+
 - Native Meteora gateway hardening pass sudah masuk:
   - deploy slippage sekarang configurable via `deploy.slippageBps` / request-level `slippageBps`, dengan default konservatif 300 bps
   - Meteora data API sekarang lewat `JsonHttpClient` dengan timeout + adapter error normalization
@@ -599,11 +601,12 @@ Status: Complete
     - `npm run lint` ✅
 
 ## Pending
+
 - Tidak ada blocker fungsional aktif yang wajib ditutup sebelum masuk supervised live wiring berikutnya
 - Gap yang masih tersisa sekarang lebih ke scope/surface:
   - `screeningWorker`
   - management auto-dispatch untuk `CLAIM_FEES` / `PARTIAL_CLOSE`
-- Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](<c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1>) untuk deferred fixes dan keputusan desain
+- Lihat debt register terpisah di [DEBT_AND_DECISIONS.md](c:/Users/PC/Desktop/meridian_v2/progress/DEBT_AND_DECISIONS.md:1) untuk deferred fixes dan keputusan desain
 - Temuan low-priority sengaja ditunda dulu agar scope tetap ketat:
   - N4 orphan temp artifact cleanup
   - N6 optimasi syscall recovery check
@@ -614,6 +617,7 @@ Status: Complete
   - N11 semantik `outOfRangeSince`
 
 ## Decisions
+
 - V2 mengikuti PRD greenfield, bukan struktur repo lama
 - Progress note ini harus terus diupdate tiap batch untuk memudahkan handoff ke AI lain
 - Vitest perlu dijalankan di luar sandbox pada environment ini karena `esbuild` kena `spawn EPERM` di sandbox
@@ -629,6 +633,7 @@ Status: Complete
 - Di Batch 10, screening pipeline sengaja dipisah tegas menjadi hard filter dulu baru scoring, supaya AI layer nanti tidak bisa meng-override kandidat yang sudah gagal filter keras
 
 ## Next Recommended Step
+
 - Batch 22 — portfolio/operator polish atau parity lanjutan
 - Prioritas implementasi berikutnya:
   - partial-close pipeline resmi agar `N34` bisa ditutup
@@ -636,6 +641,7 @@ Status: Complete
   - parity knob/UX tambahan yang sudah masuk roadmap setelah Batch 21
 
 ## Handoff Notes
+
 - Repo ini awalnya kosong kecuali PRD
 - Jika test dijalankan di sandbox dan gagal `spawn EPERM`, rerun `npm test` dengan escalation
 - Jangan pakai repo lama sebagai source implementasi; pakai hanya untuk parity/spec bila diperlukan
@@ -682,4 +688,9 @@ Status: Complete
   - regression test gateway mengunci jalur post-tx receipt agar auto-swap dan auto-compound tidak lagi bergantung pada estimasi pre-tx saat receipt tersedia
   - dry-run runtime sekarang tidak memproses action queue, sehingga action manual/queued tidak bisa menembus ke write gateway saat `runtime.dryRun=true`
   - `runLive.ts` sekarang juga membaca `.env` untuk bootstrap env (`PUBLIC_WALLET_ADDRESS`, `DLMM_API_BASE_URL`, `METEORA_DLMM_DATA_API_BASE_URL`, interval env), bukan hanya untuk secrets
-- `npm test` terakhir hijau dengan total `243` tests passed
+  - reconciliation recovery juga sekarang dry-run aware untuk action `WAITING_CONFIRMATION` / `RECONCILING`, jadi dry-run tidak akan menjalankan confirm/finalize path yang bisa menulis on-chain
+  - native Meteora gateway sekarang menolak boot bila `PUBLIC_WALLET_ADDRESS` tidak cocok dengan public key dari `WALLET_PRIVATE_KEY`
+  - reconciliation snapshot sekarang menyinkronkan posisi lokal open/hold/review dari live DLMM snapshot, supaya management tidak membaca PnL/range/bin stale
+  - autonomous screening deploy sekarang tersedia via `deploy.autoDeployFromShortlist`; jika aktif dan runtime bukan dry-run, top shortlist akan diubah menjadi `DEPLOY` action resmi lewat queue, bukan direct write
+  - screening live sekarang bisa memakai Meteora Pool Discovery langsung bila `SCREENING_API_BASE_URL` kosong, sehingga autonomous shortlist tidak membutuhkan screening API custom seperti repo lama
+- `npm test` terakhir hijau dengan total `250` tests passed

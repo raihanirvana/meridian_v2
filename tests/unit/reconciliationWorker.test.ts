@@ -13,9 +13,7 @@ import { JournalRepository } from "../../src/adapters/storage/JournalRepository.
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
 import { runReconciliationWorker } from "../../src/app/workers/reconciliationWorker.js";
-import {
-  processDeployAction,
-} from "../../src/app/usecases/processDeployAction.js";
+import { processDeployAction } from "../../src/app/usecases/processDeployAction.js";
 import {
   requestDeploy,
   type DeployActionRequestPayload,
@@ -183,9 +181,9 @@ function buildGateway(
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -229,6 +227,70 @@ describe("reconciliation worker", () => {
           scope: "POSITION",
           entityId: "pos_missing",
           outcome: "REQUIRES_RETRY",
+        }),
+      ]),
+    );
+  });
+
+  it("syncs open local positions from live wallet snapshots before management reads them", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_live_sync"));
+
+    const liveSnapshot: Position = {
+      ...buildOpenPosition("pos_live_sync"),
+      currentValueUsd: 75,
+      feesClaimedUsd: 3,
+      unrealizedPnlUsd: -25,
+      rangeLowerBin: 11,
+      rangeUpperBin: 21,
+      activeBin: 9,
+      outOfRangeSince: "2026-04-20T00:10:00.000Z",
+      lastSyncedAt: "2026-04-20T00:10:00.000Z",
+    };
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [liveSnapshot],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedPosition = await stateRepository.get("pos_live_sync");
+
+    expect(persistedPosition?.status).toBe("OPEN");
+    expect(persistedPosition?.currentValueUsd).toBe(75);
+    expect(persistedPosition?.feesClaimedUsd).toBe(3);
+    expect(persistedPosition?.unrealizedPnlUsd).toBe(-25);
+    expect(persistedPosition?.rangeLowerBin).toBe(11);
+    expect(persistedPosition?.rangeUpperBin).toBe(21);
+    expect(persistedPosition?.activeBin).toBe(9);
+    expect(persistedPosition?.outOfRangeSince).toBe("2026-04-20T00:10:00.000Z");
+    expect(persistedPosition?.needsReconciliation).toBe(false);
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "POSITION",
+          entityId: "pos_live_sync",
+          outcome: "RECONCILED_OK",
+          detail: "Local open position synced from live DLMM snapshot",
         }),
       ]),
     );
@@ -475,7 +537,9 @@ describe("reconciliation worker", () => {
     });
 
     const persistedAction = await actionRepository.get(action.actionId);
-    const persistedPosition = await stateRepository.get("pos_rebalance_pending");
+    const persistedPosition = await stateRepository.get(
+      "pos_rebalance_pending",
+    );
 
     expect(persistedAction?.status).toBe("TIMED_OUT");
     expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
@@ -485,6 +549,95 @@ describe("reconciliation worker", () => {
           scope: "ACTION",
           entityId: action.actionId,
           outcome: "MANUAL_REVIEW_REQUIRED",
+        }),
+      ]),
+    );
+  });
+
+  it("skips waiting-confirmation action recovery in dry-run mode", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = buildGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_dry_waiting",
+          txIds: ["tx_dry_waiting"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:01:00.000Z",
+      }),
+    );
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "error",
+          error: new Error("dry-run recovery should not query confirmation"),
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+      }),
+      journalRepository,
+      dryRun: true,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "ACTION",
+          entityId: action.actionId,
+          outcome: "REQUIRES_RETRY",
+          detail:
+            "Dry-run reconciliation skipped WAITING_CONFIRMATION recovery to prevent live writes",
         }),
       ]),
     );
