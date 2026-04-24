@@ -45,6 +45,7 @@ export const ClosePositionResultSchema = z.object({
 export const ClaimFeesRequestSchema = z.object({
   wallet: z.string().min(1),
   positionId: z.string().min(1),
+  baseMint: z.string().min(1).optional(),
 });
 
 export const ClaimFeesResultSchema = z.object({

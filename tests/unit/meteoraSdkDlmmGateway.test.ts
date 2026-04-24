@@ -183,6 +183,66 @@ describe("MeteoraSdkDlmmGateway", () => {
     );
   });
 
+  it("refuses deploy when live active bin is outside the requested range", async () => {
+    const pool = createPool({
+      getActiveBin: vi.fn(async () => ({ binId: 21 })),
+    });
+    poolCreateMock.mockResolvedValue(pool);
+    const gateway = createGateway();
+
+    await expect(
+      gateway.deployLiquidity({
+        wallet: "wallet_001",
+        poolAddress: "pool_001",
+        tokenXMint: "mint_x",
+        tokenYMint: "mint_y",
+        baseMint: "mint_x",
+        quoteMint: "mint_y",
+        amountBase: 1,
+        amountQuote: 1,
+        strategy: "bid_ask",
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        initialActiveBin: 15,
+      }),
+    ).rejects.toThrow(
+      "Refusing deploy: live active bin 21 outside requested range 10-20",
+    );
+    expect(
+      pool.initializePositionAndAddLiquidityByStrategy,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("refuses deploy when active bin drift exceeds the configured limit", async () => {
+    const pool = createPool({
+      getActiveBin: vi.fn(async () => ({ binId: 18 })),
+    });
+    poolCreateMock.mockResolvedValue(pool);
+    const gateway = createGateway({
+      maxActiveBinDrift: 2,
+    });
+
+    await expect(
+      gateway.deployLiquidity({
+        wallet: "wallet_001",
+        poolAddress: "pool_001",
+        tokenXMint: "mint_x",
+        tokenYMint: "mint_y",
+        baseMint: "mint_x",
+        quoteMint: "mint_y",
+        amountBase: 1,
+        amountQuote: 1,
+        strategy: "bid_ask",
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        initialActiveBin: 15,
+      }),
+    ).rejects.toThrow("Refusing deploy: active bin drift 3 exceeds limit 2");
+    expect(
+      pool.initializePositionAndAddLiquidityByStrategy,
+    ).not.toHaveBeenCalled();
+  });
+
   it("falls back to SDK with real token mints when Meteora data API is unavailable", async () => {
     const pool = createPool();
     poolCreateMock.mockResolvedValue(pool);
@@ -270,6 +330,32 @@ describe("MeteoraSdkDlmmGateway", () => {
     );
   });
 
+  it("does not ask removeLiquidity to claim again when pre-close fee claim succeeded", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    const gateway = createGateway();
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
+      value: "pool_001",
+      cachedAtMs: Date.now(),
+    });
+
+    await gateway.closePosition({
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      reason: "manual",
+    });
+
+    expect(pool.removeLiquidity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shouldClaimAndClose: false,
+      }),
+    );
+  });
+
   it("caches token decimals and simulates transactions before submit", async () => {
     const pool = createPool();
     poolCreateMock.mockResolvedValue(pool);
@@ -308,6 +394,39 @@ describe("MeteoraSdkDlmmGateway", () => {
     expect(getParsedAccountInfoMock).toHaveBeenCalledTimes(2);
     expect(simulateTransactionMock).toHaveBeenCalled();
     expect(sendAndConfirmTransactionMock).toHaveBeenCalled();
+  });
+
+  it("fails deploy when token decimals cannot be resolved", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    getParsedAccountInfoMock.mockResolvedValueOnce({
+      value: {
+        data: {
+          parsed: {
+            info: {},
+          },
+        },
+      },
+    });
+    const gateway = createGateway();
+
+    await expect(
+      gateway.deployLiquidity({
+        wallet: "wallet_001",
+        poolAddress: "pool_001",
+        tokenXMint: "mint_x",
+        tokenYMint: "mint_y",
+        baseMint: "mint_x",
+        quoteMint: "mint_y",
+        amountBase: 1,
+        amountQuote: 0,
+        strategy: "bid_ask",
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        initialActiveBin: 15,
+      }),
+    ).rejects.toThrow("Could not resolve token decimals for mint mint_x");
+    expect(sendAndConfirmTransactionMock).not.toHaveBeenCalled();
   });
 
   it("rejects wallet private keys that do not decode to 64 bytes", () => {
@@ -444,6 +563,59 @@ describe("MeteoraSdkDlmmGateway", () => {
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     });
+    expect(result.claimedBaseAmount).toBe(0.5);
+    expect(result.claimedBaseAmountSource).toBe("post_tx");
+  });
+
+  it("uses requested baseMint for claim accounting instead of assuming token X", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    sendAndConfirmTransactionMock.mockResolvedValue("tx_claim");
+    getParsedTransactionMock.mockResolvedValue({
+      meta: {
+        preTokenBalances: [
+          {
+            accountIndex: 3,
+            owner: "wallet_001",
+            mint: "mint_y",
+            uiTokenAmount: {
+              uiAmountString: "1.25",
+            },
+          },
+        ],
+        postTokenBalances: [
+          {
+            accountIndex: 3,
+            owner: "wallet_001",
+            mint: "mint_y",
+            uiTokenAmount: {
+              uiAmountString: "1.75",
+            },
+          },
+        ],
+      },
+    });
+    const gateway = createGateway({
+      fetchFn: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ pools: [] }), { status: 200 }),
+      ),
+    });
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
+      value: "pool_001",
+      cachedAtMs: Date.now(),
+    });
+
+    const result = await gateway.claimFees({
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      baseMint: "mint_y",
+    });
+
     expect(result.claimedBaseAmount).toBe(0.5);
     expect(result.claimedBaseAmountSource).toBe("post_tx");
   });

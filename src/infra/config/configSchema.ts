@@ -101,6 +101,7 @@ export const UserConfigSchema = z
         binsBelow: z.number().int().positive().default(69),
         binsAbove: z.number().int().nonnegative().default(0),
         slippageBps: z.number().int().positive().max(10_000).default(300),
+        maxActiveBinDrift: z.number().int().nonnegative().default(3),
       })
       .strict(),
     notifications: z

@@ -65,7 +65,8 @@
     "strategy": "bid_ask",
     "binsBelow": 69,
     "binsAbove": 0,
-    "slippageBps": 300
+    "slippageBps": 300,
+    "maxActiveBinDrift": 3
   },
   "notifications": {
     "telegramEnabled": false,

@@ -46,6 +46,7 @@ import {
 const DefaultDataApiBaseUrl = "https://dlmm.datapi.meteora.ag";
 const DefaultDataApiTimeoutMs = 15_000;
 const DefaultSlippageBps = 300;
+const DefaultMaxActiveBinDrift = 3;
 const PositionsCacheTtlMs = 5_000;
 const GatewayEntryCacheTtlMs = 60 * 60 * 1000;
 const WideRangeBinThreshold = 69;
@@ -142,6 +143,7 @@ export interface MeteoraSdkDlmmGatewayOptions {
   fetchFn?: FetchLike;
   timeoutMs?: number;
   defaultSlippageBps?: number;
+  maxActiveBinDrift?: number;
   now?: () => string;
 }
 
@@ -359,6 +361,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
   private readonly dataApiBaseUrl: string;
   private readonly dataApiClient: JsonHttpClient;
   private readonly defaultSlippageBps: number;
+  private readonly maxActiveBinDrift: number;
   private readonly now: () => string;
   private sdkModulePromise: Promise<MeteoraSdkModule> | null = null;
   private readonly poolCache = new Map<string, Promise<MeteoraPoolLike>>();
@@ -405,6 +408,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       },
     });
     this.defaultSlippageBps = options.defaultSlippageBps ?? DefaultSlippageBps;
+    this.maxActiveBinDrift =
+      options.maxActiveBinDrift ?? DefaultMaxActiveBinDrift;
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -441,6 +446,12 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     const { amountX, amountY } = resolveTokenAmounts(request);
     const { StrategyType } = await this.sdk();
     const pool = await this.getPool(parsed);
+    await this.assertDeployRangeMatchesLiveActiveBin({
+      pool,
+      lowerBin,
+      upperBin,
+      initialActiveBin: parsedRequest.initialActiveBin ?? null,
+    });
     const strategyType = toStrategyType(parsedRequest.strategy, StrategyType);
     const tokenXLamports = await this.toTokenAmountLamports(
       pool.lbPair.tokenXMint,
@@ -570,7 +581,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         fromBinId: writeState.lowerBin,
         toBinId: writeState.upperBin,
         bps: new BN(FullCloseBps),
-        shouldClaimAndClose: true,
+        shouldClaimAndClose: !preCloseFeesClaimed,
       });
       for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
         closeTxIds.push(
@@ -609,7 +620,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     );
     const pool = await this.getPool(poolAddress);
     const positionPubkey = new PublicKey(parsed.positionId);
-    const baseMint = pool.lbPair.tokenXMint.toBase58();
+    const baseMint =
+      parsed.baseMint ??
+      (await this.getPosition(parsed.positionId))?.baseMint ??
+      pool.lbPair.tokenXMint.toBase58();
     const claimAmountEstimate = await this.estimateClaimedBaseAmount(
       parsed.positionId,
       poolAddress,
@@ -1248,6 +1262,31 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     };
   }
 
+  private async assertDeployRangeMatchesLiveActiveBin(input: {
+    pool: MeteoraPoolLike;
+    lowerBin: number;
+    upperBin: number;
+    initialActiveBin: number | null;
+  }): Promise<void> {
+    const liveActiveBin = (await input.pool.getActiveBin()).binId;
+    if (liveActiveBin < input.lowerBin || liveActiveBin > input.upperBin) {
+      throw new Error(
+        `Refusing deploy: live active bin ${liveActiveBin} outside requested range ${input.lowerBin}-${input.upperBin}`,
+      );
+    }
+
+    if (input.initialActiveBin === null) {
+      return;
+    }
+
+    const drift = Math.abs(liveActiveBin - input.initialActiveBin);
+    if (drift > this.maxActiveBinDrift) {
+      throw new Error(
+        `Refusing deploy: active bin drift ${drift} exceeds limit ${this.maxActiveBinDrift}`,
+      );
+    }
+  }
+
   private async sdk(): Promise<MeteoraSdkModule> {
     if (this.sdkModulePromise === null) {
       this.sdkModulePromise =
@@ -1265,8 +1304,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     }
 
     const mintInfo = await this.connection.getParsedAccountInfo(mint);
+    if (mintInfo.value === null) {
+      throw new Error(`Token mint account not found: ${mintAddress}`);
+    }
+
     const parsedData = asRecord(asRecord(asRecord(mintInfo.value).data).parsed);
-    const decimals = asNumber(asRecord(parsedData.info).decimals) ?? 9;
+    const decimals = asNumber(asRecord(parsedData.info).decimals);
+    if (decimals === null) {
+      throw new Error(
+        `Could not resolve token decimals for mint ${mintAddress}`,
+      );
+    }
+
     this.decimalsByMint.set(mintAddress, decimals);
     return decimals;
   }

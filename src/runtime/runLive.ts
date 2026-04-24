@@ -536,6 +536,7 @@ async function main() {
           wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
           timeoutMs: runtimeEnv.DLMM_TIMEOUT_MS,
           defaultSlippageBps: config.user.deploy.slippageBps,
+          maxActiveBinDrift: config.user.deploy.maxActiveBinDrift,
           ...(runtimeEnv.METEORA_DLMM_DATA_API_BASE_URL === undefined
             ? {}
             : {

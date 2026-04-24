@@ -188,6 +188,7 @@ export async function processClaimFeesAction(
       await input.dlmmGateway.claimFees({
         wallet: input.action.wallet,
         positionId: input.action.positionId,
+        baseMint: currentPosition.baseMint,
       }),
     );
   } catch (error) {
