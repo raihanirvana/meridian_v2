@@ -36,12 +36,16 @@ export class SolanaRpcWalletGateway implements WalletGateway {
       adapterName: "SolanaRpcWalletGateway",
       baseUrl: options.rpcUrl,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
     });
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
-  public async getWalletBalance(wallet: string): Promise<WalletBalanceSnapshot> {
+  public async getWalletBalance(
+    wallet: string,
+  ): Promise<WalletBalanceSnapshot> {
     const parsedWallet = z.string().min(1).parse(wallet);
     const response = await this.client.request({
       method: "POST",

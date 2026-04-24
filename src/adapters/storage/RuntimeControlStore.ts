@@ -20,11 +20,16 @@ export const RuntimeControlStoreFileSchema = z
   .strict();
 
 export type RuntimeDeployControl = z.infer<typeof RuntimeDeployControlSchema>;
-export type RuntimeControlStoreFile = z.infer<typeof RuntimeControlStoreFileSchema>;
+export type RuntimeControlStoreFile = z.infer<
+  typeof RuntimeControlStoreFileSchema
+>;
 
 export interface RuntimeControlStore {
   snapshot(): Promise<RuntimeControlStoreFile>;
-  tripStopAllDeploys(input: { reason?: string; updatedAt: string }): Promise<RuntimeDeployControl>;
+  tripStopAllDeploys(input: {
+    reason?: string;
+    updatedAt: string;
+  }): Promise<RuntimeDeployControl>;
   clearStopAllDeploys(updatedAt: string): Promise<RuntimeDeployControl>;
 }
 
@@ -45,7 +50,10 @@ function formatZodError(error: z.ZodError): string {
     .join("; ");
 }
 
-function parseStore(raw: string | null, filePath: string): RuntimeControlStoreFile {
+function parseStore(
+  raw: string | null,
+  filePath: string,
+): RuntimeControlStoreFile {
   if (raw === null) {
     return RuntimeControlStoreFileSchema.parse({
       stopAllDeploys: { active: false },
@@ -64,7 +72,10 @@ function parseStore(raw: string | null, filePath: string): RuntimeControlStoreFi
 
   const validated = RuntimeControlStoreFileSchema.safeParse(parsed);
   if (!validated.success) {
-    throw new RuntimeControlStoreCorruptError(filePath, formatZodError(validated.error));
+    throw new RuntimeControlStoreCorruptError(
+      filePath,
+      formatZodError(validated.error),
+    );
   }
 
   return validated.data;
@@ -75,9 +86,10 @@ export class FileRuntimeControlStore implements RuntimeControlStore {
   private readonly filePath: string;
 
   public constructor(options: RuntimeControlStoreOptions) {
-    this.fileStore = options.fs === undefined
-      ? new FileStore()
-      : new FileStore({ fs: options.fs });
+    this.fileStore =
+      options.fs === undefined
+        ? new FileStore()
+        : new FileStore({ fs: options.fs });
     this.filePath = options.filePath;
   }
 
@@ -108,7 +120,9 @@ export class FileRuntimeControlStore implements RuntimeControlStore {
     return RuntimeDeployControlSchema.parse(snapshot);
   }
 
-  public async clearStopAllDeploys(updatedAt: string): Promise<RuntimeDeployControl> {
+  public async clearStopAllDeploys(
+    updatedAt: string,
+  ): Promise<RuntimeDeployControl> {
     let snapshot: RuntimeDeployControl | null = null;
     await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
       const current = parseStore(raw, this.filePath);

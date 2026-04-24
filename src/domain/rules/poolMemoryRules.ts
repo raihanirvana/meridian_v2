@@ -98,7 +98,8 @@ export function applyCooldownFilter<T extends { poolAddress: string }>(input: {
   const nowMs = Date.parse(input.now);
 
   return input.candidates.filter((candidate) => {
-    const cooldownUntil = input.poolMemoryMap[candidate.poolAddress]?.cooldownUntil;
+    const cooldownUntil =
+      input.poolMemoryMap[candidate.poolAddress]?.cooldownUntil;
     if (cooldownUntil === undefined) {
       return true;
     }

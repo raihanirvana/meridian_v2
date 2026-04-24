@@ -1,7 +1,5 @@
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
-import {
-  type PoolMemoryRepository,
-} from "../../adapters/storage/PoolMemoryRepository.js";
+import { type PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
 import {
   PoolDeploySchema,
   PoolMemoryEntrySchema,

@@ -1,4 +1,9 @@
-import { Connection, Keypair, PublicKey, sendAndConfirmTransaction } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  sendAndConfirmTransaction,
+} from "@solana/web3.js";
 import BN from "bn.js";
 import bs58 from "bs58";
 import { z } from "zod";
@@ -10,7 +15,10 @@ import {
   JsonHttpClient,
   type FetchLike,
 } from "../http/HttpJsonClient.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import {
   ClaimFeesRequestSchema,
   ClaimFeesResultSchema,
@@ -48,11 +56,19 @@ type StrategyTypeValue = unknown;
 
 interface MeteoraSdkModule {
   default: {
-    create(connection: Connection, poolAddress: PublicKey): Promise<MeteoraPoolLike>;
+    create(
+      connection: Connection,
+      poolAddress: PublicKey,
+    ): Promise<MeteoraPoolLike>;
     getAllLbPairPositionsByUser(
       connection: Connection,
       user: PublicKey,
-    ): Promise<Record<string, { lbPairPositionsData?: Array<{ publicKey: { toString(): string } }> }>>;
+    ): Promise<
+      Record<
+        string,
+        { lbPairPositionsData?: Array<{ publicKey: { toString(): string } }> }
+      >
+    >;
   };
   StrategyType: {
     Spot: StrategyTypeValue;
@@ -267,10 +283,11 @@ function toStrategyType(
   }
 }
 
-function inferInitialActiveBin(
-  request: DeployLiquidityRequest,
-): number {
-  if (request.initialActiveBin !== undefined && request.initialActiveBin !== null) {
+function inferInitialActiveBin(request: DeployLiquidityRequest): number {
+  if (
+    request.initialActiveBin !== undefined &&
+    request.initialActiveBin !== null
+  ) {
     return request.initialActiveBin;
   }
 
@@ -346,21 +363,30 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
   private sdkModulePromise: Promise<MeteoraSdkModule> | null = null;
   private readonly poolCache = new Map<string, Promise<MeteoraPoolLike>>();
   private readonly decimalsByMint = new Map<string, number>();
-  private readonly poolByPositionId = new Map<string, TimestampedValue<string>>();
-  private readonly recentDeploys = new Map<string, TimestampedValue<DeployLiquidityRequest>>();
-  private readonly claimedBaseByPositionId = new Map<string, TimestampedValue<number>>();
-  private openPositionsCache:
-    | {
-        wallet: string;
-        fetchedAtMs: number;
-        positions: Position[];
-        mapped: MappedApiPosition[];
-      }
-    | null = null;
+  private readonly poolByPositionId = new Map<
+    string,
+    TimestampedValue<string>
+  >();
+  private readonly recentDeploys = new Map<
+    string,
+    TimestampedValue<DeployLiquidityRequest>
+  >();
+  private readonly claimedBaseByPositionId = new Map<
+    string,
+    TimestampedValue<number>
+  >();
+  private openPositionsCache: {
+    wallet: string;
+    fetchedAtMs: number;
+    positions: Position[];
+    mapped: MappedApiPosition[];
+  } | null = null;
 
   public constructor(options: MeteoraSdkDlmmGatewayOptions) {
     this.connection = new Connection(options.rpcUrl, "confirmed");
-    this.wallet = Keypair.fromSecretKey(decodeWalletPrivateKey(options.walletPrivateKey));
+    this.wallet = Keypair.fromSecretKey(
+      decodeWalletPrivateKey(options.walletPrivateKey),
+    );
     const signerWallet = this.wallet.publicKey.toBase58();
     if (options.wallet !== undefined && options.wallet !== signerWallet) {
       throw new Error("PUBLIC_WALLET_ADDRESS must match WALLET_PRIVATE_KEY");
@@ -395,7 +421,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     const recentDeploy = this.recentDeploys.get(parsedPositionId);
     if (recentDeploy !== undefined) {
-      return this.buildSyntheticOpenPosition(parsedPositionId, recentDeploy.value);
+      return this.buildSyntheticOpenPosition(
+        parsedPositionId,
+        recentDeploy.value,
+      );
     }
 
     return null;
@@ -435,7 +464,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       );
       const createTxArray = Array.isArray(createTxs) ? createTxs : [createTxs];
       for (const [index, tx] of createTxArray.entries()) {
-        const signers = index === 0 ? [this.wallet, positionKeypair] : [this.wallet];
+        const signers =
+          index === 0 ? [this.wallet, positionKeypair] : [this.wallet];
         txIds.push(await this.sendTransactionWithPreflight(tx, signers));
       }
 
@@ -468,10 +498,12 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         },
         slippage: slippageBps,
       });
-      txIds.push(await this.sendTransactionWithPreflight(tx, [
-        this.wallet,
-        positionKeypair,
-      ]));
+      txIds.push(
+        await this.sendTransactionWithPreflight(tx, [
+          this.wallet,
+          positionKeypair,
+        ]),
+      );
     }
 
     const positionId = positionKeypair.publicKey.toBase58();
@@ -568,9 +600,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     });
   }
 
-  public async claimFees(
-    request: ClaimFeesRequest,
-  ): Promise<ClaimFeesResult> {
+  public async claimFees(request: ClaimFeesRequest): Promise<ClaimFeesResult> {
     this.pruneEphemeralCaches();
     const parsed = ClaimFeesRequestSchema.parse(request);
     const poolAddress = await this.lookupPoolAddressForPosition(
@@ -594,11 +624,12 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     for (const tx of claimTxs) {
       txIds.push(await this.sendTransactionWithPreflight(tx, [this.wallet]));
     }
-    const postTxClaimedBaseAmount = await this.resolveClaimedBaseAmountFromTransactions({
-      txIds,
-      wallet: parsed.wallet,
-      mint: baseMint,
-    });
+    const postTxClaimedBaseAmount =
+      await this.resolveClaimedBaseAmountFromTransactions({
+        txIds,
+        wallet: parsed.wallet,
+        mint: baseMint,
+      });
     const claimAmount =
       postTxClaimedBaseAmount === null
         ? claimAmountEstimate
@@ -662,7 +693,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     });
   }
 
-  public async listPositionsForWallet(wallet: string): Promise<WalletPositionsSnapshot> {
+  public async listPositionsForWallet(
+    wallet: string,
+  ): Promise<WalletPositionsSnapshot> {
     this.pruneEphemeralCaches();
     const parsedWallet = z.string().min(1).parse(wallet);
     const cache = this.openPositionsCache;
@@ -725,10 +758,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         rangeLowerBin: position.rangeLowerBin,
         rangeUpperBin: position.rangeUpperBin,
         activeBin: position.activeBin,
-        outOfRangeSince:
-          position.outOfRange === true
-            ? now
-            : null,
+        outOfRangeSince: position.outOfRange === true ? now : null,
         lastManagementDecision: null,
         lastManagementReason: null,
         lastWriteActionId: null,
@@ -764,15 +794,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       return PoolInfoSchema.parse({
         poolAddress: parsedPoolAddress,
         pairLabel:
-          (
-            asString(rawPool.name) ??
+          (asString(rawPool.name) ??
             [
               asString(rawPool.tokenX) ?? asString(rawPool.tokenXSymbol),
               asString(rawPool.tokenY) ?? asString(rawPool.tokenYSymbol),
             ]
               .filter((value) => value !== null)
-              .join("-")
-          ) ||
+              .join("-")) ||
           parsedPoolAddress,
         binStep:
           asNumber(rawPool.binStep) ??
@@ -803,7 +831,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     const loading = (async () => {
       const sdkModule = await this.sdk();
-      return sdkModule.default.create(this.connection, new PublicKey(poolAddress));
+      return sdkModule.default.create(
+        this.connection,
+        new PublicKey(poolAddress),
+      );
     })();
     this.poolCache.set(poolAddress, loading);
     return loading;
@@ -833,7 +864,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     wallet: string,
   ): Promise<MappedApiPosition[]> {
     const rawPortfolio = asRecord(
-      await this.fetchJson(`/portfolio/open?user=${encodeURIComponent(wallet)}`),
+      await this.fetchJson(
+        `/portfolio/open?user=${encodeURIComponent(wallet)}`,
+      ),
     );
     const pools = Array.isArray(rawPortfolio.pools) ? rawPortfolio.pools : [];
     const results: MappedApiPosition[] = [];
@@ -850,8 +883,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
           return;
         }
 
-        const pnlByPositionId = await this.fetchPoolPnlByPositionId(poolAddress, wallet);
-        const positionIds = Array.isArray(pool.listPositions) ? pool.listPositions : [];
+        const pnlByPositionId = await this.fetchPoolPnlByPositionId(
+          poolAddress,
+          wallet,
+        );
+        const positionIds = Array.isArray(pool.listPositions)
+          ? pool.listPositions
+          : [];
         for (const positionValue of positionIds) {
           const positionId = asString(positionValue);
           if (positionId === null) {
@@ -860,11 +898,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
           const pnl = pnlByPositionId.get(positionId) ?? {};
           const unrealized = asRecord(asRecord(pnl).unrealizedPnl);
-          const allTimeFees = asRecord(asRecord(asRecord(pnl).allTimeFees).total);
-          const symbolPair = [
-            asString(pool.tokenX),
-            asString(pool.tokenY),
-          ]
+          const allTimeFees = asRecord(
+            asRecord(asRecord(pnl).allTimeFees).total,
+          );
+          const symbolPair = [asString(pool.tokenX), asString(pool.tokenY)]
             .filter((value) => value !== null)
             .join("-");
           const activeBin =
@@ -885,24 +922,14 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
               asString(pool.mintY) ??
               `tokenY:${poolAddress}`,
             symbolPair: symbolPair.length > 0 ? symbolPair : poolAddress,
-            rangeLowerBin:
-              lowerBin ??
-              (activeBin ?? 0) - 1,
-            rangeUpperBin:
-              upperBin ??
-              (activeBin ?? 0) + 1,
+            rangeLowerBin: lowerBin ?? (activeBin ?? 0) - 1,
+            rangeUpperBin: upperBin ?? (activeBin ?? 0) + 1,
             activeBin: activeBin ?? null,
             currentValueUsd:
-              asNumber(unrealized.balances) ??
-              asNumber(pool.balances) ??
-              0,
-            feesClaimedUsd:
-              asNumber(allTimeFees.usd) ??
-              0,
+              asNumber(unrealized.balances) ?? asNumber(pool.balances) ?? 0,
+            feesClaimedUsd: asNumber(allTimeFees.usd) ?? 0,
             unrealizedPnlUsd:
-              asNumber(asRecord(pnl).pnlUsd) ??
-              asNumber(pool.pnl) ??
-              0,
+              asNumber(asRecord(pnl).pnlUsd) ?? asNumber(pool.pnl) ?? 0,
             ageMinutes: (() => {
               const createdAt = asNumber(asRecord(pnl).createdAt);
               if (createdAt === null) {
@@ -947,16 +974,16 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       const activeBinRecord = await pool.getActiveBin().catch(() => null);
       for (const position of poolData.lbPairPositionsData ?? []) {
         const positionId = position.publicKey.toString();
-        const positionSnapshot = await pool.getPosition(new PublicKey(positionId)).catch(
-          (error: unknown) => {
+        const positionSnapshot = await pool
+          .getPosition(new PublicKey(positionId))
+          .catch((error: unknown) => {
             throw new Error(
               `Meteora SDK could not load position ${positionId}: ${errorMessage(
                 error,
                 "unknown error",
               )}`,
             );
-          },
-        );
+          });
         results.push({
           positionId,
           poolAddress,
@@ -1054,8 +1081,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     const cache = this.openPositionsCache;
     if (cache !== null && cache.wallet === wallet) {
-      const existing = cache.mapped.find((position) => position.positionId === positionId);
-      if (existing?.claimedBaseAmount !== null && existing?.claimedBaseAmount !== undefined) {
+      const existing = cache.mapped.find(
+        (position) => position.positionId === positionId,
+      );
+      if (
+        existing?.claimedBaseAmount !== null &&
+        existing?.claimedBaseAmount !== undefined
+      ) {
         return {
           amount: Math.max(existing.claimedBaseAmount, 0),
           source: "pnl_estimate",
@@ -1063,7 +1095,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       }
     }
 
-    const pnl = (await this.fetchPoolPnlByPositionId(poolAddress, wallet)).get(positionId);
+    const pnl = (await this.fetchPoolPnlByPositionId(poolAddress, wallet)).get(
+      positionId,
+    );
     if (pnl !== undefined) {
       const amount = this.resolveClaimedBaseAmountFromPnl(
         pnl,
@@ -1168,7 +1202,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       }
     }
 
-    throw new Error(`Position ${positionId} not found in current Meteora open positions`);
+    throw new Error(
+      `Position ${positionId} not found in current Meteora open positions`,
+    );
   }
 
   private async loadWritablePositionState(
@@ -1214,7 +1250,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
   private async sdk(): Promise<MeteoraSdkModule> {
     if (this.sdkModulePromise === null) {
-      this.sdkModulePromise = import("@meteora-ag/dlmm") as unknown as Promise<MeteoraSdkModule>;
+      this.sdkModulePromise =
+        import("@meteora-ag/dlmm") as unknown as Promise<MeteoraSdkModule>;
     }
 
     return this.sdkModulePromise;
@@ -1234,7 +1271,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     return decimals;
   }
 
-  private async simulateOrThrow(tx: unknown, signers: Keypair[]): Promise<void> {
+  private async simulateOrThrow(
+    tx: unknown,
+    signers: Keypair[],
+  ): Promise<void> {
     const connectionWithSimulation = this.connection as Connection & {
       simulateTransaction?: (...args: unknown[]) => Promise<{
         value?: {
@@ -1272,11 +1312,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     let attempt = 0;
     while (true) {
       try {
-        return await sendAndConfirmTransaction(this.connection, tx as never, signers);
+        return await sendAndConfirmTransaction(
+          this.connection,
+          tx as never,
+          signers,
+        );
       } catch (error) {
         const message = errorMessage(error, "transaction send failed");
         const retryDelayMs = RpcSubmitRetryDelaysMs[attempt];
-        if (retryDelayMs === undefined || !this.isTransientRpcSubmitError(message)) {
+        if (
+          retryDelayMs === undefined ||
+          !this.isTransientRpcSubmitError(message)
+        ) {
           throw error;
         }
 
@@ -1361,10 +1408,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     let transaction: unknown;
     try {
-      transaction = await connectionWithParsedTx.getParsedTransaction(input.txId, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
+      transaction = await connectionWithParsedTx.getParsedTransaction(
+        input.txId,
+        {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        },
+      );
     } catch {
       return null;
     }
@@ -1384,7 +1434,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     ]);
     let delta = 0;
     for (const accountIndex of accountIndexes) {
-      delta += (postByAccount.get(accountIndex) ?? 0) -
+      delta +=
+        (postByAccount.get(accountIndex) ?? 0) -
         (preByAccount.get(accountIndex) ?? 0);
     }
 
@@ -1417,7 +1468,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     return result;
   }
 
-  private readUiTokenAmount(uiTokenAmount: Record<string, unknown>): number | null {
+  private readUiTokenAmount(
+    uiTokenAmount: Record<string, unknown>,
+  ): number | null {
     const directAmount =
       asNumber(uiTokenAmount.uiAmount) ??
       asNumber(uiTokenAmount.uiAmountString);

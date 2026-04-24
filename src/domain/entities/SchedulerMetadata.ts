@@ -52,7 +52,9 @@ export const SchedulerMetadataSchema = z
   .strict();
 
 export type SchedulerWorkerName = z.infer<typeof SchedulerWorkerNameSchema>;
-export type SchedulerTriggerSource = z.infer<typeof SchedulerTriggerSourceSchema>;
+export type SchedulerTriggerSource = z.infer<
+  typeof SchedulerTriggerSourceSchema
+>;
 export type SchedulerWorkerRunStatus = z.infer<
   typeof SchedulerWorkerRunStatusSchema
 >;

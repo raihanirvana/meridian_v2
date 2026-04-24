@@ -100,8 +100,8 @@ function buildRiskPolicy(
     maxConcurrentPositions: 3,
     maxCapitalUsagePct: 80,
     minReserveUsd: 10,
-    maxTokenExposurePct: 45,
-    maxPoolExposurePct: 45,
+    maxTokenExposurePct: 80,
+    maxPoolExposurePct: 80,
     maxRebalancesPerPosition: 2,
     dailyLossLimitPct: 8,
     circuitBreakerCooldownMin: 180,
@@ -129,9 +129,9 @@ function buildDeployPayload() {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -265,7 +265,9 @@ describe("operator commands", () => {
       ...sharedInput,
       command: { kind: "POSITIONS" },
     });
-    expect(positionsResult.text).toMatch(/pos_001 \| OPEN \| pool_001 \| 20\.00/);
+    expect(positionsResult.text).toMatch(
+      /pos_001 \| OPEN \| pool_001 \| 20\.00/,
+    );
 
     const pendingResult = await executeOperatorCommand({
       ...sharedInput,
@@ -408,6 +410,64 @@ describe("operator commands", () => {
       "REBALANCE",
     ]);
     expect(actions.every((action) => action.status === "QUEUED")).toBe(true);
+  });
+
+  it("blocks manual deploy requests that violate portfolio risk guardrails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await expect(
+      handleCliOperatorCommand({
+        rawCommand: `deploy ${JSON.stringify(buildDeployPayload())}`,
+        wallet: "wallet_001",
+        actionQueue,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 5,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        riskPolicy: buildRiskPolicy({
+          maxCapitalUsagePct: 1,
+        }),
+        requestedBy: "operator",
+        requestedAt: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toThrow(/deploy blocked by risk guard/i);
+
+    expect(await actionRepository.list()).toEqual([]);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("DEPLOY_REQUEST_BLOCKED_BY_RISK");
   });
 
   it("telegram handler replies with the rendered result after queue-safe execution", async () => {
@@ -608,7 +668,9 @@ describe("operator commands", () => {
       journalRepository,
     });
 
-    expect(parseOperatorCommand({ raw: "circuit_breaker_trip market panic" })).toEqual({
+    expect(
+      parseOperatorCommand({ raw: "circuit_breaker_trip market panic" }),
+    ).toEqual({
       kind: "CIRCUIT_BREAKER_TRIP",
       reason: "market panic",
     });
@@ -653,7 +715,9 @@ describe("operator commands", () => {
     });
 
     expect(tripResult.text).toMatch(/activated/i);
-    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(true);
+    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(
+      true,
+    );
 
     await expect(
       handleCliOperatorCommand({
@@ -726,7 +790,9 @@ describe("operator commands", () => {
     });
 
     expect(clearResult.text).toMatch(/cleared/i);
-    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(false);
+    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(
+      false,
+    );
     expect(
       (await journalRepository.list()).map((event) => event.eventType),
     ).toEqual(

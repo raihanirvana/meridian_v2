@@ -64,7 +64,9 @@ export async function requestClose(input: RequestCloseInput) {
   const position = await input.stateRepository.get(input.positionId);
 
   if (position === null) {
-    throw new Error(`Position not found for close request: ${input.positionId}`);
+    throw new Error(
+      `Position not found for close request: ${input.positionId}`,
+    );
   }
 
   if (position.wallet !== input.wallet) {

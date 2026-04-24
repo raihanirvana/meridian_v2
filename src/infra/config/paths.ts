@@ -27,11 +27,20 @@ export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
     actionsFilePath: path.join(resolvedDataDir, "actions.json"),
     journalFilePath: path.join(resolvedDataDir, "journal.jsonl"),
     lessonsFilePath: path.join(resolvedDataDir, "lessons.json"),
-    policyOverridesFilePath: path.join(resolvedDataDir, "policy-overrides.json"),
+    policyOverridesFilePath: path.join(
+      resolvedDataDir,
+      "policy-overrides.json",
+    ),
     poolMemoryFilePath: path.join(resolvedDataDir, "pool-memory.json"),
     signalWeightsFilePath: path.join(resolvedDataDir, "signal-weights.json"),
-    schedulerMetadataFilePath: path.join(resolvedDataDir, "scheduler-metadata.json"),
-    runtimeControlsFilePath: path.join(resolvedDataDir, "runtime-controls.json"),
+    schedulerMetadataFilePath: path.join(
+      resolvedDataDir,
+      "scheduler-metadata.json",
+    ),
+    runtimeControlsFilePath: path.join(
+      resolvedDataDir,
+      "runtime-controls.json",
+    ),
   };
 }
 

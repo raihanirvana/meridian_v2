@@ -22,11 +22,7 @@ export const LessonOutcomeSchema = z.enum([
   "evolution",
 ]);
 
-export const LessonRoleSchema = z.enum([
-  "SCREENER",
-  "MANAGER",
-  "GENERAL",
-]);
+export const LessonRoleSchema = z.enum(["SCREENER", "MANAGER", "GENERAL"]);
 
 export const PositionStatusSchema = z.enum([
   "DRAFT",
@@ -107,11 +103,7 @@ export const DrawdownStateSchema = z.enum([
   "LIMIT_REACHED",
 ]);
 
-export const CircuitBreakerStateSchema = z.enum([
-  "OFF",
-  "ON",
-  "COOLDOWN",
-]);
+export const CircuitBreakerStateSchema = z.enum(["OFF", "ON", "COOLDOWN"]);
 
 export type Actor = z.infer<typeof ActorSchema>;
 export type Strategy = z.infer<typeof StrategySchema>;

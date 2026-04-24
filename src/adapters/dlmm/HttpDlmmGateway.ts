@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import {
   AdapterHttpStatusError,
   JsonHttpClient,
@@ -48,7 +51,9 @@ export class HttpDlmmGateway implements DlmmGateway {
       adapterName: "HttpDlmmGateway",
       baseUrl: options.baseUrl,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       defaultHeaders:
         options.apiKey === undefined
           ? {}
@@ -64,10 +69,7 @@ export class HttpDlmmGateway implements DlmmGateway {
         responseSchema: NullablePositionSchema,
       });
     } catch (error) {
-      if (
-        error instanceof AdapterHttpStatusError &&
-        error.status === 404
-      ) {
+      if (error instanceof AdapterHttpStatusError && error.status === 404) {
         return null;
       }
 
@@ -97,9 +99,7 @@ export class HttpDlmmGateway implements DlmmGateway {
     });
   }
 
-  public async claimFees(
-    request: ClaimFeesRequest,
-  ): Promise<ClaimFeesResult> {
+  public async claimFees(request: ClaimFeesRequest): Promise<ClaimFeesResult> {
     return this.client.request({
       method: "POST",
       path: "/positions/claim-fees",

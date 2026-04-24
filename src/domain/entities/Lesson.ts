@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  LessonOutcomeSchema,
-  LessonRoleSchema,
-} from "../types/enums.js";
+import { LessonOutcomeSchema, LessonRoleSchema } from "../types/enums.js";
 import { UlidSchema } from "../types/schemas.js";
 
 const TimestampSchema = z.string().datetime();
@@ -25,7 +22,13 @@ export const LessonSchema = z
   .strict()
   .transform((lesson) => ({
     ...lesson,
-    tags: [...new Set(lesson.tags.map((tag) => tag.toLowerCase().trim()).filter((tag) => tag.length > 0))],
+    tags: [
+      ...new Set(
+        lesson.tags
+          .map((tag) => tag.toLowerCase().trim())
+          .filter((tag) => tag.length > 0),
+      ),
+    ],
   }));
 
 export type Lesson = z.infer<typeof LessonSchema>;

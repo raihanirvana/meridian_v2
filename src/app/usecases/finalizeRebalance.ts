@@ -11,7 +11,10 @@ import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlS
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
@@ -21,9 +24,7 @@ import {
   resolveOutOfRangeSince,
 } from "../services/AccountingService.js";
 
-import {
-  RebalanceCloseSubmittedPayloadSchema,
-} from "./processRebalanceAction.js";
+import { RebalanceCloseSubmittedPayloadSchema } from "./processRebalanceAction.js";
 import {
   RebalanceActionRequestPayloadSchema,
   deriveRebalanceCapitalRequirement,
@@ -66,12 +67,15 @@ export const RebalanceAbortedPayloadSchema = z
   })
   .strict();
 
-export const RebalanceActionResultPayloadSchema = z.discriminatedUnion("phase", [
-  RebalanceCloseSubmittedPayloadSchema,
-  RebalanceRedeploySubmittedPayloadSchema,
-  RebalanceCompletedPayloadSchema,
-  RebalanceAbortedPayloadSchema,
-]);
+export const RebalanceActionResultPayloadSchema = z.discriminatedUnion(
+  "phase",
+  [
+    RebalanceCloseSubmittedPayloadSchema,
+    RebalanceRedeploySubmittedPayloadSchema,
+    RebalanceCompletedPayloadSchema,
+    RebalanceAbortedPayloadSchema,
+  ],
+);
 
 type RebalanceCloseSubmittedPayload = z.infer<
   typeof RebalanceCloseSubmittedPayloadSchema
@@ -79,7 +83,9 @@ type RebalanceCloseSubmittedPayload = z.infer<
 type RebalanceRedeploySubmittedPayload = z.infer<
   typeof RebalanceRedeploySubmittedPayloadSchema
 >;
-type RebalanceCompletedPayload = z.infer<typeof RebalanceCompletedPayloadSchema>;
+type RebalanceCompletedPayload = z.infer<
+  typeof RebalanceCompletedPayloadSchema
+>;
 type RebalanceAbortedPayload = z.infer<typeof RebalanceAbortedPayloadSchema>;
 
 export interface FinalizeRebalanceInput {
@@ -120,9 +126,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -173,9 +179,11 @@ function buildCloseConfirmedPosition(input: {
   now: string;
 }): Position {
   const rangeLowerBin =
-    input.confirmedPosition.rangeLowerBin ?? input.closingPosition.rangeLowerBin;
+    input.confirmedPosition.rangeLowerBin ??
+    input.closingPosition.rangeLowerBin;
   const rangeUpperBin =
-    input.confirmedPosition.rangeUpperBin ?? input.closingPosition.rangeUpperBin;
+    input.confirmedPosition.rangeUpperBin ??
+    input.closingPosition.rangeUpperBin;
   const activeBin =
     input.confirmedPosition.activeBin ?? input.closingPosition.activeBin;
   const closeConfirmedStatus = transitionPositionStatus(
@@ -213,7 +221,10 @@ function inferCloseConfirmedPosition(
   actionId: string,
   now: string,
 ): Position | null {
-  if (confirmedPosition !== null && confirmedPosition.status === "CLOSE_CONFIRMED") {
+  if (
+    confirmedPosition !== null &&
+    confirmedPosition.status === "CLOSE_CONFIRMED"
+  ) {
     return confirmedPosition;
   }
 
@@ -221,12 +232,10 @@ function inferCloseConfirmedPosition(
     useOpenOnlyReadModel &&
     confirmedPosition === null &&
     closingPosition !== null &&
-    (
-      closingPosition.status === "CLOSING_FOR_REBALANCE" ||
+    (closingPosition.status === "CLOSING_FOR_REBALANCE" ||
       closingPosition.status === "CLOSE_CONFIRMED" ||
       closingPosition.status === "RECONCILING" ||
-      closingPosition.status === "CLOSED"
-    )
+      closingPosition.status === "CLOSED")
   ) {
     return buildCloseConfirmedPosition({
       confirmedPosition: closingPosition,
@@ -276,7 +285,10 @@ function buildReconciliationRequiredPosition(
 ): Position {
   return PositionSchema.parse({
     ...position,
-    status: transitionPositionStatus(position.status, "RECONCILIATION_REQUIRED"),
+    status: transitionPositionStatus(
+      position.status,
+      "RECONCILIATION_REQUIRED",
+    ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: true,
@@ -289,7 +301,9 @@ function buildPendingRedeployPosition(input: {
   redeployResult: z.infer<typeof DeployActionResultPayloadSchema>;
   now: string;
 }): Position {
-  const payload = RebalanceActionRequestPayloadSchema.parse(input.action.requestPayload);
+  const payload = RebalanceActionRequestPayloadSchema.parse(
+    input.action.requestPayload,
+  );
   const redeployingStatus = transitionPositionStatus(
     "REDEPLOY_REQUESTED",
     "REDEPLOYING",
@@ -341,9 +355,11 @@ function buildOpenRedeployedPosition(input: {
   now: string;
 }): Position {
   const rangeLowerBin =
-    input.confirmedPosition.rangeLowerBin ?? input.pendingPosition.rangeLowerBin;
+    input.confirmedPosition.rangeLowerBin ??
+    input.pendingPosition.rangeLowerBin;
   const rangeUpperBin =
-    input.confirmedPosition.rangeUpperBin ?? input.pendingPosition.rangeUpperBin;
+    input.confirmedPosition.rangeUpperBin ??
+    input.pendingPosition.rangeUpperBin;
   const activeBin =
     input.confirmedPosition.activeBin ?? input.pendingPosition.activeBin;
 
@@ -453,7 +469,9 @@ async function finalizeCloseLeg(input: {
   closeAccounting: Record<string, unknown>;
   availableCapitalUsd: number;
 }> {
-  const closingPosition = await input.stateRepository.get(input.latestAction.positionId);
+  const closingPosition = await input.stateRepository.get(
+    input.latestAction.positionId,
+  );
   const confirmedPosition = await input.dlmmGateway.getPosition(
     input.latestAction.positionId,
   );
@@ -566,7 +584,9 @@ export async function finalizeRebalance(
         latestAction.status === "FAILED" ||
         latestAction.status === "ABORTED"
       ) {
-        const newPositionId = getNewPositionIdFromPayload(latestAction.resultPayload);
+        const newPositionId = getNewPositionIdFromPayload(
+          latestAction.resultPayload,
+        );
         return {
           action: latestAction,
           oldPosition: await input.stateRepository.get(latestAction.positionId),
@@ -963,9 +983,8 @@ export async function finalizeRebalance(
         const newPositionId = latestPayload.redeployResult.positionId;
 
         return positionLock.withLock(newPositionId, async () => {
-          const latestActionAfterRedeployLock = await input.actionRepository.get(
-            latestAction.actionId,
-          );
+          const latestActionAfterRedeployLock =
+            await input.actionRepository.get(latestAction.actionId);
           if (latestActionAfterRedeployLock === null) {
             throw new Error(
               `Rebalance action disappeared during redeploy confirmation: ${latestAction.actionId}`,
@@ -990,8 +1009,10 @@ export async function finalizeRebalance(
             };
           }
 
-          const pendingPosition = await input.stateRepository.get(newPositionId);
-          const confirmedPosition = await input.dlmmGateway.getPosition(newPositionId);
+          const pendingPosition =
+            await input.stateRepository.get(newPositionId);
+          const confirmedPosition =
+            await input.dlmmGateway.getPosition(newPositionId);
           const oldPosition = await input.stateRepository.get(
             latestActionAfterRedeployLock.positionId,
           );

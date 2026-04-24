@@ -12,7 +12,9 @@ import {
   type PortfolioRiskPolicy,
 } from "../../src/domain/rules/riskRules.js";
 
-function buildPortfolio(overrides: Partial<PortfolioState> = {}): PortfolioState {
+function buildPortfolio(
+  overrides: Partial<PortfolioState> = {},
+): PortfolioState {
   return {
     walletBalance: 10,
     reservedBalance: 1,
@@ -28,7 +30,9 @@ function buildPortfolio(overrides: Partial<PortfolioState> = {}): PortfolioState
   };
 }
 
-function buildPolicy(overrides: Partial<PortfolioRiskPolicy> = {}): PortfolioRiskPolicy {
+function buildPolicy(
+  overrides: Partial<PortfolioRiskPolicy> = {},
+): PortfolioRiskPolicy {
   return {
     maxConcurrentPositions: 3,
     maxCapitalUsagePct: 80,
@@ -111,7 +115,9 @@ describe("risk rules", () => {
     });
 
     expect(deployResult.allowed).toBe(false);
-    expect(deployResult.blockingRules.join(" ")).toMatch(/daily realized loss/i);
+    expect(deployResult.blockingRules.join(" ")).toMatch(
+      /daily realized loss/i,
+    );
     expect(closeResult.allowed).toBe(true);
     expect(reconcileResult.allowed).toBe(true);
   });
@@ -426,7 +432,9 @@ describe("risk rules", () => {
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.blockingRules).toContain("daily realized loss reached 0.2500 SOL");
+    expect(result.blockingRules).toContain(
+      "daily realized loss reached 0.2500 SOL",
+    );
     expect(result.state.dailyLossSol).toBe(0.25);
   });
 

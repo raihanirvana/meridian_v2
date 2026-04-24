@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const WalletBalanceSnapshotSchema = z
   .object({
@@ -26,7 +23,9 @@ export interface MockWalletGatewayBehaviors {
 export class MockWalletGateway implements WalletGateway {
   public constructor(private readonly behaviors: MockWalletGatewayBehaviors) {}
 
-  public async getWalletBalance(_wallet: string): Promise<WalletBalanceSnapshot> {
+  public async getWalletBalance(
+    _wallet: string,
+  ): Promise<WalletBalanceSnapshot> {
     return WalletBalanceSnapshotSchema.parse(
       await resolveMockBehavior(this.behaviors.getWalletBalance),
     );

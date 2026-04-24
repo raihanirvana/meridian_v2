@@ -27,7 +27,9 @@ export class HttpTokenIntelGateway implements TokenIntelGateway {
       adapterName: "HttpTokenIntelGateway",
       baseUrl: options.baseUrl,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       defaultHeaders:
         options.apiKey === undefined ? {} : { "x-api-key": options.apiKey },
     });

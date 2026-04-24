@@ -5,12 +5,14 @@
 Meridian V2 adalah rebuild total untuk bot manajemen likuiditas Meteora DLMM di Solana dengan prinsip **deterministic-first, AI-assisted, event-driven, dan testable**.
 
 V2 **bukan** full AI bot. AI hanya menjadi lapisan tambahan untuk:
+
 - ranking kandidat,
 - memberi reasoning,
 - membantu operator manual,
 - dan memberi saran strategi.
 
 Seluruh lifecycle yang berisiko tinggi wajib dipegang core engine yang deterministic:
+
 - deploy,
 - close,
 - partial close,
@@ -20,6 +22,7 @@ Seluruh lifecycle yang berisiko tinggi wajib dipegang core engine yang determini
 - dan risk controls.
 
 Target utama V2:
+
 1. Menghilangkan flow “tambal sulam” yang menyebabkan bug baru terus muncul.
 2. Menjadikan status posisi dan action **eksplisit** dan bisa ditelusuri.
 3. Memisahkan loop baca dan loop tulis.
@@ -31,6 +34,7 @@ Target utama V2:
 ## 2. Latar Belakang Masalah
 
 Versi lama menunjukkan pola bug yang berulang pada area fondasi:
+
 - close belum final tetapi state dianggap selesai,
 - rebalance membuka posisi baru sebelum close benar-benar tuntas,
 - state internal dapat berbeda dari data on-chain/API,
@@ -48,6 +52,7 @@ Karena itu V2 harus dibangun sebagai **engine baru** dari nol (**greenfield buil
 ## 3. Tujuan Produk
 
 ### 3.1 Tujuan utama
+
 - Menjalankan screening, deploy, management, rebalance, dan close posisi secara stabil.
 - Menjaga state posisi selalu konsisten dengan data chain/API.
 - Menyimpan audit trail lengkap untuk setiap write action.
@@ -55,7 +60,9 @@ Karena itu V2 harus dibangun sebagai **engine baru** dari nol (**greenfield buil
 - Tetap memberi ruang untuk AI, tetapi hanya sebagai layer opsional dan aman.
 
 ### 3.2 Non-goals awal V2
+
 Fitur-fitur ini **tidak wajib di batch awal**:
+
 - self-evolving strategy otomatis,
 - adaptive screening super kompleks,
 - multi-wallet orchestration,
@@ -64,9 +71,10 @@ Fitur-fitur ini **tidak wajib di batch awal**:
 - strategy generator bebas oleh AI.
 
 ### 3.3 Kebijakan terhadap repo lama
+
 - V2 **harus bisa dibangun dari nol** tanpa copy file atau folder dari repo lama.
 - Repo lama **tidak wajib** dipakai saat coding.
-- Repo lama hanya boleh dipakai sebagai bahan audit untuk tiga hal: 
+- Repo lama hanya boleh dipakai sebagai bahan audit untuk tiga hal:
   1. daftar rule bisnis yang ingin dipertahankan,
   2. daftar edge case yang pernah gagal,
   3. pembanding output saat UAT atau migration test.
@@ -106,6 +114,7 @@ Fitur-fitur ini **tidak wajib di batch awal**:
 ## 5. Definisi Produk V2
 
 ### 5.1 Apa yang dilakukan Meridian V2
+
 - Screening pool DLMM berdasarkan hard filters dan scoring.
 - Memilih candidate terbaik untuk deploy berdasarkan deterministic scoring; AI opsional untuk ranking akhir.
 - Membuka posisi baru secara aman.
@@ -116,7 +125,9 @@ Fitur-fitur ini **tidak wajib di batch awal**:
 - Mengirim ringkasan dan alert ke operator.
 
 ### 5.2 Siapa “otak” utama bot
+
 V2 adalah **hybrid system**:
+
 - **Core engine**: deterministic rules + state machine + queue + reconciliation.
 - **AI layer**: ranking, reasoning, operator interface, optional decision support.
 - **Adapters**: DLMM/Jupiter/analytics/Telegram/LLM/storage.
@@ -128,7 +139,9 @@ V2 adalah **hybrid system**:
 ## 6.1 Layer utama
 
 ### A. Domain layer
+
 Pure business logic, tanpa IO.
+
 - entities
 - value objects
 - rules
@@ -137,7 +150,9 @@ Pure business logic, tanpa IO.
 - policy validation
 
 ### B. Application layer
+
 Use cases dan workers.
+
 - screen market
 - decide deploy
 - request close
@@ -148,7 +163,9 @@ Use cases dan workers.
 - generate reports
 
 ### C. Adapter layer
+
 Integrasi dengan dunia luar.
+
 - Meteora/DLMM adapter
 - Jupiter swap adapter
 - Screening API adapter
@@ -158,6 +175,7 @@ Integrasi dengan dunia luar.
 - file/db storage adapter
 
 ### D. Infrastructure layer
+
 - config loader
 - locks
 - scheduler
@@ -259,7 +277,9 @@ src/
 ## 7. Model Domain Inti
 
 ## 7.1 Entity: Position
+
 Field minimal:
+
 - `positionId`
 - `poolAddress`
 - `tokenXMint`
@@ -294,6 +314,7 @@ Field minimal:
 - `needsReconciliation`
 
 ## 7.2 Entity: Candidate
+
 - `candidateId`
 - `poolAddress`
 - `symbolPair`
@@ -308,6 +329,7 @@ Field minimal:
 - `createdAt`
 
 ## 7.3 Entity: Action
+
 - `actionId`
 - `type` (`DEPLOY`, `CLOSE`, `PARTIAL_CLOSE`, `CLAIM_FEES`, `REBALANCE`, `SWAP`, `SYNC`, `CANCEL_REBALANCE`)
 - `status` (`QUEUED`, `RUNNING`, `WAITING_CONFIRMATION`, `RECONCILING`, `DONE`, `FAILED`, `ABORTED`, `TIMED_OUT`)
@@ -324,6 +346,7 @@ Field minimal:
 - `requestedBy` (`system`, `operator`, `ai`)
 
 ## 7.4 Entity: PortfolioState
+
 - `walletBalance`
 - `reservedBalance`
 - `availableBalance`
@@ -383,6 +406,7 @@ Any state
 ```
 
 ### Aturan penting
+
 - Posisi **tidak pernah langsung `CLOSED`** hanya karena hilang dari API snapshot.
 - Posisi yang hilang dari snapshot masuk ke `RECONCILIATION_REQUIRED`.
 - `REBALANCE` adalah dua fase resmi: close lama lalu deploy baru. Bukan satu shortcut.
@@ -403,6 +427,7 @@ FAILED -> RETRY_QUEUED (optional)
 ## 9.1 Rule group A — Portfolio risk rules
 
 Aturan global portofolio sebelum action write apa pun:
+
 - `maxConcurrentPositions`
 - `maxCapitalUsagePct`
 - `minReserveSol`
@@ -415,6 +440,7 @@ Aturan global portofolio sebelum action write apa pun:
 - `maxNewDeploysPerHour`
 
 ### Rule evaluasi
+
 1. Jika circuit breaker aktif, tolak semua deploy baru.
 2. Jika daily realized loss melewati limit, hanya izinkan close/claim/reconcile, tidak boleh deploy baru.
 3. Jika available balance < deploy minimum + reserve, action deploy diblok.
@@ -426,6 +452,7 @@ Aturan global portofolio sebelum action write apa pun:
 ## 9.2 Rule group B — Screening hard filters
 
 Candidate pool harus lolos filter keras sebelum dihitung skornya:
+
 - market cap minimum / maksimum
 - TVL minimum
 - volume minimum
@@ -444,7 +471,9 @@ Candidate pool harus lolos filter keras sebelum dihitung skornya:
 - duplicate token / duplicate pool exposure
 
 ### Output screening hard filters
+
 Candidate hanya punya 2 hasil:
+
 - `REJECTED_HARD_FILTER`
 - `PASSED_HARD_FILTER`
 
@@ -455,6 +484,7 @@ AI tidak boleh mengoverride hard filter.
 ## 9.3 Rule group C — Candidate scoring
 
 Setelah lolos hard filters, candidate diberi skor dari komponen deterministic:
+
 - fee/TVL ratio
 - volume consistency
 - liquidity depth
@@ -468,12 +498,15 @@ Setelah lolos hard filters, candidate diberi skor dari komponen deterministic:
 - overlap penalty dengan posisi yang sudah ada
 
 ### Output scoring
+
 - `scoreTotal`
 - `scoreBreakdown`
 - `riskFlags`
 
 ### AI di tahap ini
+
 AI boleh digunakan untuk:
+
 - ranking akhir dari shortlist top N,
 - memberi catatan naratif,
 - memilih antara kandidat yang skornya mirip.
@@ -485,6 +518,7 @@ AI **tidak boleh** men-deploy kandidat yang gagal hard filter.
 ## 9.4 Rule group D — Deploy rules
 
 Sebelum deploy:
+
 1. Candidate harus status `PASSED_HARD_FILTER`.
 2. Candidate harus ada detail snapshot lengkap.
 3. Candidate tidak boleh conflict dengan exposure rule.
@@ -494,6 +528,7 @@ Sebelum deploy:
 7. Semua parameter deploy harus tervalidasi schema.
 
 ### Deploy execution rules
+
 - Deploy selalu lewat action queue.
 - Setelah tx submit, status action jadi `WAITING_CONFIRMATION`.
 - Setelah confirm sukses, position status jadi `OPEN`.
@@ -526,7 +561,9 @@ Untuk setiap posisi `OPEN`, evaluasi dilakukan **berurutan dan deterministic**:
    - jika semua kondisi aman, status `HOLD`
 
 ### Output management engine
+
 Harus berupa salah satu action resmi:
+
 - `HOLD`
 - `CLAIM_FEES`
 - `PARTIAL_CLOSE`
@@ -541,6 +578,7 @@ AI boleh memberi reasoning tambahan, tetapi tidak boleh membuat action di luar e
 ## 9.6 Rule group F — Close rules
 
 Close dilakukan jika salah satu kondisi terpenuhi:
+
 - hard stop loss tercapai,
 - token risk melonjak di atas ambang,
 - posisi out of range melebihi maksimum,
@@ -549,6 +587,7 @@ Close dilakukan jika salah satu kondisi terpenuhi:
 - rebalance membutuhkan close posisi lama.
 
 ### Aturan close yang wajib
+
 - Close action harus idempotent.
 - Setelah tx submit, posisi masuk `CLOSING`.
 - Jika belum ada konfirmasi final, posisi **tetap tidak boleh dideploy ulang** kecuali flow resmi rebalance menunggu finalizer.
@@ -559,6 +598,7 @@ Close dilakukan jika salah satu kondisi terpenuhi:
 ## 9.7 Rule group G — Rebalance rules
 
 Rebalance hanya boleh jika:
+
 - posisi tidak melanggar hard stop,
 - alasan utama adalah range drift atau efficiency drop,
 - rebalance count belum melewati limit,
@@ -567,6 +607,7 @@ Rebalance hanya boleh jika:
 - tidak ada circuit breaker.
 
 ### Rebalance flow resmi
+
 1. enqueue `CLOSE_FOR_REBALANCE`
 2. tunggu `CLOSE_CONFIRMED`
 3. jalankan `FINALIZE_CLOSE`
@@ -576,6 +617,7 @@ Rebalance hanya boleh jika:
 7. jika redeploy gagal permanen, posisi lama tetap dianggap `CLOSED`, dan sistem menulis event `REBALANCE_ABORTED`
 
 ### Larangan penting
+
 - Tidak boleh deploy baru sebelum close lama finalized.
 - Tidak boleh menganggap rebalance sukses hanya karena posisi lama hilang dari snapshot.
 
@@ -586,6 +628,7 @@ Rebalance hanya boleh jika:
 Reconciliation adalah proses resmi, bukan fallback informal.
 
 Sistem harus menjalankan reconciliation jika:
+
 - action status `WAITING_CONFIRMATION` terlalu lama,
 - posisi hilang dari snapshot,
 - nilai PnL/API tidak lengkap,
@@ -593,11 +636,13 @@ Sistem harus menjalankan reconciliation jika:
 - state storage berbeda dengan hasil chain/API.
 
 ### Output reconciliation
+
 - `RECONCILED_OK`
 - `REQUIRES_RETRY`
 - `MANUAL_REVIEW_REQUIRED`
 
 ### Prinsip
+
 - “Tidak terlihat di API” ≠ “closed final”.
 - Reconciliation harus mencoba melengkapi:
   - tx status,
@@ -612,6 +657,7 @@ Sistem harus menjalankan reconciliation jika:
 ## 9.9 Rule group I — Accounting rules
 
 Accounting wajib update saat:
+
 - deploy confirmed,
 - claim fees confirmed,
 - partial close confirmed,
@@ -620,6 +666,7 @@ Accounting wajib update saat:
 - manual swap confirmed.
 
 ### Data yang harus tersimpan
+
 - cost basis,
 - realized PnL,
 - unrealized PnL,
@@ -630,6 +677,7 @@ Accounting wajib update saat:
 - portfolio equity snapshot.
 
 ### Prinsip
+
 - Statistik performa hanya boleh diambil dari data yang sudah `RECONCILED_OK`.
 - Pending close tidak boleh dihitung final win/loss dulu.
 
@@ -638,6 +686,7 @@ Accounting wajib update saat:
 ## 9.10 Rule group J — AI guardrails
 
 AI hanya boleh:
+
 - membaca snapshot posisi/kandidat,
 - memberi ranking,
 - memberi reasoning,
@@ -645,6 +694,7 @@ AI hanya boleh:
 - mengusulkan action valid.
 
 AI tidak boleh:
+
 - menulis state langsung,
 - mem-bypass queue,
 - mengubah config rahasia,
@@ -652,6 +702,7 @@ AI tidak boleh:
 - mengoverride hard risk rules.
 
 ### Mode AI
+
 1. **Disabled** — bot tetap jalan deterministically.
 2. **Advisory** — AI memberi ranking/reasoning saja.
 3. **Constrained action** — AI boleh memilih satu action dari daftar action yang sudah diizinkan engine.
@@ -663,12 +714,14 @@ Mode default V2 untuk lifecycle inti: **Advisory**.
 ## 10. Scheduler Rules
 
 V2 punya 4 worker utama:
+
 - `screeningWorker`
 - `managementWorker`
 - `reconciliationWorker`
 - `reportingWorker`
 
 ### Aturan scheduler
+
 - Screening worker hanya read-only sampai enqueue deploy.
 - Management worker boleh membuat request action, tetapi tidak eksekusi write langsung di tempat.
 - Action queue worker adalah satu-satunya komponen yang menulis ke chain.
@@ -676,6 +729,7 @@ V2 punya 4 worker utama:
 - Health/reporting worker read-only penuh.
 
 ### Penting
+
 - Timer yang dipakai UI/countdown harus bersumber dari scheduler state yang sama.
 - Manual trigger harus memperbarui metadata run yang sama, agar tidak terjadi double fire tidak sengaja.
 
@@ -684,6 +738,7 @@ V2 punya 4 worker utama:
 ## 11. Persistence dan Audit Trail
 
 ## 11.1 Repository yang dibutuhkan
+
 - `positions.json` / database tabel positions
 - `actions.json` / table actions
 - `journal.jsonl` / event log append-only
@@ -693,6 +748,7 @@ V2 punya 4 worker utama:
 - `config.json` dan `.env`
 
 ## 11.2 Event journal wajib memuat
+
 - timestamp
 - event type
 - actor (`system`, `operator`, `ai`)
@@ -704,7 +760,9 @@ V2 punya 4 worker utama:
 - error jika ada
 
 ### Prinsip
+
 Audit trail harus cukup lengkap untuk menjawab:
+
 - siapa melakukan action,
 - kapan,
 - atas dasar apa,
@@ -716,15 +774,20 @@ Audit trail harus cukup lengkap untuk menjawab:
 ## 12. Security dan Config
 
 ## 12.1 Boundary config
+
 ### `.env`
+
 Hanya untuk secret:
+
 - wallet private key
 - API keys
 - RPC URLs
 - Telegram bot token
 
 ### `user-config.json`
+
 Hanya untuk non-secret:
+
 - risk limits
 - screening thresholds
 - intervals
@@ -733,6 +796,7 @@ Hanya untuk non-secret:
 - notification preferences
 
 ## 12.2 Rules
+
 - Jangan pernah tulis private key ke state log.
 - Jangan commit `.env`, runtime config, `.git`, atau tmp runtime files ke paket distribusi.
 - Semua config di-validate dengan schema saat startup.
@@ -743,6 +807,7 @@ Hanya untuk non-secret:
 ## 13. Observability
 
 Wajib ada:
+
 - structured logs,
 - event journal,
 - action status board,
@@ -754,6 +819,7 @@ Wajib ada:
 - alert untuk action stuck.
 
 ### Alert minimal
+
 - close pending > X menit
 - action timeout
 - queue backlog terlalu lama
@@ -767,7 +833,9 @@ Wajib ada:
 ## 14. Testing Strategy
 
 ## 14.1 Unit tests
+
 Untuk pure rules/domain:
+
 - hard filters
 - scoring
 - management decision ordering
@@ -776,7 +844,9 @@ Untuk pure rules/domain:
 - accounting calculations
 
 ## 14.2 Integration tests
+
 Dengan mocked adapters:
+
 - deploy success/fail/timeout
 - close success/fail/timeout
 - rebalance success/redeploy fail
@@ -785,7 +855,9 @@ Dengan mocked adapters:
 - restart while action pending
 
 ## 14.3 Simulation tests
+
 Dry-run end-to-end:
+
 - single candidate deploy
 - single position managed over time
 - stop loss scenario
@@ -794,7 +866,9 @@ Dry-run end-to-end:
 - circuit breaker scenario
 
 ## 14.4 Regression suite wajib
+
 Sebelum live:
+
 1. close-confirmation path
 2. close-timeout path
 3. rebalance finalized path
@@ -809,6 +883,7 @@ Sebelum live:
 ## 15. Definisi Selesai untuk V2 MVP
 
 Meridian V2 dianggap siap untuk supervised live testing jika:
+
 - deploy, close, partial close, claim, dan rebalance sudah lewat queue + reconciliation,
 - tidak ada auto-close berbasis disappearance semata,
 - health worker read-only,
@@ -823,6 +898,7 @@ Meridian V2 dianggap siap untuk supervised live testing jika:
 ## 16. Batch Build Plan untuk Vibecode
 
 Prinsip batch:
+
 - kecil,
 - testable,
 - tidak terlalu banyak file sekaligus,
@@ -836,9 +912,11 @@ Prinsip batch:
 ## Batch 0 — Repo reset dan standar proyek
 
 ### Tujuan
+
 Menyiapkan repo V2 yang bersih dan mudah divalidasi.
 
 ### Bangun
+
 - buat repo/folder baru `meridian-v2`
 - pilih TypeScript
 - setup eslint + prettier
@@ -848,22 +926,26 @@ Menyiapkan repo V2 yang bersih dan mudah divalidasi.
 - setup folder structure awal
 
 ### Output
+
 - project bootstrap jalan
 - test runner jalan
 - lint jalan
 - build jalan
 
 ### DoD
+
 - `npm test` bisa jalan
 - `npm run build` sukses
 - ada 1 test dummy lolos
 
 ### Jangan dikerjakan dulu
+
 - adapter nyata
 - AI
 - Telegram
 
 ### Prompt vibecode
+
 “Bootstrap project TypeScript untuk bot trading event-driven. Buat folder domain/app/adapters/infra/tests, setup zod, logger, vitest, eslint, dan contoh 1 schema + 1 unit test. Jangan implement fitur trading dulu.”
 
 ---
@@ -871,9 +953,11 @@ Menyiapkan repo V2 yang bersih dan mudah divalidasi.
 ## Batch 1 — Config schema dan environment boundary
 
 ### Tujuan
+
 Memastikan secret vs non-secret tidak tercampur.
 
 ### Bangun
+
 - `configSchema.ts`
 - `loadConfig.ts`
 - `.env.example`
@@ -882,20 +966,24 @@ Memastikan secret vs non-secret tidak tercampur.
 - reject unknown keys atau beri warning eksplisit
 
 ### Output
+
 - config terload dari `.env` dan `user-config.json`
 - type-safe config object
 
 ### Tests
+
 - secret harus dari `.env`
 - key non-secret dari json
 - invalid config melempar error
 - unknown key tertangkap
 
 ### DoD
+
 - startup gagal jika config invalid
 - no secret leak ke log
 
 ### Prompt vibecode
+
 “Implement strict config loader dengan zod. Pisahkan secret di .env dan non-secret di user-config.json. Tambahkan tests untuk invalid config, unknown keys, dan redacted logging.”
 
 ---
@@ -903,28 +991,34 @@ Memastikan secret vs non-secret tidak tercampur.
 ## Batch 2 — Domain enums, entities, dan state machine
 
 ### Tujuan
+
 Menetapkan bahasa resmi sistem.
 
 ### Bangun
+
 - enums action/status
 - entity `Position`, `Action`, `Candidate`, `PortfolioState`
 - `positionLifecycle.ts`
 - `actionLifecycle.ts`
 
 ### Output
+
 - state transition functions pure
 - guard invalid transitions
 
 ### Tests
+
 - valid transition OPEN -> CLOSE_REQUESTED -> CLOSING -> CLOSE_CONFIRMED -> RECONCILING -> CLOSED
 - invalid transition OPEN -> CLOSED harus gagal
 - rebalance state path valid
 
 ### DoD
+
 - semua status resmi sudah ada
 - tidak ada status implisit
 
 ### Prompt vibecode
+
 “Buat domain entities dan explicit state machines untuk Position dan Action. Semua transition harus pure function, typed, dan punya unit tests untuk valid/invalid transitions.”
 
 ---
@@ -932,9 +1026,11 @@ Menetapkan bahasa resmi sistem.
 ## Batch 3 — Persistence dan event journal
 
 ### Tujuan
+
 Menyimpan state secara eksplisit dan bisa diaudit.
 
 ### Bangun
+
 - `StateRepository`
 - `JournalRepository`
 - `ActionRepository`
@@ -942,20 +1038,24 @@ Menyimpan state secara eksplisit dan bisa diaudit.
 - atomic write helper
 
 ### Output
+
 - save/load position
 - save/load action
 - append journal event
 
 ### Tests
+
 - persist + reload state
 - journal append order
 - atomic write tidak korup pada partial failure simulation
 
 ### DoD
+
 - restart bisa memuat state sebelumnya
 - journal konsisten
 
 ### Prompt vibecode
+
 “Implement file-based repositories untuk positions, actions, dan append-only journal dengan atomic writes. Tambahkan integration tests untuk restart recovery dan journal ordering.”
 
 ---
@@ -963,9 +1063,11 @@ Menyimpan state secara eksplisit dan bisa diaudit.
 ## Batch 4 — Locks dan action queue dasar
 
 ### Tujuan
+
 Membuat single-writer execution model.
 
 ### Bangun
+
 - wallet lock
 - position lock
 - action queue
@@ -973,18 +1075,22 @@ Membuat single-writer execution model.
 - idempotency key generator
 
 ### Output
+
 - hanya 1 write action aktif per wallet
 - action status bergerak dari QUEUED ke RUNNING
 
 ### Tests
+
 - 2 action write ke wallet sama tidak boleh RUNNING bersamaan
 - retry queue tidak membuat duplikasi action jika idempotency key sama
 
 ### DoD
+
 - sequential write guarantee ada
 - queue bisa pause/resume
 
 ### Prompt vibecode
+
 “Buat action queue dengan single-writer lock per wallet dan optional lock per position. Tambahkan idempotency key dan tests yang membuktikan dua write action tidak bisa jalan paralel.”
 
 ---
@@ -992,22 +1098,28 @@ Membuat single-writer execution model.
 ## Batch 5 — Mock gateways dan contract interfaces
 
 ### Tujuan
+
 Memisahkan domain dari vendor API.
 
 ### Bangun
+
 - interface `DlmmGateway`, `SwapGateway`, `ScreeningGateway`, `TokenIntelGateway`, `LlmGateway`, `NotifierGateway`
 - mock implementations untuk test
 
 ### Output
+
 - domain/app layer belum tergantung vendor SDK langsung
 
 ### Tests
+
 - mock gateway bisa dipakai untuk simulasikan success/fail/timeout
 
 ### DoD
+
 - semua use case nantinya bergantung pada interface, bukan SDK langsung
 
 ### Prompt vibecode
+
 “Define adapter interfaces for DLMM, swap, screening, token intel, LLM, and notifications. Provide mock implementations for success, fail, and timeout scenarios.”
 
 ---
@@ -1015,9 +1127,11 @@ Memisahkan domain dari vendor API.
 ## Batch 6 — Use case deploy end-to-end
 
 ### Tujuan
+
 Menyelesaikan satu alur write paling sederhana.
 
 ### Bangun
+
 - `requestDeploy.ts`
 - `processDeployAction` di queue worker
 - confirmation handling
@@ -1025,19 +1139,23 @@ Menyelesaikan satu alur write paling sederhana.
 - update position state ke OPEN saat confirmed
 
 ### Output
+
 - deploy flow lengkap dari request sampai confirmed
 
 ### Tests
+
 - deploy success
 - deploy timeout
 - deploy fail
 - duplicate deploy request dengan idempotency key sama
 
 ### DoD
+
 - deploy tidak mem-bypass queue
 - posisi hanya OPEN jika confirmed
 
 ### Prompt vibecode
+
 “Implement deploy use case via action queue. After submit, action waits for confirmation, then creates/updates a Position to OPEN. Add tests for success, fail, timeout, and duplicate request.”
 
 ---
@@ -1045,9 +1163,11 @@ Menyelesaikan satu alur write paling sederhana.
 ## Batch 7 — Use case close + finalizer accounting
 
 ### Tujuan
+
 Menutup posisi secara resmi dan tuntas.
 
 ### Bangun
+
 - `requestClose.ts`
 - `finalizeClose.ts`
 - action states CLOSING -> CLOSE_CONFIRMED -> RECONCILING -> DONE
@@ -1056,17 +1176,21 @@ Menutup posisi secara resmi dan tuntas.
 - optional post-close swap hook interface
 
 ### Output
+
 - close flow lengkap dan tidak berhenti di “pending” tanpa finalizer
 
 ### Tests
+
 - close success lalu finalize accounting
 - close timeout -> reconcile required
 - close confirmed tapi accounting gagal -> reconcile required
 
 ### DoD
+
 - posisi tidak pernah CLOSED tanpa finalizer
 
 ### Prompt vibecode
+
 “Implement close use case with explicit finalizer. A position cannot become CLOSED until confirmation and accounting reconciliation succeed. Add tests for confirmed close, timeout, and partial reconciliation failure.”
 
 ---
@@ -1074,26 +1198,32 @@ Menutup posisi secara resmi dan tuntas.
 ## Batch 8 — Reconciliation worker
 
 ### Tujuan
+
 Menangani state tidak sinkron secara resmi.
 
 ### Bangun
+
 - `reconcilePortfolio.ts`
 - `reconciliationWorker.ts`
 - detection untuk missing snapshot, pending confirmation timeout, startup recovery
 
 ### Output
+
 - posisi hilang dari snapshot masuk `RECONCILIATION_REQUIRED`, bukan auto CLOSED
 
 ### Tests
+
 - missing position snapshot
 - action stuck in WAITING_CONFIRMATION
 - restart while close pending
 
 ### DoD
+
 - false disappearance tidak auto-close
 - startup recovery ada
 
 ### Prompt vibecode
+
 “Build a reconciliation worker that handles missing snapshots, pending confirmations, and restart recovery. Missing from API must map to RECONCILIATION_REQUIRED, not CLOSED. Add integration tests.”
 
 ---
@@ -1101,28 +1231,34 @@ Menangani state tidak sinkron secara resmi.
 ## Batch 9 — Management rules engine
 
 ### Tujuan
+
 Membuat evaluator posisi yang pure dan deterministic.
 
 ### Bangun
+
 - `managementRules.ts`
 - rule precedence
 - evaluation result object
 - `managementPriority.ts`
 
 ### Output
+
 - untuk 1 snapshot posisi, engine mengeluarkan tepat 1 action resmi
 
 ### Tests
+
 - stop loss mengalahkan claim fees
 - hard exit mengalahkan rebalance
 - hold jika semua aman
 - partial close dan rebalance tidak keluar bersamaan
 
 ### DoD
+
 - management rules tidak memanggil IO
 - mudah diuji dengan snapshot statis
 
 ### Prompt vibecode
+
 “Implement a pure management rules engine that returns exactly one allowed action per position snapshot. Respect precedence: emergency > hard exit > maintenance > hold. Add tests for rule collisions.”
 
 ---
@@ -1130,9 +1266,11 @@ Membuat evaluator posisi yang pure dan deterministic.
 ## Batch 10 — Screening rules + scoring engine
 
 ### Tujuan
+
 Membangun pipeline kandidat yang deterministic.
 
 ### Bangun
+
 - `screeningRules.ts`
 - `candidateScore.ts`
 - filter keras
@@ -1140,17 +1278,21 @@ Membangun pipeline kandidat yang deterministic.
 - shortlist builder
 
 ### Output
+
 - screening menghasilkan shortlist deterministic top N
 
 ### Tests
+
 - hard filter reject cases
 - score ordering cases
 - exposure conflict rejects candidate
 
 ### DoD
+
 - AI belum dibutuhkan agar screening bisa menghasilkan shortlist
 
 ### Prompt vibecode
+
 “Implement deterministic screening hard filters and candidate scoring with score breakdown. Output a shortlist of top N candidates. Add tests for hard rejects, scoring order, and exposure conflicts.”
 
 ---
@@ -1158,27 +1300,33 @@ Membangun pipeline kandidat yang deterministic.
 ## Batch 11 — Rebalance flow resmi
 
 ### Tujuan
+
 Mengubah rebalance menjadi flow dua fase yang sah.
 
 ### Bangun
+
 - `requestRebalance.ts`
 - queue orchestration: close old leg -> finalize close -> redeploy new leg
 - failure branches: redeploy fail, close timeout, validation fail
 - rebalance journal events
 
 ### Output
+
 - rebalance tidak bisa skip finalizer close
 
 ### Tests
+
 - rebalance success
 - close old leg timeout
 - redeploy fail permanen -> `REBALANCE_ABORTED`
 - old position closed but no new deploy
 
 ### DoD
+
 - tidak ada deploy baru sebelum close lama finalized
 
 ### Prompt vibecode
+
 “Implement rebalance as an explicit two-leg workflow: close old position, finalize close, validate capital, then redeploy. Add tests for successful rebalance and aborted rebalance paths.”
 
 ---
@@ -1186,9 +1334,11 @@ Mengubah rebalance menjadi flow dua fase yang sah.
 ## Batch 12 — Portfolio risk engine
 
 ### Tujuan
+
 Memusatkan semua guardrail global.
 
 ### Bangun
+
 - `riskRules.ts`
 - exposure calculators
 - capital usage calculator
@@ -1196,18 +1346,22 @@ Memusatkan semua guardrail global.
 - daily realized PnL tracker
 
 ### Output
+
 - deploy/rebalance/close decisions divalidasi oleh risk engine
 
 ### Tests
+
 - daily loss limit blocks new deploys
 - pool exposure reject
 - token exposure reject
 - reserve SOL guard works
 
 ### DoD
+
 - risk rules reusable di screening dan action execution
 
 ### Prompt vibecode
+
 “Implement portfolio risk rules: capital usage, reserve balance, token exposure, pool exposure, daily loss limit, and circuit breaker. Add tests that block deploys while still allowing safe close/reconcile actions.”
 
 ---
@@ -1215,9 +1369,11 @@ Memusatkan semua guardrail global.
 ## Batch 13 — Workers orchestration tanpa AI
 
 ### Tujuan
+
 Menjalankan bot end-to-end secara deterministic.
 
 ### Bangun
+
 - `screeningWorker.ts`
 - `managementWorker.ts`
 - `reportingWorker.ts`
@@ -1225,17 +1381,21 @@ Menjalankan bot end-to-end secara deterministic.
 - manual triggers update shared timer state
 
 ### Output
+
 - bot bisa jalan dry-run tanpa LLM
 
 ### Tests
+
 - screening menghasilkan request deploy
 - management menghasilkan request close/rebalance/claim
 - manual trigger tidak bikin double-fire liar
 
 ### DoD
+
 - worker read-only vs write-request boundary jelas
 
 ### Prompt vibecode
+
 “Build screening, management, and reporting workers around the deterministic engine. Workers may enqueue actions but must not write directly. Keep scheduler metadata shared for cron and manual triggers.”
 
 ---
@@ -1243,9 +1403,11 @@ Menjalankan bot end-to-end secara deterministic.
 ## Batch 14 — Operator interfaces: CLI dan Telegram read-first
 
 ### Tujuan
+
 Membuat kontrol manual yang aman.
 
 ### Bangun
+
 - status command
 - positions command
 - pending actions command
@@ -1253,17 +1415,21 @@ Membuat kontrol manual yang aman.
 - alert notifications
 
 ### Output
+
 - operator bisa melihat state dan mengirim request action
 
 ### Tests
+
 - command parser
 - invalid command rejection
 - manual request creates action queue entry, not direct execution
 
 ### DoD
+
 - Telegram/CLI tidak mem-bypass queue
 
 ### Prompt vibecode
+
 “Implement CLI and Telegram interfaces as operator surfaces. Commands must create action requests or read state, never bypass the queue. Add tests for parsing and invalid/manual requests.”
 
 ---
@@ -1271,9 +1437,11 @@ Membuat kontrol manual yang aman.
 ## Batch 15 — AI layer (advisory dulu)
 
 ### Tujuan
+
 Menambahkan AI tanpa membiarkannya menguasai lifecycle inti.
 
 ### Bangun
+
 - `LlmGateway`
 - AI ranking untuk shortlist screening
 - AI reasoning untuk management snapshots
@@ -1281,17 +1449,21 @@ Menambahkan AI tanpa membiarkannya menguasai lifecycle inti.
 - mode `disabled`, `advisory`, `constrained_action`
 
 ### Output
+
 - AI hanya mengembalikan structured recommendation
 
 ### Tests
+
 - invalid AI output fallback ke deterministic engine
 - AI timeout tidak memblokir worker
 - AI tidak bisa menghasilkan action di luar enum
 
 ### DoD
+
 - bot tetap aman kalau LLM mati
 
 ### Prompt vibecode
+
 “Add an optional LLM advisory layer that ranks shortlist candidates and explains management decisions using strict JSON schema output. The engine must ignore invalid AI output and continue deterministically.”
 
 ---
@@ -1299,22 +1471,27 @@ Menambahkan AI tanpa membiarkannya menguasai lifecycle inti.
 ## Batch 16 — Real adapters: DLMM, swap, screening APIs
 
 ### Tujuan
+
 Menghubungkan engine ke dunia nyata setelah core cukup stabil.
 
 ### Bangun
+
 - implement gateway nyata untuk DLMM
 - implement swap gateway
 - implement screening/intel gateways
 - adapter-level error mapping
 
 ### Output
+
 - deterministic engine sekarang bicara ke service asli
 
 ### Tests
+
 - contract tests untuk adapter responses
 - error mapping tests
 
 ### DoD
+
 - domain tidak tahu detail vendor SDK
 
 ### Prompt vibecode
@@ -1326,27 +1503,33 @@ ways behind the existing interfaces. Map vendor-specific errors into typed domai
 ## Batch 17 — Dry-run simulation harness
 
 ### Tujuan
+
 Menguji lifecycle berkali-kali tanpa uang asli.
 
 ### Bangun
+
 - simulation runner
 - replay fixtures
 - fake clock
 - scenario packs
 
 ### Output
+
 - bisa mensimulasikan banyak lifecycle secara repeatable
 
 ### Tests
+
 - stop loss scenario
 - rebalance scenario
 - reconciliation after timeout
 - circuit breaker scenario
 
 ### DoD
+
 - setiap bug lifecycle bisa direpro dari fixture
 
 ### Prompt vibecode
+
 “Build a dry-run simulation harness with fake clock and replay fixtures so lifecycle bugs can be reproduced deterministically. Include scenarios for stop loss, rebalance, timeout reconciliation, and circuit breaker.”
 
 ---
@@ -1354,11 +1537,13 @@ Menguji lifecycle berkali-kali tanpa uang asli.
 ## Batch 17.1 — Lesson memory inti dan wajib-konsultasi untuk AI entry
 
 ### Tujuan
+
 Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-fixed/lessons.js`), namun dibentuk ulang sesuai arsitektur V2 (domain / app / adapters, Zod, strict TS). Setiap posisi yang ditutup harus menghasilkan `PerformanceRecord` dan — jika outcome cukup bermakna — sebuah `Lesson`. Semua Lesson harus tersedia untuk `AiAdvisoryService` dengan injeksi prompt bertingkat (pinned → role → recent) sehingga AI **selalu** belajar dari pengalaman sebelum memutuskan entry (screening/deploy) dan manajemen (rebalance/close).
 
 **Persyaratan keras:** pada mode AI apa pun selain `disabled`, setiap panggilan `rankShortlistWithAi` (entry) WAJIB memanggil `buildLessonsPrompt({ agentType: "SCREENER" })` dan menyisipkan hasilnya ke system prompt. Tidak boleh ada jalur entry yang melewati konsultasi lesson. Kalau `buildLessonsPrompt` melempar error, fallback ke deterministic engine (sama seperti fallback AI saat ini), tapi tetap **log** sebagai `ai_lesson_injection_failed` agar tidak diam-diam kehilangan konteks.
 
 ### Bangun
+
 - **Entity + schema (domain):**
   - `src/domain/entities/PerformanceRecord.ts`
     - Zod schema `PerformanceRecordSchema` dengan field: `positionId`, `pool` (alamat), `poolName`, `baseMint`, `strategy` (enum dari `domain/types/enums.ts` — `"spot" | "curve" | "bid_ask"`), `binStep`, `binRangeLower`, `binRangeUpper`, `volatility`, `feeTvlRatio`, `organicScore`, `amountSol`, `initialValueUsd`, `finalValueUsd`, `feesEarnedUsd`, `pnlUsd`, `pnlPct`, `rangeEfficiencyPct`, `minutesHeld`, `minutesInRange`, `closeReason` (enum di `domain/types/enums.ts`: `"manual" | "stop_loss" | "take_profit" | "out_of_range" | "volume_collapse" | "timeout" | "operator"`), `deployedAt`, `closedAt`, `recordedAt`.
@@ -1373,7 +1558,7 @@ Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-f
     - `deriveLesson(perf: PerformanceRecord, now: string, idGen: () => string): Lesson | null`
     - Tingkat outcome: `good` (pnlPct ≥ 5), `neutral` (≥ 0), `poor` (≥ -5), `bad` (< -5). `neutral` return `null`.
     - Template rule mengikuti `derivLesson` di repo lama (AVOID/PREFER/WORKED/FAILED/volume_collapse) tapi dipecah ke beberapa fungsi kecil agar testable: `classifyOutcome`, `buildContextString`, `pickRuleTemplate`, `collectTags`.
-    - Tag role otomatis: fungsi helper `inferRoleTags(perf)` menghasilkan subset dari `["oor", "efficient", "volume_collapse", "worked", "failed", perf.strategy, \`volatility_${Math.round(perf.volatility)}\`]`.
+    - Tag role otomatis: fungsi helper `inferRoleTags(perf)` menghasilkan subset dari `["oor", "efficient", "volume_collapse", "worked", "failed", perf.strategy, \`volatility\_${Math.round(perf.volatility)}\`]`.
     - Deterministik — tidak boleh memanggil `Date.now()` atau `Math.random()`; semua waktu/id masuk via parameter.
     - 100% pure → unit-testable dengan tabel skenario.
   - `src/domain/rules/lessonPromptRules.ts`
@@ -1433,6 +1618,7 @@ Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-f
 - **Paths:** tambahkan `LESSONS_FILE` ke `src/infra/config/paths.ts`: `path.join(dataDir, "lessons.json")`. `ensureDataDir()` sudah ada.
 
 ### Output
+
 - File `lessons.json` dipopulasikan otomatis saat posisi tertutup.
 - `AiAdvisoryService` menerima blok lesson yang sama persis strukturnya dengan repo lama (Pinned/Role/Recent) untuk setiap panggilan entry maupun manajemen.
 - Operator dapat melihat / pin / unpin / menambah / menghapus lesson lewat command layer (CLI + Telegram).
@@ -1440,6 +1626,7 @@ Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-f
 - Migrasi dari file `lessons.json` repo lama opsional: sediakan script sekali-pakai `scripts/migrateLegacyLessons.ts` yang membaca snake_case → mengonversi ke `LessonSchema`/`PerformanceRecordSchema` camelCase, menyimpan sidecar backup `.bak`, dan menulis hasilnya. Tidak otomatis dijalankan — operator memicunya manual.
 
 ### Tests
+
 - `tests/unit/domain/lessonRules.test.ts`:
   - Tabel 10+ skenario `deriveLesson` (good/bad OOR, good high efficiency, bad volume collapse, neutral → null, manual, semua `closeReason`).
   - `isSuspiciousUnitMix` mengembalikan true pada record port langsung dari contoh repo lama.
@@ -1466,6 +1653,7 @@ Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-f
   - Masing-masing command baru terparse Zod dengan benar dan memanggil repository method yang tepat. `lessons_clear` tanpa `confirm=true` ditolak.
 
 ### DoD
+
 - `AiAdvisoryService` tidak bisa lagi diinisialisasi tanpa `lessonPromptService` (typecheck fail).
 - Setiap close posisi menghasilkan PerformanceRecord; lesson lahir sesuai aturan.
 - Operator CLI bisa `lessons list --role SCREENER`, `lessons pin <id>`, dan hasilnya terlihat di AI prompt siklus screening berikutnya.
@@ -1473,6 +1661,7 @@ Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-f
 - 100% green di CI; coverage unit lesson rules ≥ 95%.
 
 ### Prompt vibecode
+
 “Port the lesson-memory system from `/meredian-fixed/lessons.js` into the V2 architecture: a pure `deriveLesson` rule in `domain/rules`, a `LessonRepository` + `PerformanceRepository` on top of FileStore, a `recordPositionPerformance` usecase wired into `finalizeClose` via an optional `LessonHook`, and a `LessonPromptService` that `AiAdvisoryService` MUST call on every screening and management AI request (tiered Pinned → Role → Recent, caps 5/6/10 for auto cycles, 10/15/35 otherwise). Add operator commands for list/pin/unpin/add/remove/clear. Forbid passing `AiAdvisoryService` without a `LessonPromptService`. If lesson injection fails, fall back to deterministic, log `ai_lesson_injection_failed`, never call the LLM without lessons on entry.”
 
 ---
@@ -1480,9 +1669,11 @@ Membuat sistem pembelajaran agen seperti `lessons.js` di repo lama (`/meredian-f
 ## Batch 17.2 — Adaptive threshold evolution (evolveThresholds)
 
 ### Tujuan
+
 Mengotomatisasi penyesuaian threshold screening (`minFeeActiveTvlRatio`, `minOrganic`) berdasarkan akumulasi performance, meniru `evolveThresholds` di repo lama — tapi dengan sumber-of-truth yang rapi (mutable runtime policy store) dan audit log lewat Journal + Lesson.
 
 ### Bangun
+
 - **Mutable policy store:**
   - `src/adapters/config/RuntimePolicyStore.ts`
     - Interface: `loadOverrides(): Promise<PolicyOverrides>`, `applyOverrides(patch, metadata): Promise<PolicyOverrides>`, `snapshot(): Promise<{ policy: ScreeningPolicy; overrides: PolicyOverrides; lastEvolvedAt?: string; positionsAtEvolution?: number }>`.
@@ -1517,10 +1708,12 @@ Mengotomatisasi penyesuaian threshold screening (`minFeeActiveTvlRatio`, `minOrg
   - Instansiasi `FileRuntimePolicyStore`, `PolicyProvider`, lalu inject ke screening usecase + `maybeEvolvePolicy`. Screening usecase **tidak** boleh lagi membaca `config.screening` langsung.
 
 ### Output
+
 - Setelah kelipatan 5 posisi ditutup, worker memanggil `maybeEvolvePolicy`. Kalau ada perubahan, file `policy-overrides.json` ter-update, screening siklus berikutnya memakai nilai baru, journal mencatat `"POLICY_EVOLVED"`, dan satu lesson evolusi tersimpan.
 - Operator bisa melihat overrides via command baru `policy show` dan `policy reset` (menghapus file overrides).
 
 ### Tests
+
 - `tests/unit/domain/thresholdEvolutionRules.test.ts`:
   - Fixture `< 5` performance → `null`.
   - Fixture 5 performance, semua winner → no change (tidak ada losers).
@@ -1539,12 +1732,14 @@ Mengotomatisasi penyesuaian threshold screening (`minFeeActiveTvlRatio`, `minOrg
   - Setelah `maybeEvolvePolicy` menaikkan `minFeeActiveTvlRatio`, siklus screening berikutnya menolak pool yang sebelumnya lolos.
 
 ### DoD
+
 - Screening usecase tidak pernah membaca `config.screening` langsung (grep test di CI).
 - Tidak ada mutasi in-place ke objek config (berbeda dengan repo lama — V2 memakai store + provider immutable-per-call).
 - `policy show` dan `policy reset` berfungsi di CLI.
 - Setiap evolusi meninggalkan jejak: journal event + lesson audit.
 
 ### Prompt vibecode
+
 “Add an adaptive threshold evolution layer: a pure `evolveThresholds` rule (port from `/meredian-fixed/lessons.js:215–323` — clamp, nudge ≤ 20%, lowest-winner + loser-ceiling heuristics), a `RuntimePolicyStore` that merges file overrides on top of base config, a `maybeEvolvePolicy` usecase called by the worker every 5 closed positions, and journal+lesson audit trails for each change. Screening must use a `PolicyProvider.resolveScreeningPolicy()` call, never read `config.screening` directly.”
 
 ---
@@ -1552,9 +1747,11 @@ Mengotomatisasi penyesuaian threshold screening (`minFeeActiveTvlRatio`, `minOrg
 ## Batch 17.3 — Pool memory (per-pool deploy history dan cooldown)
 
 ### Tujuan
+
 Menyediakan ingatan per-pool seperti `pool-memory.js` di repo lama: setiap alamat pool menyimpan ringkasan deploy historis (total deploy, avg PnL, win rate, last outcome, cooldown). Screening dan `AiAdvisoryService` dapat menarik ringkasan ini sebelum memutuskan entry — agar AI tahu "pool ini sudah pernah gagal 3x berturut" atau "masih cooldown 2 jam lagi".
 
 ### Bangun
+
 - **Entity:**
   - `src/domain/entities/PoolMemory.ts`
     - Zod: `PoolMemoryEntrySchema` dengan `poolAddress`, `name`, `baseMint` (nullable), `totalDeploys`, `deploys: PoolDeploySchema[]` (maks 50 — yang lebih lama dipotong), `avgPnlPct`, `winRatePct`, `lastDeployedAt`, `lastOutcome` (`"profit" | "loss" | null`), `notes: { note: string; addedAt: string }[]`, `snapshots: PoolSnapshotSchema[]` (maks 48 → ~4 jam @ 5 menit), `cooldownUntil` (optional ISO).
@@ -1563,7 +1760,7 @@ Menyediakan ingatan per-pool seperti `pool-memory.js` di repo lama: setiap alama
 - **Adapter:**
   - `src/adapters/storage/PoolMemoryRepository.ts`
     - Interface: `get(poolAddress): Promise<PoolMemoryEntry | null>`, `upsert(poolAddress, patcher: (cur|null) => PoolMemoryEntry): Promise<PoolMemoryEntry>`, `listAll(): Promise<PoolMemoryEntry[]>`, `addNote(poolAddress, note)`, `setCooldown(poolAddress, untilIso)`.
-    - `File` impl di atas FileStore; satu file JSON `data/pool-memory.json` dengan keyed lock — path unik per pool address *tidak* diperlukan karena file kecil dan writer tunggal.
+    - `File` impl di atas FileStore; satu file JSON `data/pool-memory.json` dengan keyed lock — path unik per pool address _tidak_ diperlukan karena file kecil dan writer tunggal.
 - **Domain rule:**
   - `src/domain/rules/poolMemoryRules.ts`
     - Pure:
@@ -1589,11 +1786,13 @@ Menyediakan ingatan per-pool seperti `pool-memory.js` di repo lama: setiap alama
   - `pool cooldown_clear <address>`.
 
 ### Output
+
 - File `pool-memory.json` otomatis dipopulasikan setiap close.
 - Screening menolak pool yang sedang cooldown.
 - AI shortlist prompt berisi konteks historis per pool.
 
 ### Tests
+
 - `tests/unit/domain/poolMemoryRules.test.ts`:
   - `computePoolAggregates` pada fixture 3/5/0 deploy.
   - `buildPoolRecallString` menghasilkan lines yang benar (deploy history + trend OOR + last note).
@@ -1608,11 +1807,13 @@ Menyediakan ingatan per-pool seperti `pool-memory.js` di repo lama: setiap alama
   - Prompt mengandung `### POOL MEMORY` untuk tiap kandidat.
 
 ### DoD
+
 - Semua close menghasilkan entry pool-memory yang konsisten.
 - Screening tidak pernah memilih pool dalam cooldown.
 - AI shortlist selalu melihat pool-memory (wajib, sama seperti lessons).
 
 ### Prompt vibecode
+
 “Add a per-pool deploy-history store (port `/meredian-fixed/pool-memory.js`) with a `PoolMemoryRepository`, pure aggregate rules, `recordPoolDeploy` and `recordPoolSnapshot` usecases, cooldown-based screening filter, and a mandatory `### POOL MEMORY` block injected into the AI shortlist prompt. Cooldown triggers on low-yield closes (default 4h).”
 
 ---
@@ -1620,9 +1821,11 @@ Menyediakan ingatan per-pool seperti `pool-memory.js` di repo lama: setiap alama
 ## Batch 17.4 — Darwinian signal weights (opsional, stretch)
 
 ### Tujuan
+
 Mengotomatisasi tuning bobot signal pada scoring engine berdasarkan korelasi historis antara nilai signal saat entry dan outcome close — mirip `signal-weights.js` di repo lama. Memerlukan Batch 17.1 (performance records) + Batch 17.2 (runtime policy store) sudah jalan.
 
 ### Bangun
+
 - `src/domain/entities/SignalWeights.ts` — Zod schema: `Record<signalKey, { weight: number; sampleSize: number; lastAdjustedAt: string }>`. `signalKey` ∈ set yang dipakai oleh `screeningRules.scoreCandidate` (mis. `feeTvlRatio`, `organicScore`, `narrativeBoost`, dst — daftar eksplisit di `domain/rules/screeningRules.ts`).
 - `src/domain/rules/signalWeightRules.ts` — pure `recalculateWeights({ performance, currentWeights, config }): { changes: Partial<SignalWeights>; rationale }`. Algoritma:
   - Hitung korelasi antara nilai signal (dinormalkan) dan `pnlPct` per record.
@@ -1633,19 +1836,23 @@ Mengotomatisasi tuning bobot signal pada scoring engine berdasarkan korelasi his
 - Scoring di `domain/rules/screeningRules.ts` membaca weights via parameter `signalWeights` (suntik dari provider). Tidak mutasi global.
 
 ### Output
+
 - Saat `darwin.enabled = true`, bobot signal screening menyesuaikan pelan-pelan dengan performa historis. Log audit lengkap.
 
 ### Tests
+
 - `tests/unit/domain/signalWeightRules.test.ts`: korelasi positif kuat → weight naik ≤ 20%; sample kecil → no-op; clamp jalan.
 - `tests/unit/usecases/maybeRecalibrateSignalWeights.test.ts`: flag off → skip; flag on + kelipatan 10 → apply.
 - `tests/integration/screeningUsesDarwinWeights.test.ts`: scoring output berubah setelah rekalibrasi.
 
 ### DoD
+
 - Bendera default off — tidak mengganggu lifecycle inti.
 - Semua perubahan weight tercatat di journal + lesson.
 - Tidak ada path di screening yang membypass `signalWeights` saat flag on.
 
 ### Prompt vibecode
+
 “Add an optional Darwinian signal-weight calibration layer (port `/meredian-fixed/signal-weights.js`) behind `config.darwin.enabled`. Pure `recalculateWeights` rule, `SignalWeightsStore`, a `maybeRecalibrateSignalWeights` usecase called every 10 closed positions, screening scorer reads weights via a provider, and journal+lesson audit for each adjustment.”
 
 ---
@@ -1653,9 +1860,11 @@ Mengotomatisasi tuning bobot signal pada scoring engine berdasarkan korelasi his
 ## Batch 18 — Hardening dan live-readiness checklist
 
 ### Tujuan
+
 Menyiapkan supervised live testing.
 
 ### Bangun
+
 - alert stuck action
 - alert pending reconcile
 - metrics summary
@@ -1664,19 +1873,23 @@ Menyiapkan supervised live testing.
 - startup recovery checklist
 
 ### Output
+
 - release candidate untuk supervised live run
 
 ### Tests
+
 - startup recovery after crash
 - log redaction
 - alert generation
 
 ### DoD
+
 - regression suite inti lulus
 - no secret in logs/package
 - operator bisa membedakan healthy vs unsafe state
 
 ### Prompt vibecode
+
 “Add hardening features for live-readiness: startup recovery checks, alerting for stuck actions, log redaction, metrics summaries, and packaging cleanup. Provide a supervised-live checklist.”
 
 ---
@@ -1684,9 +1897,11 @@ Menyiapkan supervised live testing.
 ## Batch 19 — Config knobs parity & operator controls (low effort, high value)
 
 ### Tujuan
+
 Menutup gap fitur repo lama yang high-value tetapi relatif murah diport ke V2: screening horizon/timeframe, age/ATH/profitability knobs, dual-unit risk target, mode tampilan SOL, dan panic-button operator. Batch ini sengaja diprioritaskan lebih dulu karena mayoritas berupa config schema + pure rule + operator surface.
 
 ### Bangun
+
 - **Screening timeframe**
   - Tambah `screening.timeframe` dengan enum minimal `"5m" | "1h" | "24h"`.
   - Timeframe ini dibawa ke screening/runtime gateway request agar operator bisa memilih antara fresh/liquid pools vs aged pools tanpa restart/wiring baru.
@@ -1715,11 +1930,13 @@ Menutup gap fitur repo lama yang high-value tetapi relatif murah diport ke V2: s
   - Command ini tidak boleh bypass queue/write boundary lain; cukup mengubah runtime guard state/policy override yang resmi.
 
 ### Output
+
 - Operator bisa mengganti screening horizon dan risk target tanpa refactor runtime.
 - Risk layer mendukung target/loss dalam SOL maupun %.
 - Panic button tersedia untuk menghentikan deploy baru saat market crash.
 
 ### Tests
+
 - screening timeframe diteruskan ke boundary/runtime request.
 - token age / ATH / min fee per TVL 24h memblok candidate yang tidak sesuai.
 - daily profit target memicu alert/report.
@@ -1727,11 +1944,13 @@ Menutup gap fitur repo lama yang high-value tetapi relatif murah diport ke V2: s
 - operator command `circuit_breaker_trip` / `clear` menutup/membuka deploy baru secara deterministic.
 
 ### DoD
+
 - Semua knob baru tervalidasi di schema.
 - Semua rule baru deterministic dan punya regression test.
 - Tidak ada command operator yang bypass queue atau write directly ke posisi/action lifecycle.
 
 ### Prompt vibecode
+
 “Add Batch 19 config/runtime parity features from the legacy bot: screening timeframe (5m/1h/24h), token age min/max, ATH filter, minFeePerTvl24h, dailyProfitTargetSol, maxDailyLossSol alongside existing percent loss guard, reporting.solMode, and manual circuit breaker operator commands. Keep all new behavior schema-driven, deterministic, and regression-tested.”
 
 ---
@@ -1739,9 +1958,11 @@ Menutup gap fitur repo lama yang high-value tetapi relatif murah diport ke V2: s
 ## Batch 20 — Enrichment, scheduling, and operator UX (medium effort)
 
 ### Tujuan
+
 Menambah fitur yang meningkatkan kualitas screening, efisiensi runtime, dan UX operator: adaptive interval, momentum filter, token narrative enrichment, briefing harian, dan auto-swap setelah claim.
 
 ### Bangun
+
 - **Adaptive screening interval**
   - Jangan hardcode WIB.
   - Tambah config seperti `screening.peakHours: [{ start, end, intervalSec }]` + timezone-aware evaluation.
@@ -1759,11 +1980,13 @@ Menambah fitur yang meningkatkan kualitas screening, efisiensi runtime, dan UX o
   - Flow harus tetap queue-safe dan reconciliation-safe.
 
 ### Output
+
 - Screening cadence lebih efisien.
 - Operator mendapat morning/evening briefing yang lebih actionable.
 - Claim flow bisa langsung mengurangi token risk lewat swap otomatis bila diaktifkan.
 
 ### Tests
+
 - adaptive interval memilih slot interval sesuai config time window.
 - volume trend filter memblok candidate downtrend.
 - narrative enrichment masuk ke screening/advisory context.
@@ -1771,11 +1994,13 @@ Menambah fitur yang meningkatkan kualitas screening, efisiensi runtime, dan UX o
 - auto-swap after claim menjaga status/action lifecycle tetap legal.
 
 ### DoD
+
 - Adaptive interval configurable lintas timezone.
 - Briefing tidak memaksa emoji.
 - Auto-swap claim tidak membuat chain action liar di luar queue/finalizer.
 
 ### Prompt vibecode
+
 “Add Batch 20 enrichment and UX features: adaptive screening intervals from configurable peak-hour windows (not hardcoded WIB), volume-trend screening filter, token narrative enrichment, optional-emoji daily briefing reports, and queue-safe auto-swap after claim.”
 
 ---
@@ -1783,9 +2008,11 @@ Menambah fitur yang meningkatkan kualitas screening, efisiensi runtime, dan UX o
 ## Batch 21 — Advanced exits & compounding automation (higher effort)
 
 ### Tujuan
+
 Menambah exit logic yang lebih adaptif dan automation compound yang dulu ada di repo lama, tetapi dengan state/lifecycle V2 yang benar.
 
 ### Bangun
+
 - **Trailing take profit**
   - Tambah config:
     - `management.trailingTakeProfitEnabled`
@@ -1797,19 +2024,23 @@ Menambah exit logic yang lebih adaptif dan automation compound yang dulu ada di 
   - Harus reuse action queue / idempotency / reconciliation-safe chaining, bukan shortcut langsung.
 
 ### Output
+
 - Exit logic bisa mempertahankan profit yang sudah terbentuk tanpa hanya mengandalkan stop-loss statis.
 - Fee compounding bisa dijalankan sebagai automation resmi, bukan tool manual terpisah.
 
 ### Tests
+
 - trailing take profit aktif setelah trigger tercapai dan close saat drawdown dari peak melampaui threshold.
 - peak state survive restart/reconciliation.
 - auto-compound berhasil di happy path dan aman di partial failure / timeout path.
 
 ### DoD
+
 - Tidak ada trailing logic yang bergantung pada state ephemeral saja.
 - Auto-compound tidak mem-bypass queue, tidak memecah idempotency, dan aman saat crash di tengah chain.
 
 ### Prompt vibecode
+
 “Add Batch 21 advanced exit and compounding flows: trailing take profit with persisted peak-PnL state, and queue-safe auto-compound fees (claim -> swap -> redeploy same pool) with reconciliation-safe crash handling.”
 
 ---
@@ -1817,6 +2048,7 @@ Menambah exit logic yang lebih adaptif dan automation compound yang dulu ada di 
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:
+
 1. Config + state machine
 2. Queue + persistence
 3. Deploy
@@ -1834,6 +2066,7 @@ Agar bug minimal, aktifkan fitur dalam urutan ini:
 15. Supervised live
 
 ### Jangan dibalik
+
 - Jangan pasang AI dulu baru state machine.
 - Jangan pasang real exchange/chain adapter dulu baru tests.
 - Jangan pasang Telegram write command sebelum queue stabil.
@@ -1843,6 +2076,7 @@ Agar bug minimal, aktifkan fitur dalam urutan ini:
 ## 18. Checklist “aman untuk lanjut ke batch berikutnya”
 
 Sebelum pindah batch, jawab “ya” untuk semua ini:
+
 - test batch sekarang hijau,
 - lint hijau,
 - tidak ada TODO kritis di lifecycle inti,
@@ -1882,13 +2116,14 @@ Kalau ada satu saja “tidak”, jangan lanjut ke batch berikutnya.
 Meridian V2 seharusnya dibangun sebagai **engine trading yang rapi dan bisa diaudit**, bukan sekadar kumpulan tool yang dipanggil AI.
 
 Jika mengikuti batch di atas dengan disiplin, hasilnya akan:
+
 - jauh lebih mudah dibangun lewat vibecode,
 - jauh lebih mudah dites,
 - jauh lebih mudah diaudit saat bug muncul,
 - dan jauh lebih aman untuk live trading bertahap.
 
-
 ## 20. Aturan implementasi greenfield
+
 1. Jangan copy-paste file runtime dari repo lama ke V2.
 2. Jangan mempertahankan flow lama hanya karena sudah pernah jalan. Semua flow harus lolos state machine V2.
 3. Yang boleh diwariskan hanya: nama rule, threshold bisnis, dan insight edge case.
@@ -1897,7 +2132,9 @@ Jika mengikuti batch di atas dengan disiplin, hasilnya akan:
 6. Jika ada konflik antara perilaku repo lama dan spesifikasi V2, **spesifikasi V2 yang menang**.
 
 ## 21. Definisi sukses “from scratch”
+
 V2 dianggap benar-benar from scratch bila:
+
 - repo baru dapat di-bootstrap tanpa menyalin source lama,
 - seluruh folder `src/` mengikuti struktur V2,
 - semua rule inti tertulis di domain/application layer baru,

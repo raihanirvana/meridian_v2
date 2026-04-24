@@ -12,27 +12,36 @@ import { FilePerformanceRepository } from "../../src/adapters/storage/Performanc
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
-import { executeOperatorCommand, parseOperatorCommand } from "../../src/app/usecases/operatorCommands.js";
+import {
+  executeOperatorCommand,
+  parseOperatorCommand,
+} from "../../src/app/usecases/operatorCommands.js";
 
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-lesson-cmd-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-lesson-cmd-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
 describe("operatorCommands lessons", () => {
   it("parses lessons commands", () => {
-    expect(parseOperatorCommand({ raw: "lessons list --role SCREENER --pinned --limit 5" })).toEqual(
+    expect(
+      parseOperatorCommand({
+        raw: "lessons list --role SCREENER --pinned --limit 5",
+      }),
+    ).toEqual(
       expect.objectContaining({
         kind: "LESSONS_LIST",
         role: "SCREENER",
@@ -40,10 +49,12 @@ describe("operatorCommands lessons", () => {
         limit: 5,
       }),
     );
-    expect(parseOperatorCommand({ raw: "lessons clear confirm=true" })).toEqual({
-      kind: "LESSONS_CLEAR",
-      confirm: true,
-    });
+    expect(parseOperatorCommand({ raw: "lessons clear confirm=true" })).toEqual(
+      {
+        kind: "LESSONS_CLEAR",
+        confirm: true,
+      },
+    );
   });
 
   it("executes lesson add/list and performance summary commands", async () => {
@@ -70,7 +81,9 @@ describe("operatorCommands lessons", () => {
     });
 
     const addResult = await executeOperatorCommand({
-      command: parseOperatorCommand({ raw: "lessons add Avoid thin pools after collapse" }),
+      command: parseOperatorCommand({
+        raw: "lessons add Avoid thin pools after collapse",
+      }),
       wallet: "wallet_001",
       requestedAt: "2026-04-22T12:00:00.000Z",
       actionQueue,

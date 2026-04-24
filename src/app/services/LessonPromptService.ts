@@ -55,9 +55,13 @@ export class DefaultLessonPromptService implements LessonPromptService {
         );
       }
 
-      const uniquePoolAddresses = [...new Set(
-        input.includePoolMemory.candidates.map((candidate) => candidate.poolAddress),
-      )];
+      const uniquePoolAddresses = [
+        ...new Set(
+          input.includePoolMemory.candidates.map(
+            (candidate) => candidate.poolAddress,
+          ),
+        ),
+      ];
       const recalls = (
         await Promise.all(
           uniquePoolAddresses.map(async (poolAddress) => {
@@ -77,10 +81,7 @@ export class DefaultLessonPromptService implements LessonPromptService {
       ).filter((recall): recall is string => recall !== null);
 
       if (recalls.length > 0) {
-        blocks.push([
-          "### POOL MEMORY",
-          ...recalls,
-        ].join("\n"));
+        blocks.push(["### POOL MEMORY", ...recalls].join("\n"));
       }
     }
 

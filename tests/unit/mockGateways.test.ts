@@ -299,9 +299,7 @@ describe("mock gateways", () => {
         candidates: [],
         systemPrompt: null,
       }),
-    ).rejects.toThrow(
-      /llm unavailable/i,
-    );
+    ).rejects.toThrow(/llm unavailable/i);
     await expect(failingPrice.getSolPriceUsd()).rejects.toThrow(
       /price unavailable/i,
     );

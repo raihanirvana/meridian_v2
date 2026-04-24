@@ -32,7 +32,9 @@ import { type Position } from "../../src/domain/entities/Position.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-rebalance-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-rebalance-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -220,9 +222,9 @@ class RebalanceTestGateway implements DlmmGateway {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -447,10 +449,12 @@ describe("rebalance flow", () => {
     );
 
     expect(queuedResult?.status).toBe("ABORTED");
-    expect((await actionRepository.get(action.actionId))?.status).toBe("ABORTED");
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "REBALANCE_BLOCKED_MANUAL_CIRCUIT_BREAKER",
+    expect((await actionRepository.get(action.actionId))?.status).toBe(
+      "ABORTED",
     );
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("REBALANCE_BLOCKED_MANUAL_CIRCUIT_BREAKER");
   });
 
   it("resumes rebalance redeploy confirmation when the new OPEN leg was committed before the action finished", async () => {
@@ -536,9 +540,9 @@ describe("rebalance flow", () => {
     expect(resumed.newPosition?.status).toBe("OPEN");
     expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
     expect((await stateRepository.get("pos_new"))?.status).toBe("OPEN");
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "REBALANCE_FINALIZED",
-    );
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("REBALANCE_FINALIZED");
   });
 
   it("aborts rebalance if closed capital is below the redeploy requirement", async () => {

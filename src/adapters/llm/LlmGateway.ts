@@ -2,49 +2,56 @@ import { z } from "zod";
 
 import { CandidateSchema } from "../../domain/entities/Candidate.js";
 import { PositionSchema } from "../../domain/entities/Position.js";
-import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
-export const CandidateRankingInputSchema = z.object({
-  candidates: CandidateSchema.array(),
-  systemPrompt: z.string().min(1).nullable(),
-}).strict();
+export const CandidateRankingInputSchema = z
+  .object({
+    candidates: CandidateSchema.array(),
+    systemPrompt: z.string().min(1).nullable(),
+  })
+  .strict();
 
-export const CandidateRankingResultSchema = z.object({
-  rankedCandidateIds: z.array(z.string().min(1)),
-  reasoning: z.string().min(1),
-}).strict();
+export const CandidateRankingResultSchema = z
+  .object({
+    rankedCandidateIds: z.array(z.string().min(1)),
+    reasoning: z.string().min(1),
+  })
+  .strict();
 
-export const ManagementExplanationInputSchema = z.object({
-  positionId: z.string().min(1),
-  proposedAction: z.enum([
-    "HOLD",
-    "CLAIM_FEES",
-    "PARTIAL_CLOSE",
-    "REBALANCE",
-    "CLOSE",
-    "RECONCILE_ONLY",
-  ]),
-  positionSnapshot: PositionSchema,
-  triggerReasons: z.array(z.string().min(1)),
-  systemPrompt: z.string().min(1).nullable(),
-}).strict();
+export const ManagementExplanationInputSchema = z
+  .object({
+    positionId: z.string().min(1),
+    proposedAction: z.enum([
+      "HOLD",
+      "CLAIM_FEES",
+      "PARTIAL_CLOSE",
+      "REBALANCE",
+      "CLOSE",
+      "RECONCILE_ONLY",
+    ]),
+    positionSnapshot: PositionSchema,
+    triggerReasons: z.array(z.string().min(1)),
+    systemPrompt: z.string().min(1).nullable(),
+  })
+  .strict();
 
-export const ManagementExplanationResultSchema = z.object({
-  action: z.enum([
-    "HOLD",
-    "CLAIM_FEES",
-    "PARTIAL_CLOSE",
-    "REBALANCE",
-    "CLOSE",
-    "RECONCILE_ONLY",
-  ]),
-  reasoning: z.string().min(1),
-}).strict();
+export const ManagementExplanationResultSchema = z
+  .object({
+    action: z.enum([
+      "HOLD",
+      "CLAIM_FEES",
+      "PARTIAL_CLOSE",
+      "REBALANCE",
+      "CLOSE",
+      "RECONCILE_ONLY",
+    ]),
+    reasoning: z.string().min(1),
+  })
+  .strict();
 
-export type CandidateRankingResult = z.infer<typeof CandidateRankingResultSchema>;
+export type CandidateRankingResult = z.infer<
+  typeof CandidateRankingResultSchema
+>;
 export type CandidateRankingInput = z.infer<typeof CandidateRankingInputSchema>;
 export type ManagementExplanationInput = z.infer<
   typeof ManagementExplanationInputSchema

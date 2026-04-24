@@ -21,6 +21,6 @@ describe("logger redaction", () => {
     expect(JSON.stringify(redacted)).not.toContain("top-secret");
     expect(JSON.stringify(redacted)).not.toContain("screening-secret");
     expect(JSON.stringify(redacted)).toContain("[REDACTED]");
-    expect(JSON.stringify(redacted)).toContain("\"safe\":\"ok\"");
+    expect(JSON.stringify(redacted)).toContain('"safe":"ok"');
   });
 });

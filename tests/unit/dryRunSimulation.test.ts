@@ -26,7 +26,9 @@ import { runDryRunSimulation } from "../../src/app/usecases/runDryRunSimulation.
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-b17-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-b17-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -63,15 +65,18 @@ async function runScenarioPack(pack: SimulationScenarioPack) {
     riskPolicy: pack.riskPolicy,
     ...(pack.rebalancePlanner === undefined
       ? {}
-      : { rebalancePlanner: ({ position }) => pack.rebalancePlanner?.({ position }) ?? null }),
+      : {
+          rebalancePlanner: ({ position }) =>
+            pack.rebalancePlanner?.({ position }) ?? null,
+        }),
   });
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -162,7 +167,9 @@ describe("dry-run simulation harness", () => {
     const result = await runScenarioPack(createCircuitBreakerScenarioPack());
 
     expect(result.cycles).toHaveLength(2);
-    expect(result.cycles[0]?.management.portfolioState?.circuitBreakerState).toBe("ON");
+    expect(
+      result.cycles[0]?.management.portfolioState?.circuitBreakerState,
+    ).toBe("ON");
     expect(result.cycles[0]?.management.positionResults).toEqual([
       expect.objectContaining({
         managementAction: "CLOSE",
@@ -208,17 +215,21 @@ describe("dry-run simulation harness", () => {
       initialPositions: [],
       initialActions: [],
       initialJournalEvents: [],
-      steps: [{
-        timestamp: "2026-04-21T00:00:00.000Z",
-        walletBalanceSol: 1,
-        solPriceUsd: 50,
-        onChainPositions: [],
-        signalsByPositionId: {},
-      }],
-      deployResponses: [{
-        type: "timeout",
-        timeoutMs: 30_000,
-      }],
+      steps: [
+        {
+          timestamp: "2026-04-21T00:00:00.000Z",
+          walletBalanceSol: 1,
+          solPriceUsd: 50,
+          onChainPositions: [],
+          signalsByPositionId: {},
+        },
+      ],
+      deployResponses: [
+        {
+          type: "timeout",
+          timeoutMs: 30_000,
+        },
+      ],
       closeResponses: [],
       claimFeesResponses: [],
       partialCloseResponses: [],

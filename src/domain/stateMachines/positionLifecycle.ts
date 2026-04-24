@@ -1,7 +1,4 @@
-import {
-  type PositionStatus,
-  PositionStatusSchema,
-} from "../types/enums.js";
+import { type PositionStatus, PositionStatusSchema } from "../types/enums.js";
 
 const BASE_POSITION_TRANSITIONS = {
   DRAFT: ["DEPLOY_REQUESTED"],
@@ -16,7 +13,12 @@ const BASE_POSITION_TRANSITIONS = {
     "CLOSE_REQUESTED",
     "RECONCILIATION_REQUIRED",
   ],
-  HOLD: ["OPEN", "MANAGEMENT_REVIEW", "CLOSE_REQUESTED", "RECONCILIATION_REQUIRED"],
+  HOLD: [
+    "OPEN",
+    "MANAGEMENT_REVIEW",
+    "CLOSE_REQUESTED",
+    "RECONCILIATION_REQUIRED",
+  ],
   CLAIM_REQUESTED: ["CLAIMING", "FAILED", "ABORTED"],
   CLAIMING: ["CLAIM_CONFIRMED", "RECONCILIATION_REQUIRED", "FAILED", "ABORTED"],
   CLAIM_CONFIRMED: ["OPEN", "MANAGEMENT_REVIEW", "RECONCILING"],
@@ -41,7 +43,14 @@ const BASE_POSITION_TRANSITIONS = {
   REDEPLOY_REQUESTED: ["REDEPLOYING", "FAILED", "ABORTED"],
   REDEPLOYING: ["OPEN", "RECONCILIATION_REQUIRED", "FAILED", "ABORTED"],
   RECONCILIATION_REQUIRED: ["RECONCILING", "FAILED", "ABORTED"],
-  RECONCILING: ["OPEN", "MANAGEMENT_REVIEW", "HOLD", "CLOSED", "FAILED", "ABORTED"],
+  RECONCILING: [
+    "OPEN",
+    "MANAGEMENT_REVIEW",
+    "HOLD",
+    "CLOSED",
+    "FAILED",
+    "ABORTED",
+  ],
   CLOSED: [],
   FAILED: ["RECONCILIATION_REQUIRED", "ABORTED"],
   ABORTED: [],
@@ -64,7 +73,11 @@ export function canTransitionPositionStatus(
   PositionStatusSchema.parse(from);
   PositionStatusSchema.parse(to);
 
-  if (GLOBAL_POSITION_ESCALATIONS.has(to) && from !== "CLOSED" && from !== "ABORTED") {
+  if (
+    GLOBAL_POSITION_ESCALATIONS.has(to) &&
+    from !== "CLOSED" &&
+    from !== "ABORTED"
+  ) {
     return true;
   }
 

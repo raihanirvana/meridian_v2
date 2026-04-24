@@ -715,6 +715,158 @@ describe("runtime supervisor", () => {
     });
   });
 
+  it("blocks auto deploy from shortlist when portfolio risk guardrails reject it", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    const userConfig = buildUserConfig({
+      risk: {
+        maxConcurrentPositions: 3,
+        maxCapitalUsagePct: 1,
+        minReserveUsd: 0.5,
+        maxTokenExposurePct: 35,
+        maxPoolExposurePct: 40,
+        maxRebalancesPerPosition: 2,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        maxNewDeploysPerHour: 2,
+      },
+      deploy: {
+        defaultAmountSol: 0.25,
+        minAmountSol: 0.1,
+        autoDeployFromShortlist: true,
+        maxAutoDeploysPerCycle: 1,
+        strategy: "bid_ask",
+        binsBelow: 69,
+        binsAbove: 0,
+        slippageBps: 300,
+      },
+      runtime: {
+        dryRun: false,
+        logLevel: "info",
+        operatorStdinEnabled: true,
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig,
+      stores,
+      gateways: {
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [buildCandidate()],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "error",
+            error: new Error("deploy should not run when risk guard blocks"),
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              binStep: 80,
+              activeBin: 100,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    expect(await stores.actionRepository.listByStatuses(["QUEUED"])).toEqual(
+      [],
+    );
+    expect(
+      (await stores.journalRepository.list()).map((event) => event.eventType),
+    ).toContain("DEPLOY_REQUEST_BLOCKED_BY_RISK");
+  });
+
   it("does not enqueue auto deploy actions while runtime dryRun is enabled", async () => {
     const directory = await makeTempDir();
     const stores = createRuntimeStores({

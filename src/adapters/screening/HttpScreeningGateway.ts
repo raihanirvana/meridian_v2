@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { CandidateSchema, type Candidate } from "../../domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../domain/entities/Candidate.js";
 import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
 
 import {
@@ -26,7 +29,9 @@ export class HttpScreeningGateway implements ScreeningGateway {
       adapterName: "HttpScreeningGateway",
       baseUrl: options.baseUrl,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       defaultHeaders:
         options.apiKey === undefined ? {} : { "x-api-key": options.apiKey },
     });

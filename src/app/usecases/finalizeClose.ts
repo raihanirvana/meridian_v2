@@ -9,7 +9,10 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
@@ -68,11 +71,7 @@ export interface FinalizeCloseInput {
 export interface FinalizeCloseResult {
   action: Action;
   position: Position | null;
-  outcome:
-    | "FINALIZED"
-    | "TIMED_OUT"
-    | "RECONCILIATION_REQUIRED"
-    | "UNCHANGED";
+  outcome: "FINALIZED" | "TIMED_OUT" | "RECONCILIATION_REQUIRED" | "UNCHANGED";
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -89,9 +88,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -123,10 +122,13 @@ function buildCloseConfirmedPosition(input: {
   now: string;
 }): Position {
   const rangeLowerBin =
-    input.confirmedPosition.rangeLowerBin ?? input.closingPosition.rangeLowerBin;
+    input.confirmedPosition.rangeLowerBin ??
+    input.closingPosition.rangeLowerBin;
   const rangeUpperBin =
-    input.confirmedPosition.rangeUpperBin ?? input.closingPosition.rangeUpperBin;
-  const activeBin = input.confirmedPosition.activeBin ?? input.closingPosition.activeBin;
+    input.confirmedPosition.rangeUpperBin ??
+    input.closingPosition.rangeUpperBin;
+  const activeBin =
+    input.confirmedPosition.activeBin ?? input.closingPosition.activeBin;
   const closeConfirmedStatus = transitionPositionStatus(
     input.closingPosition.status,
     "CLOSE_CONFIRMED",
@@ -162,7 +164,10 @@ function inferCloseConfirmedPosition(
   actionId: string,
   now: string,
 ): Position | null {
-  if (confirmedPosition !== null && confirmedPosition.status === "CLOSE_CONFIRMED") {
+  if (
+    confirmedPosition !== null &&
+    confirmedPosition.status === "CLOSE_CONFIRMED"
+  ) {
     return confirmedPosition;
   }
 
@@ -170,12 +175,10 @@ function inferCloseConfirmedPosition(
     useOpenOnlyReadModel &&
     confirmedPosition === null &&
     closingPosition !== null &&
-    (
-      closingPosition.status === "CLOSING" ||
+    (closingPosition.status === "CLOSING" ||
       closingPosition.status === "CLOSE_CONFIRMED" ||
       closingPosition.status === "RECONCILING" ||
-      closingPosition.status === "CLOSED"
-    )
+      closingPosition.status === "CLOSED")
   ) {
     return buildCloseConfirmedPosition({
       confirmedPosition: closingPosition,
@@ -209,7 +212,10 @@ function buildClosedPosition(input: {
 }): Position {
   return PositionSchema.parse({
     ...input.reconcilingPosition,
-    status: transitionPositionStatus(input.reconcilingPosition.status, "CLOSED"),
+    status: transitionPositionStatus(
+      input.reconcilingPosition.status,
+      "CLOSED",
+    ),
     closedAt: input.reconcilingPosition.closedAt ?? input.now,
     currentValueBase: 0,
     currentValueUsd: 0,
@@ -228,7 +234,10 @@ function buildReconciliationRequiredPosition(
 ): Position {
   return PositionSchema.parse({
     ...position,
-    status: transitionPositionStatus(position.status, "RECONCILIATION_REQUIRED"),
+    status: transitionPositionStatus(
+      position.status,
+      "RECONCILIATION_REQUIRED",
+    ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: true,
@@ -266,14 +275,18 @@ export async function finalizeClose(
     );
   }
 
-  const closeResult = CloseActionResultPayloadSchema.parse(action.resultPayload);
+  const closeResult = CloseActionResultPayloadSchema.parse(
+    action.resultPayload,
+  );
   const positionLock = input.positionLock ?? new PositionLock();
 
   return walletLock.withLock(action.wallet, () =>
     positionLock.withLock(action.positionId, async () => {
       const latestAction = await input.actionRepository.get(action.actionId);
       if (latestAction === null) {
-        throw new Error(`Close action disappeared during finalization: ${action.actionId}`);
+        throw new Error(
+          `Close action disappeared during finalization: ${action.actionId}`,
+        );
       }
 
       assertCloseAction(latestAction);
@@ -297,8 +310,12 @@ export async function finalizeClose(
         );
       }
 
-      const payload = CloseActionRequestPayloadSchema.parse(latestAction.requestPayload);
-      const closingPosition = await input.stateRepository.get(latestAction.positionId);
+      const payload = CloseActionRequestPayloadSchema.parse(
+        latestAction.requestPayload,
+      );
+      const closingPosition = await input.stateRepository.get(
+        latestAction.positionId,
+      );
       const confirmedPosition = await input.dlmmGateway.getPosition(
         latestAction.positionId,
       );
@@ -370,7 +387,8 @@ export async function finalizeClose(
 
       if (
         closingPosition === null ||
-        (closingPosition.status !== "CLOSING" && resumeReconcilingPosition === null) ||
+        (closingPosition.status !== "CLOSING" &&
+          resumeReconcilingPosition === null) ||
         closeConfirmedPositionLike === null
       ) {
         const sourcePosition = closingPosition ?? confirmedPosition;
@@ -393,12 +411,12 @@ export async function finalizeClose(
           status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
           error:
             closingPosition === null
-                ? `Close finalization requires reconciliation because local closing position is missing for ${latestAction.positionId}`
-                : closingPosition.status !== "CLOSING"
-                  ? `Close finalization requires reconciliation because local position status is ${closingPosition.status} for ${latestAction.positionId}`
-                  : closeConfirmedPositionLike === null
-                    ? `Close confirmation not found for position ${latestAction.positionId}`
-                    : `Close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
+              ? `Close finalization requires reconciliation because local closing position is missing for ${latestAction.positionId}`
+              : closingPosition.status !== "CLOSING"
+                ? `Close finalization requires reconciliation because local position status is ${closingPosition.status} for ${latestAction.positionId}`
+                : closeConfirmedPositionLike === null
+                  ? `Close confirmation not found for position ${latestAction.positionId}`
+                  : `Close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
           completedAt: now,
         } satisfies Action;
 
@@ -431,17 +449,20 @@ export async function finalizeClose(
         };
       }
 
-      const closeConfirmedPosition = resumeReconcilingPosition ?? closeConfirmedPositionLike;
+      const closeConfirmedPosition =
+        resumeReconcilingPosition ?? closeConfirmedPositionLike;
       if (closeConfirmedPosition === null) {
         throw new Error(
           `Close finalization could not infer confirmed close state for ${latestAction.positionId}`,
         );
       }
-      const reconcilingPosition = resumeReconcilingPosition ?? buildReconcilingPosition(
-        closeConfirmedPosition,
-        latestAction.actionId,
-        now,
-      );
+      const reconcilingPosition =
+        resumeReconcilingPosition ??
+        buildReconcilingPosition(
+          closeConfirmedPosition,
+          latestAction.actionId,
+          now,
+        );
       const reconcilingAction = {
         ...latestAction,
         status: transitionActionStatus(latestAction.status, "RECONCILING"),
@@ -466,7 +487,10 @@ export async function finalizeClose(
           actionId: latestAction.actionId,
           now,
         });
-        const accounting = buildCloseAccountingSummary(closedPosition, postCloseSwap);
+        const accounting = buildCloseAccountingSummary(
+          closedPosition,
+          postCloseSwap,
+        );
         await input.stateRepository.upsert(closedPosition);
 
         const doneAction = {

@@ -81,7 +81,9 @@ describe("positionLifecycle", () => {
   });
 
   it("rejects direct CLOSE_CONFIRMED to CLOSED transition", () => {
-    expect(canTransitionPositionStatus("CLOSE_CONFIRMED", "CLOSED")).toBe(false);
+    expect(canTransitionPositionStatus("CLOSE_CONFIRMED", "CLOSED")).toBe(
+      false,
+    );
     expect(() => transitionPositionStatus("CLOSE_CONFIRMED", "CLOSED")).toThrow(
       /Invalid position transition/i,
     );

@@ -48,7 +48,10 @@ function parseStore(raw: string | null, filePath: string): PoolMemoryStore {
 
   const validated = PoolMemoryStoreSchema.safeParse(parsed);
   if (!validated.success) {
-    throw new PoolMemoryStoreCorruptError(filePath, formatZodError(validated.error));
+    throw new PoolMemoryStoreCorruptError(
+      filePath,
+      formatZodError(validated.error),
+    );
   }
 
   return validated.data;
@@ -61,8 +64,15 @@ export interface PoolMemoryRepository {
     patcher: (current: PoolMemoryEntry | null) => PoolMemoryEntry,
   ): Promise<PoolMemoryEntry>;
   listAll(): Promise<PoolMemoryEntry[]>;
-  addNote(poolAddress: string, note: string, addedAt: string): Promise<PoolMemoryEntry>;
-  setCooldown(poolAddress: string, untilIso: string | null): Promise<PoolMemoryEntry>;
+  addNote(
+    poolAddress: string,
+    note: string,
+    addedAt: string,
+  ): Promise<PoolMemoryEntry>;
+  setCooldown(
+    poolAddress: string,
+    untilIso: string | null,
+  ): Promise<PoolMemoryEntry>;
 }
 
 function defaultEntry(poolAddress: string): PoolMemoryEntry {

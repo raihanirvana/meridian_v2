@@ -2,9 +2,7 @@ import type { ActionRepository } from "../../adapters/storage/ActionRepository.j
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import {
-  transitionActionStatus,
-} from "../../domain/stateMachines/actionLifecycle.js";
+import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { type ActionStatus } from "../../domain/types/enums.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
@@ -86,9 +84,8 @@ export class ActionQueue {
 
   public async enqueue(input: CreateQueuedActionInput): Promise<Action> {
     const action = createQueuedAction(input);
-    const enqueueResult = await this.actionRepository.upsertByIdempotencyKey(
-      action,
-    );
+    const enqueueResult =
+      await this.actionRepository.upsertByIdempotencyKey(action);
 
     if (!enqueueResult.created) {
       return enqueueResult.action;
@@ -145,9 +142,7 @@ export class ActionQueue {
     }
   }
 
-  public async processAll(
-    handler: QueueActionHandler,
-  ): Promise<Action[]> {
+  public async processAll(handler: QueueActionHandler): Promise<Action[]> {
     const processed: Action[] = [];
 
     while (!this.paused) {
@@ -163,9 +158,9 @@ export class ActionQueue {
   }
 
   private async claimNextAction(): Promise<Action | null> {
-    const queuedActions = await this.actionRepository.listByStatuses(
-      [...PROCESSABLE_STATUSES],
-    );
+    const queuedActions = await this.actionRepository.listByStatuses([
+      ...PROCESSABLE_STATUSES,
+    ]);
     const nextAction = queuedActions.find(
       (action) => !this.claimedActionIds.has(action.actionId),
     );
@@ -218,9 +213,7 @@ export class ActionQueue {
       resultPayload: executionResult.resultPayload ?? null,
       txIds: executionResult.txIds ?? [],
       error: executionResult.error ?? null,
-      completedAt: TERMINAL_STATUSES.has(nextStatus)
-        ? this.now()
-        : null,
+      completedAt: TERMINAL_STATUSES.has(nextStatus) ? this.now() : null,
     };
 
     await this.actionRepository.upsert(finalizedAction);
@@ -240,7 +233,10 @@ export class ActionQueue {
     return finalizedAction;
   }
 
-  private async failAction(runningAction: Action, error: unknown): Promise<Action> {
+  private async failAction(
+    runningAction: Action,
+    error: unknown,
+  ): Promise<Action> {
     const failedStatus = transitionActionStatus(runningAction.status, "FAILED");
     const failedAction: Action = {
       ...runningAction,

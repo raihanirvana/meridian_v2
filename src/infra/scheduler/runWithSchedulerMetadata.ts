@@ -1,6 +1,4 @@
-import type {
-  SchedulerMetadataStore,
-} from "./SchedulerMetadataStore.js";
+import type { SchedulerMetadataStore } from "./SchedulerMetadataStore.js";
 import type {
   SchedulerTriggerSource,
   SchedulerWorkerName,
@@ -40,7 +38,9 @@ export async function runWithSchedulerMetadata<T>(
     worker: input.worker,
     triggerSource: input.triggerSource ?? "cron",
     startedAt,
-    ...(input.intervalSec === undefined ? {} : { intervalSec: input.intervalSec }),
+    ...(input.intervalSec === undefined
+      ? {}
+      : { intervalSec: input.intervalSec }),
   });
 
   if (!started.started) {
@@ -66,7 +66,10 @@ export async function runWithSchedulerMetadata<T>(
       worker: input.worker,
       completedAt: input.now?.() ?? new Date().toISOString(),
       success: false,
-      error: error instanceof Error ? error.message : "unknown scheduler worker error",
+      error:
+        error instanceof Error
+          ? error.message
+          : "unknown scheduler worker error",
     });
     throw error;
   }

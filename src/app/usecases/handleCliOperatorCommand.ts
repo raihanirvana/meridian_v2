@@ -5,8 +5,10 @@ import {
   type OperatorCommandExecutionResult,
 } from "./operatorCommands.js";
 
-export interface HandleCliOperatorCommandInput
-  extends Omit<ExecuteOperatorCommandInput, "command"> {
+export interface HandleCliOperatorCommandInput extends Omit<
+  ExecuteOperatorCommandInput,
+  "command"
+> {
   rawCommand: string;
 }
 

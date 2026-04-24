@@ -51,7 +51,7 @@
     "rebalanceEnabled": true
   },
   "ai": {
-    "mode": "disabled",
+    "mode": "advisory",
     "generalModel": "gpt-4.1-mini",
     "managementModel": "gpt-4.1-mini",
     "screeningModel": "gpt-4.1-mini",
@@ -88,7 +88,7 @@
     "enabled": false
   },
   "runtime": {
-    "dryRun": true,
+    "dryRun": false,
     "logLevel": "info",
     "operatorStdinEnabled": true
   }

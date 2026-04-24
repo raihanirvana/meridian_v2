@@ -7,9 +7,7 @@ import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
-import {
-  DefaultLessonPromptService,
-} from "../../src/app/services/LessonPromptService.js";
+import { DefaultLessonPromptService } from "../../src/app/services/LessonPromptService.js";
 import {
   adviseManagementDecision,
   rankShortlistWithAi,
@@ -152,9 +150,9 @@ function buildManagementPolicy(
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -250,7 +248,9 @@ describe("AI advisory service", () => {
     expect(result.source).toBe("AI");
     expect(capturedSystemPrompt).toContain("### LESSONS LEARNED");
     expect(capturedSystemPrompt).toContain("── PINNED (1) ──");
-    expect(capturedSystemPrompt).toContain("PREFER pools with sustained fee density");
+    expect(capturedSystemPrompt).toContain(
+      "PREFER pools with sustained fee density",
+    );
   });
 
   it("falls back to deterministic shortlist when AI ranking is invalid", async () => {

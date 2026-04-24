@@ -24,7 +24,9 @@ export async function runScreeningWorker(
     ...(input.triggerSource === undefined
       ? {}
       : { triggerSource: input.triggerSource }),
-    ...(input.intervalSec === undefined ? {} : { intervalSec: input.intervalSec }),
+    ...(input.intervalSec === undefined
+      ? {}
+      : { intervalSec: input.intervalSec }),
     ...(input.now === undefined ? {} : { now: input.now }),
     run: async () => runScreeningCycle(input),
   });

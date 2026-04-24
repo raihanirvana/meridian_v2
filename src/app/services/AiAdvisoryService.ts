@@ -7,18 +7,22 @@ import {
   ManagementExplanationResultSchema,
   type LlmGateway,
 } from "../../adapters/llm/LlmGateway.js";
-import { CandidateSchema, type Candidate } from "../../domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../domain/entities/Candidate.js";
 import { type Position } from "../../domain/entities/Position.js";
 import {
   ManagementEvaluationResultSchema,
   type ManagementEvaluationResult,
 } from "../../domain/rules/managementRules.js";
 import { ManagementActionSchema } from "../../domain/types/enums.js";
-import { AiModeSchema, type UserConfig } from "../../infra/config/configSchema.js";
-import { logger } from "../../infra/logging/logger.js";
 import {
-  type LessonPromptService,
-} from "./LessonPromptService.js";
+  AiModeSchema,
+  type UserConfig,
+} from "../../infra/config/configSchema.js";
+import { logger } from "../../infra/logging/logger.js";
+import { type LessonPromptService } from "./LessonPromptService.js";
 
 const AdvisorySourceSchema = z.enum([
   "DISABLED",
@@ -92,7 +96,10 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-function shouldUseAi(mode: AiMode, llmGateway: LlmGateway | undefined): boolean {
+function shouldUseAi(
+  mode: AiMode,
+  llmGateway: LlmGateway | undefined,
+): boolean {
   return mode !== "disabled" && llmGateway !== undefined;
 }
 
@@ -229,7 +236,9 @@ export async function rankShortlistWithAi(
     );
 
     if (rankedShortlist === null) {
-      throw new Error("AI ranking response did not cover the shortlist exactly");
+      throw new Error(
+        "AI ranking response did not cover the shortlist exactly",
+      );
     }
 
     return RankedShortlistWithAiSchema.parse({
@@ -238,7 +247,10 @@ export async function rankShortlistWithAi(
       aiReasoning: ranking.reasoning,
     });
   } catch (error) {
-    logAiFallback("AI shortlist ranking fallback to deterministic order", error);
+    logAiFallback(
+      "AI shortlist ranking fallback to deterministic order",
+      error,
+    );
     return RankedShortlistWithAiSchema.parse({
       shortlist,
       source: "FALLBACK",
@@ -309,7 +321,10 @@ export async function adviseManagementDecision(
       aiReasoning: explanation.reasoning,
     });
   } catch (error) {
-    logAiFallback("AI management explanation fallback to deterministic result", error);
+    logAiFallback(
+      "AI management explanation fallback to deterministic result",
+      error,
+    );
     return ManagementDecisionAdvisorySchema.parse({
       source: "FALLBACK",
       aiSuggestedAction: null,

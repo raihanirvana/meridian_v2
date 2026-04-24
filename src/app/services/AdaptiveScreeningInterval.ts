@@ -59,7 +59,7 @@ export function resolveAdaptiveScreeningIntervalSec(
         currentMinutes,
         parseMinutes(window.start),
         parseMinutes(window.end),
-      )
+      ),
     )
     .map((window) => window.intervalSec);
 

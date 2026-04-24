@@ -5,7 +5,10 @@ import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
 import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
 import type { Position } from "../../domain/entities/Position.js";
-import type { ManagementPolicy, ManagementSignals } from "../../domain/rules/managementRules.js";
+import type {
+  ManagementPolicy,
+  ManagementSignals,
+} from "../../domain/rules/managementRules.js";
 import type { PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
 import { type ActionQueue } from "../services/ActionQueue.js";
@@ -17,13 +20,9 @@ import {
 } from "../simulation/ReplaySimulationGateway.js";
 import { processActionQueue } from "./processActionQueue.js";
 import { processCloseAction } from "./processCloseAction.js";
-import {
-  processDeployAction,
-} from "./processDeployAction.js";
+import { processDeployAction } from "./processDeployAction.js";
 import { processRebalanceAction } from "./processRebalanceAction.js";
-import {
-  type RebalanceActionRequestPayload,
-} from "./requestRebalance.js";
+import { type RebalanceActionRequestPayload } from "./requestRebalance.js";
 import {
   reconcilePortfolio,
   type ReconcilePortfolioResult,
@@ -128,7 +127,8 @@ export async function runDryRunSimulation(
       requestedBy: input.requestedBy ?? "system",
       previousPortfolioState,
       now: () => input.fakeClock.now(),
-      signalProvider: ({ position }) => input.replayGateway.getSignal(position.positionId),
+      signalProvider: ({ position }) =>
+        input.replayGateway.getSignal(position.positionId),
       ...(input.rebalancePlanner === undefined
         ? {}
         : {
@@ -173,7 +173,9 @@ export async function runDryRunSimulation(
               now: () => input.fakeClock.now(),
             });
           default:
-            throw new Error(`Simulation handler does not support ${action.type}`);
+            throw new Error(
+              `Simulation handler does not support ${action.type}`,
+            );
         }
       },
     });

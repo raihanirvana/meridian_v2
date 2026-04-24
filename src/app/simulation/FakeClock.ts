@@ -16,7 +16,9 @@ export class FakeClock {
 
   public advanceMinutes(minutes: number): string {
     if (!Number.isFinite(minutes)) {
-      throw new Error(`FakeClock.advanceMinutes requires a finite number, received ${minutes}`);
+      throw new Error(
+        `FakeClock.advanceMinutes requires a finite number, received ${minutes}`,
+      );
     }
 
     const next = new Date(Date.parse(this.currentIso) + minutes * 60_000);

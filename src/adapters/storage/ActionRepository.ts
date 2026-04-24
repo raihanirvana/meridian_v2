@@ -36,7 +36,9 @@ export class ActionRepository {
     return actions.find((action) => action.actionId === actionId) ?? null;
   }
 
-  public async findByIdempotencyKey(idempotencyKey: string): Promise<Action | null> {
+  public async findByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<Action | null> {
     const actions = await this.list();
     return (
       actions.find((action) => action.idempotencyKey === idempotencyKey) ?? null
@@ -50,7 +52,9 @@ export class ActionRepository {
     return actions
       .filter((action) => allowedStatuses.has(action.status))
       .sort((left, right) => {
-        const requestedAtOrder = left.requestedAt.localeCompare(right.requestedAt);
+        const requestedAtOrder = left.requestedAt.localeCompare(
+          right.requestedAt,
+        );
         if (requestedAtOrder !== 0) {
           return requestedAtOrder;
         }

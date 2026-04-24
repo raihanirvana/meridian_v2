@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
 import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const DeployLiquidityRequestSchema = z.object({
   wallet: z.string().min(1),
@@ -82,7 +82,9 @@ export const PoolInfoSchema = z.object({
   activeBin: z.number().int(),
 });
 
-export type DeployLiquidityRequest = z.infer<typeof DeployLiquidityRequestSchema>;
+export type DeployLiquidityRequest = z.infer<
+  typeof DeployLiquidityRequestSchema
+>;
 export type DeployLiquidityResult = z.infer<typeof DeployLiquidityResultSchema>;
 export type ClosePositionRequest = z.infer<typeof ClosePositionRequestSchema>;
 export type ClosePositionResult = z.infer<typeof ClosePositionResultSchema>;
@@ -94,13 +96,17 @@ export type PartialClosePositionRequest = z.infer<
 export type PartialClosePositionResult = z.infer<
   typeof PartialClosePositionResultSchema
 >;
-export type WalletPositionsSnapshot = z.infer<typeof WalletPositionsSnapshotSchema>;
+export type WalletPositionsSnapshot = z.infer<
+  typeof WalletPositionsSnapshotSchema
+>;
 export type PoolInfo = z.infer<typeof PoolInfoSchema>;
 
 export interface DlmmGateway {
   readonly reconciliationReadModel?: "open_only";
   getPosition(positionId: string): Promise<Position | null>;
-  deployLiquidity(request: DeployLiquidityRequest): Promise<DeployLiquidityResult>;
+  deployLiquidity(
+    request: DeployLiquidityRequest,
+  ): Promise<DeployLiquidityResult>;
   closePosition(request: ClosePositionRequest): Promise<ClosePositionResult>;
   claimFees(request: ClaimFeesRequest): Promise<ClaimFeesResult>;
   partialClosePosition(
@@ -145,9 +151,7 @@ export class MockDlmmGateway implements DlmmGateway {
     );
   }
 
-  public async claimFees(
-    request: ClaimFeesRequest,
-  ): Promise<ClaimFeesResult> {
+  public async claimFees(request: ClaimFeesRequest): Promise<ClaimFeesResult> {
     ClaimFeesRequestSchema.parse(request);
     return ClaimFeesResultSchema.parse(
       await resolveMockBehavior(this.behaviors.claimFees),

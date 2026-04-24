@@ -45,7 +45,9 @@ export class JupiterSolPriceGateway implements PriceGateway {
       adapterName: "JupiterSolPriceGateway",
       baseUrl: options.quoteBaseUrl ?? "https://api.jup.ag/swap/v1/",
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       defaultHeaders:
         options.apiKey === undefined ? {} : { "x-api-key": options.apiKey },
     });

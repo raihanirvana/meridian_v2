@@ -7,7 +7,9 @@ import {
   recalculateWeights,
 } from "../../../src/domain/rules/signalWeightRules.js";
 
-function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+function buildPerformance(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
   return {
     positionId: "pos_001",
     wallet: "wallet_001",
@@ -47,7 +49,8 @@ describe("signal weight rules", () => {
           positionId: `pos_${index}`,
           feeTvlRatio: 0.1 + index * 0.02,
           pnlPct: 1 + index * 2,
-        })),
+        }),
+      ),
       currentWeights,
     });
 
@@ -64,7 +67,8 @@ describe("signal weight rules", () => {
           positionId: `pos_${index}`,
           feeTvlRatio: 0.1 + index * 0.01,
           pnlPct: 1 + index,
-        })),
+        }),
+      ),
       currentWeights: createDefaultSignalWeights(),
     });
 
@@ -80,7 +84,8 @@ describe("signal weight rules", () => {
           positionId: `fee_${index}`,
           feeTvlRatio: 0.1 + index * 0.02,
           pnlPct: 1 + index * 2,
-        })),
+        }),
+      ),
       currentWeights: highWeights,
     });
 
@@ -92,7 +97,8 @@ describe("signal weight rules", () => {
           positionId: `organic_${index}`,
           organicScore: 60 + index * 2,
           pnlPct: -1 - index * 2,
-        })),
+        }),
+      ),
       currentWeights: lowWeights,
     });
 

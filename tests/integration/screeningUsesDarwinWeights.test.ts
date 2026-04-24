@@ -13,7 +13,9 @@ import { type ScreeningCandidateInput } from "../../src/domain/scoring/candidate
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-screening-darwin-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-screening-darwin-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -79,7 +81,9 @@ const scoringPolicy = {
   },
 } as const;
 
-function buildCandidate(overrides: Partial<ScreeningCandidateInput> = {}): ScreeningCandidateInput {
+function buildCandidate(
+  overrides: Partial<ScreeningCandidateInput> = {},
+): ScreeningCandidateInput {
   return {
     candidateId: "cand_001",
     poolAddress: "pool_001",
@@ -113,9 +117,9 @@ function buildCandidate(overrides: Partial<ScreeningCandidateInput> = {}): Scree
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -161,6 +165,8 @@ describe("screening uses darwin weights", () => {
       signalWeights: await provider.resolveSignalWeights(),
     });
 
-    expect(after.candidates[0]?.score).toBeGreaterThan(before.candidates[0]?.score ?? 0);
+    expect(after.candidates[0]?.score).toBeGreaterThan(
+      before.candidates[0]?.score ?? 0,
+    );
   }, 10_000);
 });

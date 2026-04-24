@@ -9,9 +9,7 @@ import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
-import {
-  buildPortfolioState,
-} from "../../src/app/services/PortfolioStateBuilder.js";
+import { buildPortfolioState } from "../../src/app/services/PortfolioStateBuilder.js";
 import type { PortfolioSnapshotStaleError } from "../../src/app/services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../../src/app/services/RecentDeployCounter.js";
 import { type Action } from "../../src/domain/entities/Action.js";
@@ -21,7 +19,9 @@ import { type Position } from "../../src/domain/entities/Position.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-b13-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-b13-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -86,7 +86,9 @@ function buildAction(overrides: Partial<Action> = {}): Action {
   };
 }
 
-function buildJournalEvent(overrides: Partial<JournalEvent> = {}): JournalEvent {
+function buildJournalEvent(
+  overrides: Partial<JournalEvent> = {},
+): JournalEvent {
   return {
     timestamp: "2026-04-21T12:00:00.000Z",
     eventType: "POSITION_UPDATED",
@@ -105,9 +107,9 @@ function buildJournalEvent(overrides: Partial<JournalEvent> = {}): JournalEvent 
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 

@@ -7,10 +7,7 @@ export class WalletLock {
     return this.keyedLock.isLocked(wallet);
   }
 
-  public async withLock<T>(
-    wallet: string,
-    work: () => Promise<T>,
-  ): Promise<T> {
+  public async withLock<T>(wallet: string, work: () => Promise<T>): Promise<T> {
     return this.keyedLock.withLock(wallet, work);
   }
 }

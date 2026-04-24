@@ -13,7 +13,9 @@ export const SignalWeightsStoreFileSchema = z
   })
   .strict();
 
-export type SignalWeightsStoreFile = z.infer<typeof SignalWeightsStoreFileSchema>;
+export type SignalWeightsStoreFile = z.infer<
+  typeof SignalWeightsStoreFileSchema
+>;
 
 export interface SignalWeightsStoreOptions extends FileStoreOptions {
   filePath: string;
@@ -65,7 +67,10 @@ function parseStore(
 
   const validated = SignalWeightsStoreFileSchema.safeParse(parsed);
   if (!validated.success) {
-    throw new SignalWeightsStoreCorruptError(filePath, formatZodError(validated.error));
+    throw new SignalWeightsStoreCorruptError(
+      filePath,
+      formatZodError(validated.error),
+    );
   }
 
   return validated.data;
@@ -76,9 +81,10 @@ export class FileSignalWeightsStore implements SignalWeightsStore {
   private readonly filePath: string;
 
   public constructor(options: SignalWeightsStoreOptions) {
-    this.fileStore = options.fs === undefined
-      ? new FileStore()
-      : new FileStore({ fs: options.fs });
+    this.fileStore =
+      options.fs === undefined
+        ? new FileStore()
+        : new FileStore({ fs: options.fs });
     this.filePath = options.filePath;
   }
 

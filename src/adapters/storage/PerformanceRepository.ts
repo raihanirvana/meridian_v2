@@ -73,42 +73,55 @@ export class FilePerformanceRepository implements PerformanceRepositoryInterface
       const store = parseStore(raw, this.filePath);
       const next = LessonStoreFileSchema.parse({
         ...store,
-        performance: [...store.performance, validated].sort((left, right) =>
-          left.recordedAt.localeCompare(right.recordedAt) ||
-          left.positionId.localeCompare(right.positionId),
+        performance: [...store.performance, validated].sort(
+          (left, right) =>
+            left.recordedAt.localeCompare(right.recordedAt) ||
+            left.positionId.localeCompare(right.positionId),
         ),
       });
       return JSON.stringify(next, null, 2);
     });
   }
 
-  public async list(input: {
-    sinceIso?: string;
-    limit?: number;
-  } = {}): Promise<PerformanceRecord[]> {
+  public async list(
+    input: {
+      sinceIso?: string;
+      limit?: number;
+    } = {},
+  ): Promise<PerformanceRecord[]> {
     const raw = await this.fileStore.readText(this.filePath);
     const performance = parseStore(raw, this.filePath).performance;
-    const filtered = input.sinceIso === undefined
-      ? performance
-      : performance.filter((record) => record.recordedAt >= input.sinceIso!);
-    const limited = input.limit === undefined
-      ? filtered
-      : filtered.slice(Math.max(filtered.length - input.limit, 0));
+    const filtered =
+      input.sinceIso === undefined
+        ? performance
+        : performance.filter((record) => record.recordedAt >= input.sinceIso!);
+    const limited =
+      input.limit === undefined
+        ? filtered
+        : filtered.slice(Math.max(filtered.length - input.limit, 0));
 
     return limited;
   }
 
   public async summary(): Promise<PerformanceSummary> {
     const performance = await this.list();
-    const totalPnlUsd = performance.reduce((sum, record) => sum + record.pnlUsd, 0);
-    const totalPnlPct = performance.reduce((sum, record) => sum + record.pnlPct, 0);
+    const totalPnlUsd = performance.reduce(
+      (sum, record) => sum + record.pnlUsd,
+      0,
+    );
+    const totalPnlPct = performance.reduce(
+      (sum, record) => sum + record.pnlPct,
+      0,
+    );
     const wins = performance.filter((record) => record.pnlPct > 0).length;
 
     return {
       totalPositionsClosed: performance.length,
       totalPnlUsd,
-      avgPnlPct: performance.length === 0 ? 0 : totalPnlPct / performance.length,
-      winRatePct: performance.length === 0 ? 0 : (wins / performance.length) * 100,
+      avgPnlPct:
+        performance.length === 0 ? 0 : totalPnlPct / performance.length,
+      winRatePct:
+        performance.length === 0 ? 0 : (wins / performance.length) * 100,
     };
   }
 

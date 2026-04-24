@@ -11,20 +11,24 @@ import { recordPoolDeploy } from "../../../src/app/usecases/recordPoolDeploy.js"
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-pool-deploy-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-pool-deploy-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
-function buildDeploy(overrides: Partial<Parameters<typeof recordPoolDeploy>[0]["deploy"]> = {}) {
+function buildDeploy(
+  overrides: Partial<Parameters<typeof recordPoolDeploy>[0]["deploy"]> = {},
+) {
   return {
     deployedAt: "2026-04-22T00:00:00.000Z",
     closedAt: "2026-04-22T02:00:00.000Z",
@@ -112,8 +116,8 @@ describe("recordPoolDeploy", () => {
     });
 
     expect(entry.cooldownUntil).toBe("2026-04-22T06:00:00.000Z");
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "POOL_MEMORY_UPDATED",
-    );
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("POOL_MEMORY_UPDATED");
   });
 });

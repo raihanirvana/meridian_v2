@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const SwapQuoteRequestSchema = z.object({
   inputMint: z.string().min(1),

@@ -12,14 +12,13 @@ import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlS
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { Action } from "../../domain/entities/Action.js";
 import { type PortfolioState } from "../../domain/entities/PortfolioState.js";
-import {
-  type PortfolioRiskPolicy,
-} from "../../domain/rules/riskRules.js";
+import { type PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
 import { createUlid } from "../../infra/id/createUlid.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import type { PolicyProvider } from "../services/PolicyProvider.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
+import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 
 import {
   requestClose,
@@ -196,10 +195,7 @@ function stripLeadingSlash(value: string): string {
   return value.startsWith("/") ? value.slice(1) : value;
 }
 
-function requireCapture(
-  value: string | undefined,
-  label: string,
-): string {
+function requireCapture(value: string | undefined, label: string): string {
   if (value === undefined) {
     throw new Error(`invalid ${label} command`);
   }
@@ -244,7 +240,9 @@ export function parseOperatorCommand(
     });
   }
 
-  const circuitBreakerTripMatch = normalized.match(/^circuit_breaker_trip(?:\s+(.+))?$/s);
+  const circuitBreakerTripMatch = normalized.match(
+    /^circuit_breaker_trip(?:\s+(.+))?$/s,
+  );
   if (circuitBreakerTripMatch !== null) {
     return OperatorCommandSchema.parse({
       kind: "CIRCUIT_BREAKER_TRIP",
@@ -277,7 +275,9 @@ export function parseOperatorCommand(
     });
   }
 
-  const poolCooldownMatch = normalized.match(/^pool\s+cooldown\s+(\S+)\s+(\d+(?:\.\d+)?)$/);
+  const poolCooldownMatch = normalized.match(
+    /^pool\s+cooldown\s+(\S+)\s+(\d+(?:\.\d+)?)$/,
+  );
   if (poolCooldownMatch !== null) {
     return OperatorCommandSchema.parse({
       kind: "POOL_COOLDOWN",
@@ -286,15 +286,22 @@ export function parseOperatorCommand(
     });
   }
 
-  const poolCooldownClearMatch = normalized.match(/^pool\s+cooldown_clear\s+(\S+)$/);
+  const poolCooldownClearMatch = normalized.match(
+    /^pool\s+cooldown_clear\s+(\S+)$/,
+  );
   if (poolCooldownClearMatch !== null) {
     return OperatorCommandSchema.parse({
       kind: "POOL_COOLDOWN_CLEAR",
-      poolAddress: requireCapture(poolCooldownClearMatch[1], "pool cooldown_clear"),
+      poolAddress: requireCapture(
+        poolCooldownClearMatch[1],
+        "pool cooldown_clear",
+      ),
     });
   }
 
-  const performanceHistoryMatch = normalized.match(/^performance-history(?:\s+(\d+))?(?:\s+(\d+))?$/);
+  const performanceHistoryMatch = normalized.match(
+    /^performance-history(?:\s+(\d+))?(?:\s+(\d+))?$/,
+  );
   if (performanceHistoryMatch !== null) {
     const [, hoursRaw, limitRaw] = performanceHistoryMatch;
     return OperatorCommandSchema.parse({
@@ -370,11 +377,16 @@ export function parseOperatorCommand(
     });
   }
 
-  const lessonsRemoveKeywordMatch = normalized.match(/^lessons\s+remove-by-keyword\s+(.+)$/s);
+  const lessonsRemoveKeywordMatch = normalized.match(
+    /^lessons\s+remove-by-keyword\s+(.+)$/s,
+  );
   if (lessonsRemoveKeywordMatch !== null) {
     return OperatorCommandSchema.parse({
       kind: "LESSONS_REMOVE_BY_KEYWORD",
-      keyword: requireCapture(lessonsRemoveKeywordMatch[1], "lessons remove-by-keyword").trim(),
+      keyword: requireCapture(
+        lessonsRemoveKeywordMatch[1],
+        "lessons remove-by-keyword",
+      ).trim(),
     });
   }
 
@@ -439,7 +451,9 @@ function requirePerformanceRepository(
   repository: PerformanceRepositoryInterface | undefined,
 ): PerformanceRepositoryInterface {
   if (repository === undefined) {
-    throw new Error("performance repository is required for performance commands");
+    throw new Error(
+      "performance repository is required for performance commands",
+    );
   }
 
   return repository;
@@ -479,7 +493,9 @@ function requireRuntimeControlStore(
   repository: RuntimeControlStore | undefined,
 ): RuntimeControlStore {
   if (repository === undefined) {
-    throw new Error("runtime control store is required for circuit breaker commands");
+    throw new Error(
+      "runtime control store is required for circuit breaker commands",
+    );
   }
 
   return repository;
@@ -512,7 +528,9 @@ function renderPortfolioStatus(input: {
   return lines.join("\n");
 }
 
-function renderPositions(positions: Awaited<ReturnType<StateRepository["list"]>>): string {
+function renderPositions(
+  positions: Awaited<ReturnType<StateRepository["list"]>>,
+): string {
   if (positions.length === 0) {
     return "no positions";
   }
@@ -600,7 +618,9 @@ export async function executeOperatorCommand(
             action.wallet === input.wallet &&
             PENDING_ACTION_STATUSES.has(action.status),
         )
-        .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt));
+        .sort((left, right) =>
+          left.requestedAt.localeCompare(right.requestedAt),
+        );
 
       return {
         command: input.command.kind,
@@ -632,8 +652,31 @@ export async function executeOperatorCommand(
         runtimeControlStore !== undefined &&
         (await runtimeControlStore.snapshot()).stopAllDeploys.active
       ) {
-        throw new Error("manual circuit breaker is active; deploy requests are blocked");
+        throw new Error(
+          "manual circuit breaker is active; deploy requests are blocked",
+        );
       }
+      const [portfolio, solPriceQuote, recentNewDeploys] = await Promise.all([
+        buildPortfolioState({
+          wallet: input.wallet,
+          minReserveUsd: input.riskPolicy.minReserveUsd,
+          dailyLossLimitPct: input.riskPolicy.dailyLossLimitPct,
+          circuitBreakerCooldownMin: input.riskPolicy.circuitBreakerCooldownMin,
+          stateRepository: input.stateRepository,
+          actionRepository: input.actionRepository,
+          journalRepository: input.journalRepository,
+          walletGateway: input.walletGateway,
+          priceGateway: input.priceGateway,
+          previousPortfolioState: input.previousPortfolioState ?? null,
+          now: requestedAt,
+        }),
+        input.priceGateway.getSolPriceUsd(),
+        countRecentNewDeploys({
+          wallet: input.wallet,
+          actionRepository: input.actionRepository,
+          now: requestedAt,
+        }),
+      ]);
       const action = await requestDeploy({
         actionQueue: input.actionQueue,
         wallet: input.wallet,
@@ -641,6 +684,13 @@ export async function executeOperatorCommand(
         requestedBy,
         requestedAt,
         journalRepository: input.journalRepository,
+        ...(runtimeControlStore === undefined ? {} : { runtimeControlStore }),
+        riskGuard: {
+          portfolio,
+          policy: input.riskPolicy,
+          recentNewDeploys,
+          solPriceUsd: solPriceQuote.priceUsd,
+        },
       });
 
       return {
@@ -655,7 +705,9 @@ export async function executeOperatorCommand(
         runtimeControlStore !== undefined &&
         (await runtimeControlStore.snapshot()).stopAllDeploys.active
       ) {
-        throw new Error("manual circuit breaker is active; rebalance requests are blocked");
+        throw new Error(
+          "manual circuit breaker is active; rebalance requests are blocked",
+        );
       }
       const action = await requestRebalance({
         actionQueue: input.actionQueue,
@@ -666,9 +718,7 @@ export async function executeOperatorCommand(
         requestedBy,
         requestedAt,
         journalRepository: input.journalRepository,
-        ...(runtimeControlStore === undefined
-          ? {}
-          : { runtimeControlStore }),
+        ...(runtimeControlStore === undefined ? {} : { runtimeControlStore }),
       });
 
       return {
@@ -682,13 +732,17 @@ export async function executeOperatorCommand(
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       const lessons = (await lessonRepository.list())
         .filter((lesson) =>
-          command.role === null ? true : lesson.role === null || lesson.role === command.role,
+          command.role === null
+            ? true
+            : lesson.role === null || lesson.role === command.role,
         )
         .filter((lesson) =>
           command.pinned === null ? true : lesson.pinned === command.pinned,
         )
         .filter((lesson) =>
-          command.tag === null ? true : lesson.tags.includes(command.tag.toLowerCase()),
+          command.tag === null
+            ? true
+            : lesson.tags.includes(command.tag.toLowerCase()),
         )
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, command.limit);
@@ -752,7 +806,10 @@ export async function executeOperatorCommand(
       const removed = await lessonRepository.remove(input.command.id);
       return {
         command: input.command.kind,
-        text: removed > 0 ? `lesson removed: ${input.command.id}` : `lesson not found: ${input.command.id}`,
+        text:
+          removed > 0
+            ? `lesson removed: ${input.command.id}`
+            : `lesson not found: ${input.command.id}`,
         actionId: null,
       };
     }
@@ -761,7 +818,11 @@ export async function executeOperatorCommand(
       const lessons = await lessonRepository.list();
       let removed = 0;
       for (const lesson of lessons) {
-        if (lesson.rule.toLowerCase().includes(input.command.keyword.toLowerCase())) {
+        if (
+          lesson.rule
+            .toLowerCase()
+            .includes(input.command.keyword.toLowerCase())
+        ) {
           removed += await lessonRepository.remove(lesson.id);
         }
       }
@@ -785,9 +846,10 @@ export async function executeOperatorCommand(
         input.performanceRepository,
       );
       const summary = await performanceRepository.summary();
-      const solPriceUsd = input.reportingSolMode === true
-        ? (await input.priceGateway.getSolPriceUsd()).priceUsd
-        : null;
+      const solPriceUsd =
+        input.reportingSolMode === true
+          ? (await input.priceGateway.getSolPriceUsd()).priceUsd
+          : null;
       return {
         command: input.command.kind,
         text: [
@@ -795,7 +857,9 @@ export async function executeOperatorCommand(
           `total pnl usd: ${summary.totalPnlUsd.toFixed(2)}`,
           ...(solPriceUsd === null
             ? []
-            : [`total pnl sol: ${(summary.totalPnlUsd / solPriceUsd).toFixed(4)}`]),
+            : [
+                `total pnl sol: ${(summary.totalPnlUsd / solPriceUsd).toFixed(4)}`,
+              ]),
           `avg pnl pct: ${summary.avgPnlPct.toFixed(2)}`,
           `win rate pct: ${summary.winRatePct.toFixed(2)}`,
         ].join("\n"),
@@ -837,29 +901,37 @@ export async function executeOperatorCommand(
       };
     }
     case "POLICY_SHOW": {
-      const runtimePolicyStore = requireRuntimePolicyStore(input.runtimePolicyStore);
+      const runtimePolicyStore = requireRuntimePolicyStore(
+        input.runtimePolicyStore,
+      );
       const policyProvider = requirePolicyProvider(input.policyProvider);
       const snapshot = await runtimePolicyStore.snapshot();
       const resolvedPolicy = await policyProvider.resolveScreeningPolicy();
 
       return {
         command: input.command.kind,
-        text: JSON.stringify({
-          policy: resolvedPolicy,
-          overrides: snapshot.overrides,
-          ...(snapshot.lastEvolvedAt === undefined
-            ? {}
-            : { lastEvolvedAt: snapshot.lastEvolvedAt }),
-          ...(snapshot.positionsAtEvolution === undefined
-            ? {}
-            : { positionsAtEvolution: snapshot.positionsAtEvolution }),
-          rationale: snapshot.rationale,
-        }, null, 2),
+        text: JSON.stringify(
+          {
+            policy: resolvedPolicy,
+            overrides: snapshot.overrides,
+            ...(snapshot.lastEvolvedAt === undefined
+              ? {}
+              : { lastEvolvedAt: snapshot.lastEvolvedAt }),
+            ...(snapshot.positionsAtEvolution === undefined
+              ? {}
+              : { positionsAtEvolution: snapshot.positionsAtEvolution }),
+            rationale: snapshot.rationale,
+          },
+          null,
+          2,
+        ),
         actionId: null,
       };
     }
     case "POLICY_RESET": {
-      const runtimePolicyStore = requireRuntimePolicyStore(input.runtimePolicyStore);
+      const runtimePolicyStore = requireRuntimePolicyStore(
+        input.runtimePolicyStore,
+      );
       await runtimePolicyStore.reset();
       return {
         command: input.command.kind,
@@ -868,9 +940,13 @@ export async function executeOperatorCommand(
       };
     }
     case "CIRCUIT_BREAKER_TRIP": {
-      const runtimeControlStore = requireRuntimeControlStore(input.runtimeControlStore);
+      const runtimeControlStore = requireRuntimeControlStore(
+        input.runtimeControlStore,
+      );
       const snapshot = await runtimeControlStore.tripStopAllDeploys({
-        ...(input.command.reason === undefined ? {} : { reason: input.command.reason }),
+        ...(input.command.reason === undefined
+          ? {}
+          : { reason: input.command.reason }),
         updatedAt: requestedAt,
       });
       await input.journalRepository.append({
@@ -888,15 +964,19 @@ export async function executeOperatorCommand(
       });
       return {
         command: input.command.kind,
-        text: snapshot.reason === undefined
-          ? "manual circuit breaker activated"
-          : `manual circuit breaker activated: ${snapshot.reason}`,
+        text:
+          snapshot.reason === undefined
+            ? "manual circuit breaker activated"
+            : `manual circuit breaker activated: ${snapshot.reason}`,
         actionId: null,
       };
     }
     case "CIRCUIT_BREAKER_CLEAR": {
-      const runtimeControlStore = requireRuntimeControlStore(input.runtimeControlStore);
-      const snapshot = await runtimeControlStore.clearStopAllDeploys(requestedAt);
+      const runtimeControlStore = requireRuntimeControlStore(
+        input.runtimeControlStore,
+      );
+      const snapshot =
+        await runtimeControlStore.clearStopAllDeploys(requestedAt);
       await input.journalRepository.append({
         timestamp: requestedAt,
         eventType: "CIRCUIT_BREAKER_MANUAL_CLEAR",
@@ -924,9 +1004,7 @@ export async function executeOperatorCommand(
       return {
         command: input.command.kind,
         text:
-          entry === null
-            ? "no pool memory"
-            : JSON.stringify(entry, null, 2),
+          entry === null ? "no pool memory" : JSON.stringify(entry, null, 2),
         actionId: null,
       };
     }
@@ -952,7 +1030,10 @@ export async function executeOperatorCommand(
       const untilIso = new Date(
         Date.parse(requestedAt) + input.command.hours * 60 * 60 * 1000,
       ).toISOString();
-      await poolMemoryRepository.setCooldown(input.command.poolAddress, untilIso);
+      await poolMemoryRepository.setCooldown(
+        input.command.poolAddress,
+        untilIso,
+      );
       return {
         command: input.command.kind,
         text: `pool cooldown set until ${untilIso}`,

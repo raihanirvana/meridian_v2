@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  CloseReasonSchema,
-  StrategySchema,
-} from "../types/enums.js";
+import { CloseReasonSchema, StrategySchema } from "../types/enums.js";
 
 const TimestampSchema = z.string().datetime();
 

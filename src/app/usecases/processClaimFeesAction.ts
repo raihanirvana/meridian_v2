@@ -8,7 +8,10 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
 
@@ -74,9 +77,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -101,7 +104,9 @@ function assertClaimAction(action: Action): asserts action is Action & {
   }
 }
 
-function toClaimRequestedStatus(status: Position["status"]): Position["status"] {
+function toClaimRequestedStatus(
+  status: Position["status"],
+): Position["status"] {
   switch (status) {
     case "OPEN":
       return transitionPositionStatus(
@@ -113,7 +118,9 @@ function toClaimRequestedStatus(status: Position["status"]): Position["status"] 
     case "PARTIAL_CLOSE_CONFIRMED":
       return transitionPositionStatus(status, "CLAIM_REQUESTED");
     default:
-      throw new Error(`Position status ${status} cannot transition to CLAIM_REQUESTED`);
+      throw new Error(
+        `Position status ${status} cannot transition to CLAIM_REQUESTED`,
+      );
   }
 }
 
@@ -142,7 +149,10 @@ function buildReconciliationRequiredPosition(
 ): Position {
   return PositionSchema.parse({
     ...position,
-    status: transitionPositionStatus(position.status, "RECONCILIATION_REQUIRED"),
+    status: transitionPositionStatus(
+      position.status,
+      "RECONCILIATION_REQUIRED",
+    ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: true,
@@ -154,9 +164,13 @@ export async function processClaimFeesAction(
 ): Promise<QueueExecutionResult> {
   assertClaimAction(input.action);
 
-  const payload = ClaimFeesActionRequestPayloadSchema.parse(input.action.requestPayload);
+  const payload = ClaimFeesActionRequestPayloadSchema.parse(
+    input.action.requestPayload,
+  );
   const now = nowTimestamp(input.now);
-  const currentPosition = await input.stateRepository.get(input.action.positionId);
+  const currentPosition = await input.stateRepository.get(
+    input.action.positionId,
+  );
 
   if (currentPosition === null) {
     throw new Error(
@@ -166,7 +180,8 @@ export async function processClaimFeesAction(
 
   assertClaimFeesRequestablePosition(currentPosition);
 
-  let claimResult: z.infer<typeof ClaimFeesActionResultPayloadSchema> | null = null;
+  let claimResult: z.infer<typeof ClaimFeesActionResultPayloadSchema> | null =
+    null;
 
   try {
     claimResult = ClaimFeesActionResultPayloadSchema.parse(

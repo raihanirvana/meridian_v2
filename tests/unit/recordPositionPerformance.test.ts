@@ -13,12 +13,16 @@ import { type PerformanceRecord } from "../../src/domain/entities/PerformanceRec
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-lessons-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-lessons-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
-function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+function buildPerformance(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
   return {
     positionId: "pos_001",
     wallet: "wallet_001",
@@ -51,9 +55,9 @@ function buildPerformance(overrides: Partial<PerformanceRecord> = {}): Performan
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -77,11 +81,11 @@ describe("recordPositionPerformance", () => {
     });
 
     expect(result.lesson?.id).toBe("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-    expect((await performanceRepository.list())).toHaveLength(1);
-    expect((await lessonRepository.list())).toHaveLength(1);
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "LESSON_RECORDED",
-    );
+    expect(await performanceRepository.list()).toHaveLength(1);
+    expect(await lessonRepository.list()).toHaveLength(1);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("LESSON_RECORDED");
   });
 
   it("skips suspicious unit mix records", async () => {
@@ -105,8 +109,8 @@ describe("recordPositionPerformance", () => {
       skipped: true,
       reason: "suspicious_unit_mix",
     });
-    expect((await performanceRepository.list())).toHaveLength(0);
-    expect((await lessonRepository.list())).toHaveLength(0);
+    expect(await performanceRepository.list()).toHaveLength(0);
+    expect(await lessonRepository.list()).toHaveLength(0);
   });
 
   it("stores neutral performance without creating lesson or journal event", async () => {
@@ -132,8 +136,8 @@ describe("recordPositionPerformance", () => {
 
     expect(result.performance?.positionId).toBe("pos_001");
     expect(result.lesson).toBeNull();
-    expect((await performanceRepository.list())).toHaveLength(1);
-    expect((await lessonRepository.list())).toHaveLength(0);
+    expect(await performanceRepository.list()).toHaveLength(1);
+    expect(await lessonRepository.list()).toHaveLength(0);
     expect(await journalRepository.list()).toHaveLength(0);
   });
 });

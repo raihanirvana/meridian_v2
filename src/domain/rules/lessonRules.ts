@@ -1,7 +1,4 @@
-import {
-  LessonSchema,
-  type Lesson,
-} from "../entities/Lesson.js";
+import { LessonSchema, type Lesson } from "../entities/Lesson.js";
 import {
   PerformanceRecordSchema,
   type PerformanceRecord,
@@ -130,11 +127,7 @@ export function deriveLesson(
     id: idGen(),
     rule,
     tags: collectTags(perf),
-    outcome: outcome === "good"
-      ? "good"
-      : outcome === "poor"
-        ? "poor"
-        : "bad",
+    outcome: outcome === "good" ? "good" : outcome === "poor" ? "poor" : "bad",
     role: null,
     pinned: false,
     pnlPct: perf.pnlPct,

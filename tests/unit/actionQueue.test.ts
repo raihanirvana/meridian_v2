@@ -7,24 +7,24 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
-import {
-  createIdempotencyKey,
-} from "../../src/app/services/ActionService.js";
+import { createIdempotencyKey } from "../../src/app/services/ActionService.js";
 import { KeyedLock } from "../../src/infra/locks/KeyedLock.js";
 
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-queue-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-queue-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -381,7 +381,10 @@ describe("ActionQueue", () => {
     let shouldThrow = true;
     const throwingWalletLock = {
       isLocked: () => false,
-      withLock: async <T>(_wallet: string, work: () => Promise<T>): Promise<T> => {
+      withLock: async <T>(
+        _wallet: string,
+        work: () => Promise<T>,
+      ): Promise<T> => {
         if (shouldThrow) {
           shouldThrow = false;
           throw new Error("wallet lock unavailable");

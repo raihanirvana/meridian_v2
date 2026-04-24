@@ -41,7 +41,9 @@ export class HttpTelegramNotifierGateway implements NotifierGateway {
       adapterName: "HttpTelegramNotifierGateway",
       baseUrl: `${z.url().parse(baseUrl).replace(/\/$/, "")}/`,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
     });
   }
 
@@ -49,7 +51,9 @@ export class HttpTelegramNotifierGateway implements NotifierGateway {
     return `bot${this.botToken}/${path}`;
   }
 
-  public async sendMessage(input: SendMessageInput): Promise<NotificationResult> {
+  public async sendMessage(
+    input: SendMessageInput,
+  ): Promise<NotificationResult> {
     const parsed = SendMessageInputSchema.parse(input);
     await this.client.request({
       method: "POST",

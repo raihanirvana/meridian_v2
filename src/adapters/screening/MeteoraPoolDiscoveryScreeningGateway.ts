@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { CandidateSchema, type Candidate } from "../../domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../domain/entities/Candidate.js";
 import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
 
 import {
@@ -69,7 +72,10 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function ageHoursFromTimestamp(value: unknown, nowMs: number): number | undefined {
+function ageHoursFromTimestamp(
+  value: unknown,
+  nowMs: number,
+): number | undefined {
   const timestamp = firstString(value);
   if (timestamp === undefined) {
     return undefined;
@@ -138,17 +144,24 @@ function extractFeePerTvl(input: {
   feeUsd: number;
   tvlUsd: number;
 }): number {
-  return normalizeRatio(
-    firstNumber(
-      input.pool.fee_per_tvl_24h,
-      input.pool.feePerTvl24h,
-      input.pool.fee_tvl_24h,
-      input.pool.feeTvl24h,
-    ),
-  ) || (input.tvlUsd > 0 ? (input.feeUsd / input.tvlUsd) * 100 : input.feeToTvlRatio);
+  return (
+    normalizeRatio(
+      firstNumber(
+        input.pool.fee_per_tvl_24h,
+        input.pool.feePerTvl24h,
+        input.pool.fee_tvl_24h,
+        input.pool.feeTvl24h,
+      ),
+    ) ||
+    (input.tvlUsd > 0
+      ? (input.feeUsd / input.tvlUsd) * 100
+      : input.feeToTvlRatio)
+  );
 }
 
-function extractPools(response: z.infer<typeof PoolDiscoveryResponseSchema>): Record<string, unknown>[] {
+function extractPools(
+  response: z.infer<typeof PoolDiscoveryResponseSchema>,
+): Record<string, unknown>[] {
   if (Array.isArray(response)) {
     return response;
   }
@@ -161,12 +174,16 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
   private readonly category: string;
   private readonly now: () => string;
 
-  public constructor(options: MeteoraPoolDiscoveryScreeningGatewayOptions = {}) {
+  public constructor(
+    options: MeteoraPoolDiscoveryScreeningGatewayOptions = {},
+  ) {
     this.client = new JsonHttpClient({
       adapterName: "MeteoraPoolDiscoveryScreeningGateway",
       baseUrl: options.baseUrl ?? DEFAULT_POOL_DISCOVERY_BASE_URL,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
     });
     this.category = options.category ?? "trending";
     this.now = options.now ?? (() => new Date().toISOString());
@@ -207,9 +224,10 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       },
       responseSchema: PoolDiscoveryResponseSchema,
     });
-    const pool = extractPools(response).find(
-      (item) => extractPoolAddress(item) === parsedPoolAddress,
-    ) ?? extractPools(response)[0];
+    const pool =
+      extractPools(response).find(
+        (item) => extractPoolAddress(item) === parsedPoolAddress,
+      ) ?? extractPools(response)[0];
 
     if (pool === undefined) {
       return CandidateDetailsSchema.parse({
@@ -228,8 +246,16 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
   private toCandidate(pool: Record<string, unknown>): Candidate | null {
     const poolAddress = extractPoolAddress(pool);
     const { tokenX, tokenY } = pickTokenRecords(pool);
-    const tokenXMint = firstString(tokenX.address, tokenX.mint, pool.token_x_mint);
-    const tokenYMint = firstString(tokenY.address, tokenY.mint, pool.token_y_mint);
+    const tokenXMint = firstString(
+      tokenX.address,
+      tokenX.mint,
+      pool.token_x_mint,
+    );
+    const tokenYMint = firstString(
+      tokenY.address,
+      tokenY.mint,
+      pool.token_y_mint,
+    );
     const binStep = extractBinStep(pool);
 
     if (
@@ -243,17 +269,18 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
 
     const now = this.now();
     const nowMs = Date.parse(now);
-    const symbolX = firstString(tokenX.symbol, pool.token_x_symbol) ?? "TOKEN_X";
-    const symbolY = firstString(tokenY.symbol, pool.token_y_symbol) ?? "TOKEN_Y";
-    const symbolPair = firstString(pool.name, pool.symbol_pair, pool.symbolPair) ??
+    const symbolX =
+      firstString(tokenX.symbol, pool.token_x_symbol) ?? "TOKEN_X";
+    const symbolY =
+      firstString(tokenY.symbol, pool.token_y_symbol) ?? "TOKEN_Y";
+    const symbolPair =
+      firstString(pool.name, pool.symbol_pair, pool.symbolPair) ??
       `${symbolX}-${symbolY}`;
-    const tvlUsd = firstNumber(
-      pool.active_tvl,
-      pool.activeTvl,
-      pool.tvl,
-      pool.liquidity,
-    ) ?? 0;
-    const volumeUsd = firstNumber(pool.volume, pool.volume_usd, pool.volumeUsd) ?? 0;
+    const tvlUsd =
+      firstNumber(pool.active_tvl, pool.activeTvl, pool.tvl, pool.liquidity) ??
+      0;
+    const volumeUsd =
+      firstNumber(pool.volume, pool.volume_usd, pool.volumeUsd) ?? 0;
     const feeUsd = firstNumber(pool.fee, pool.fee_usd, pool.feeUsd) ?? 0;
     const feeToTvlRatio = normalizeRatio(
       firstNumber(
@@ -270,37 +297,50 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       ageHoursFromTimestamp(
         pool.created_at ?? pool.createdAt,
         Number.isFinite(nowMs) ? nowMs : Date.now(),
-      ) ?? tokenAgeHours ?? 0;
+      ) ??
+      tokenAgeHours ??
+      0;
     const organicScore = clamp(
-      firstNumber(tokenX.organic_score, tokenX.organicScore, pool.organic_score) ??
-        0,
+      firstNumber(
+        tokenX.organic_score,
+        tokenX.organicScore,
+        pool.organic_score,
+      ) ?? 0,
       0,
       100,
     );
-    const holderCount =
-      Math.floor(
-        firstNumber(
-          pool.base_token_holders,
-          pool.baseTokenHolders,
-          tokenX.holders,
-          tokenX.holder_count,
-        ) ?? 0,
-      );
+    const holderCount = Math.floor(
+      firstNumber(
+        pool.base_token_holders,
+        pool.baseTokenHolders,
+        tokenX.holders,
+        tokenX.holder_count,
+      ) ?? 0,
+    );
     const topHolderPct = clamp(
-      firstNumber(tokenX.top10_holder_pct, tokenX.topHolderPct, pool.top_holder_pct) ??
-        0,
+      firstNumber(
+        tokenX.top10_holder_pct,
+        tokenX.topHolderPct,
+        pool.top_holder_pct,
+      ) ?? 0,
       0,
       100,
     );
     const botHolderPct = clamp(
-      firstNumber(tokenX.bot_holder_pct, tokenX.botHolderPct, pool.bot_holder_pct) ??
-        0,
+      firstNumber(
+        tokenX.bot_holder_pct,
+        tokenX.botHolderPct,
+        pool.bot_holder_pct,
+      ) ?? 0,
       0,
       100,
     );
     const bundleRiskPct = clamp(
-      firstNumber(tokenX.bundle_risk_pct, tokenX.bundleRiskPct, pool.bundle_risk_pct) ??
-        0,
+      firstNumber(
+        tokenX.bundle_risk_pct,
+        tokenX.bundleRiskPct,
+        pool.bundle_risk_pct,
+      ) ?? 0,
       0,
       100,
     );
@@ -322,7 +362,8 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       symbolPair,
       screeningSnapshot: {
         marketCapUsd:
-          firstNumber(tokenX.market_cap, tokenX.marketCap, pool.market_cap) ?? 0,
+          firstNumber(tokenX.market_cap, tokenX.marketCap, pool.market_cap) ??
+          0,
         tvlUsd,
         volumeUsd,
         volumeTrendPct: firstNumber(
@@ -331,8 +372,10 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
           pool.volume_trend_pct,
         ),
         volumeConsistencyScore: clamp(
-          firstNumber(pool.volume_consistency_score, pool.volumeConsistencyScore) ??
-            50,
+          firstNumber(
+            pool.volume_consistency_score,
+            pool.volumeConsistencyScore,
+          ) ?? 50,
           0,
           100,
         ),

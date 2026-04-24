@@ -14,7 +14,9 @@ import { FileSchedulerMetadataStore } from "../../src/infra/scheduler/SchedulerM
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-startup-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-startup-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -42,9 +44,9 @@ function buildAction(): Action {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -71,8 +73,12 @@ describe("startup recovery checklist", () => {
 
     expect(result.status).toBe("HEALTHY");
     expect(result.report.actionsByStatus.QUEUED).toBe(1);
-    expect(result.checklist.find((item) => item.item === "actions_store")?.ok).toBe(true);
-    await expect(fs.readFile(actionsPath, "utf8")).resolves.toContain("act_recovered");
+    expect(
+      result.checklist.find((item) => item.item === "actions_store")?.ok,
+    ).toBe(true);
+    await expect(fs.readFile(actionsPath, "utf8")).resolves.toContain(
+      "act_recovered",
+    );
   });
 
   it("recovers stale RUNNING scheduler state left behind by a previous crash", async () => {
@@ -107,7 +113,9 @@ describe("startup recovery checklist", () => {
 
     expect(result.status).toBe("HEALTHY");
     expect(
-      result.checklist.find((item) => item.item === "scheduler_running_recovery"),
+      result.checklist.find(
+        (item) => item.item === "scheduler_running_recovery",
+      ),
     ).toMatchObject({
       ok: true,
       detail: "recovered 1 stale running worker state(s)",

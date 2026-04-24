@@ -1,4 +1,7 @@
-import type { NotifierGateway, NotificationResult } from "../../adapters/telegram/NotifierGateway.js";
+import type {
+  NotifierGateway,
+  NotificationResult,
+} from "../../adapters/telegram/NotifierGateway.js";
 
 export interface SendOperatorAlertInput {
   notifierGateway: NotifierGateway;

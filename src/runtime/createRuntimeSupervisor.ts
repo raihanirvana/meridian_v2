@@ -472,6 +472,12 @@ export function createRuntimeSupervisor(
           requestedAt: timestamp,
           journalRepository: input.stores.journalRepository,
           runtimeControlStore: input.stores.runtimeControlStore,
+          riskGuard: {
+            portfolio,
+            policy: input.config.risk,
+            recentNewDeploys: recentDeploys.length,
+            solPriceUsd: solPrice.priceUsd,
+          },
         });
         await appendAutoDeployJournal({
           timestamp,

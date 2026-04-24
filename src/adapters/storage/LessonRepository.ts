@@ -1,9 +1,7 @@
 import { z } from "zod";
 
 import { LessonSchema, type Lesson } from "../../domain/entities/Lesson.js";
-import {
-  PerformanceRecordSchema,
-} from "../../domain/entities/PerformanceRecord.js";
+import { PerformanceRecordSchema } from "../../domain/entities/PerformanceRecord.js";
 
 import { FileStore, type FileStoreOptions } from "./FileStore.js";
 
@@ -57,7 +55,10 @@ function parseStore(raw: string | null, filePath: string): LessonStoreFile {
 
   const validated = LessonStoreFileSchema.safeParse(parsed);
   if (!validated.success) {
-    throw new LessonStoreCorruptError(filePath, formatZodError(validated.error));
+    throw new LessonStoreCorruptError(
+      filePath,
+      formatZodError(validated.error),
+    );
   }
 
   return validated.data;
@@ -69,7 +70,9 @@ async function updateLessonStore(
   updater: (store: LessonStoreFile) => LessonStoreFile,
 ): Promise<void> {
   await fileStore.updateTextAtomic(filePath, async (raw) => {
-    const updated = LessonStoreFileSchema.parse(updater(parseStore(raw, filePath)));
+    const updated = LessonStoreFileSchema.parse(
+      updater(parseStore(raw, filePath)),
+    );
     return JSON.stringify(updated, null, 2);
   });
 }
@@ -103,8 +106,10 @@ export class FileLessonRepository implements LessonRepositoryInterface {
     const validated = LessonSchema.parse(lesson);
     await updateLessonStore(this.fileStore, this.filePath, (store) => ({
       ...store,
-      lessons: [...store.lessons, validated].sort((left, right) =>
-        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      lessons: [...store.lessons, validated].sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.id.localeCompare(right.id),
       ),
     }));
   }
@@ -150,14 +155,13 @@ export class FileLessonRepository implements LessonRepositoryInterface {
     const validated = LessonSchema.array().parse(list);
     await updateLessonStore(this.fileStore, this.filePath, (store) => ({
       ...store,
-      lessons: [...validated].sort((left, right) =>
-        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      lessons: [...validated].sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.id.localeCompare(right.id),
       ),
     }));
   }
 }
 
-export {
-  LessonStoreFileSchema,
-  type LessonStoreFile,
-};
+export { LessonStoreFileSchema, type LessonStoreFile };

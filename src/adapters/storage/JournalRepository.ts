@@ -57,9 +57,10 @@ export class JournalRepository {
           continue;
         }
 
-        const reason = error instanceof Error && error.message.trim().length > 0
-          ? error.message
-          : "unknown parse failure";
+        const reason =
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "unknown parse failure";
         throw new JournalStoreCorruptError(
           `journal file is corrupt at line ${index + 1}: ${reason}`,
           this.filePath,

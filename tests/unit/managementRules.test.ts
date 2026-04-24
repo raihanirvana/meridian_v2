@@ -45,7 +45,9 @@ function buildOpenPosition(overrides: Partial<Position> = {}): Position {
   };
 }
 
-function buildPortfolio(overrides: Partial<PortfolioState> = {}): PortfolioState {
+function buildPortfolio(
+  overrides: Partial<PortfolioState> = {},
+): PortfolioState {
   return {
     walletBalance: 10,
     reservedBalance: 1,
@@ -75,15 +77,15 @@ function buildInput(overrides?: {
     dataIncomplete: boolean;
   }>;
   policy?: Partial<{
-        stopLossUsd: number;
-        maxHoldMinutes: number;
-        maxOutOfRangeMinutes: number;
-        trailingTakeProfitEnabled: boolean;
-        trailingTriggerPct: number;
-        trailingDropPct: number;
-        claimFeesThresholdUsd: number;
-        partialCloseEnabled: boolean;
-        partialCloseProfitTargetUsd: number;
+    stopLossUsd: number;
+    maxHoldMinutes: number;
+    maxOutOfRangeMinutes: number;
+    trailingTakeProfitEnabled: boolean;
+    trailingTriggerPct: number;
+    trailingDropPct: number;
+    claimFeesThresholdUsd: number;
+    partialCloseEnabled: boolean;
+    partialCloseProfitTargetUsd: number;
     rebalanceEnabled: boolean;
     maxRebalancesPerPosition: number;
   }>;
@@ -103,15 +105,15 @@ function buildInput(overrides?: {
       ...overrides?.signals,
     },
     policy: {
-        stopLossUsd: 20,
-        maxHoldMinutes: 1_440,
-        maxOutOfRangeMinutes: 60,
-        trailingTakeProfitEnabled: false,
-        trailingTriggerPct: 3,
-        trailingDropPct: 1.5,
-        claimFeesThresholdUsd: 10,
-        partialCloseEnabled: true,
-        partialCloseProfitTargetUsd: 25,
+      stopLossUsd: 20,
+      maxHoldMinutes: 1_440,
+      maxOutOfRangeMinutes: 60,
+      trailingTakeProfitEnabled: false,
+      trailingTriggerPct: 3,
+      trailingDropPct: 1.5,
+      claimFeesThresholdUsd: 10,
+      partialCloseEnabled: true,
+      partialCloseProfitTargetUsd: 25,
       rebalanceEnabled: true,
       maxRebalancesPerPosition: 2,
       ...overrides?.policy,

@@ -6,7 +6,11 @@ import { KeyedLock } from "../../infra/locks/KeyedLock.js";
 
 export interface FileSystemAdapter {
   access(filePath: string): Promise<void>;
-  appendFile(filePath: string, data: string, encoding: BufferEncoding): Promise<void>;
+  appendFile(
+    filePath: string,
+    data: string,
+    encoding: BufferEncoding,
+  ): Promise<void>;
   mkdir(
     dirPath: string,
     options?: {
@@ -22,7 +26,11 @@ export interface FileSystemAdapter {
       recursive?: boolean;
     },
   ): Promise<void>;
-  writeFile(filePath: string, data: string, encoding: BufferEncoding): Promise<void>;
+  writeFile(
+    filePath: string,
+    data: string,
+    encoding: BufferEncoding,
+  ): Promise<void>;
 }
 
 export interface FileStoreOptions {
@@ -58,7 +66,10 @@ export class FileStore {
     });
   }
 
-  public async writeTextAtomic(filePath: string, contents: string): Promise<void> {
+  public async writeTextAtomic(
+    filePath: string,
+    contents: string,
+  ): Promise<void> {
     await FileStore.fileLock.withLock(filePath, async () => {
       await this.writeTextAtomicUnlocked(filePath, contents);
     });

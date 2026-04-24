@@ -86,14 +86,19 @@ export function buildPerformanceRecordFromClose(input: {
     ...resolveEntryMetadata(snapshotPosition),
     ...resolveEntryMetadata(input.position),
   } satisfies PositionEntryMetadata;
-  const minutesHeld = diffMinutes(snapshotPosition.openedAt, input.position.closedAt ?? input.now);
+  const minutesHeld = diffMinutes(
+    snapshotPosition.openedAt,
+    input.position.closedAt ?? input.now,
+  );
   const minutesOutOfRange = diffMinutes(
     snapshotPosition.outOfRangeSince,
     input.position.closedAt ?? input.now,
   );
   const minutesInRange = Math.max(minutesHeld - minutesOutOfRange, 0);
   const rangeEfficiencyPct =
-    minutesHeld === 0 ? 100 : Math.min((minutesInRange / minutesHeld) * 100, 100);
+    minutesHeld === 0
+      ? 100
+      : Math.min((minutesInRange / minutesHeld) * 100, 100);
   const recoveredFinalValueUsd = Math.max(
     snapshotPosition.currentValueUsd +
       snapshotPosition.realizedPnlUsd +
@@ -111,9 +116,10 @@ export function buildPerformanceRecordFromClose(input: {
     pool: input.position.poolAddress,
     poolName: entryMetadata.poolName ?? input.position.poolAddress,
     baseMint: input.position.baseMint,
-    strategy: input.position.strategy === "spot" || input.position.strategy === "curve"
-      ? input.position.strategy
-      : "bid_ask",
+    strategy:
+      input.position.strategy === "spot" || input.position.strategy === "curve"
+        ? input.position.strategy
+        : "bid_ask",
     binStep: entryMetadata.binStep ?? 0,
     binRangeLower: input.position.rangeLowerBin,
     binRangeUpper: input.position.rangeUpperBin,
@@ -154,7 +160,9 @@ export function createRecordPositionPerformanceLessonHook(
       position: hookInput.position,
       ...(hookInput.performanceSnapshotPosition === undefined
         ? {}
-        : { performanceSnapshotPosition: hookInput.performanceSnapshotPosition }),
+        : {
+            performanceSnapshotPosition: hookInput.performanceSnapshotPosition,
+          }),
       reason: hookInput.reason,
       now: hookInput.now,
     });
@@ -215,10 +223,7 @@ export function createRecordPositionPerformanceLessonHook(
       });
     }
 
-    if (
-      input.signalWeightsStore !== undefined &&
-      result.skipped !== true
-    ) {
+    if (input.signalWeightsStore !== undefined && result.skipped !== true) {
       await maybeRecalibrateSignalWeights({
         performanceRepository: input.performanceRepository,
         signalWeightsStore: input.signalWeightsStore,

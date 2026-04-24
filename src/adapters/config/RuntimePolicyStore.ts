@@ -31,7 +31,9 @@ export const RuntimePolicyStoreFileSchema = z
 
 export type PolicyOverrides = z.infer<typeof PolicyOverridesSchema>;
 export type RuntimePolicyMetadata = z.infer<typeof RuntimePolicyMetadataSchema>;
-export type RuntimePolicyStoreFile = z.infer<typeof RuntimePolicyStoreFileSchema>;
+export type RuntimePolicyStoreFile = z.infer<
+  typeof RuntimePolicyStoreFileSchema
+>;
 
 export interface RuntimePolicyStoreSnapshot {
   policy: ScreeningPolicy;
@@ -78,7 +80,10 @@ function emptyStore(): RuntimePolicyStoreFile {
   });
 }
 
-function parseStore(raw: string | null, filePath: string): RuntimePolicyStoreFile {
+function parseStore(
+  raw: string | null,
+  filePath: string,
+): RuntimePolicyStoreFile {
   if (raw === null) {
     return emptyStore();
   }
@@ -95,7 +100,10 @@ function parseStore(raw: string | null, filePath: string): RuntimePolicyStoreFil
 
   const validated = RuntimePolicyStoreFileSchema.safeParse(parsed);
   if (!validated.success) {
-    throw new PolicyStoreCorruptError(filePath, formatZodError(validated.error));
+    throw new PolicyStoreCorruptError(
+      filePath,
+      formatZodError(validated.error),
+    );
   }
 
   return validated.data;

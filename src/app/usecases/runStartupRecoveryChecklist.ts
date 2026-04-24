@@ -66,68 +66,89 @@ export async function runStartupRecoveryChecklist(
   const checkedAt = input.now ?? new Date().toISOString();
   const checklist: StartupChecklistItem[] = [];
 
-  checklist.push(await checkItem("positions_store", async () => {
-    const positions = await input.stateRepository.list();
-    return `${positions.length} position(s) readable`;
-  }));
-  checklist.push(await checkItem("actions_store", async () => {
-    const actions = await input.actionRepository.list();
-    return `${actions.length} action(s) readable`;
-  }));
-  checklist.push(await checkItem("journal_store", async () => {
-    const events = await input.journalRepository.list();
-    return `${events.length} journal event(s) readable`;
-  }));
+  checklist.push(
+    await checkItem("positions_store", async () => {
+      const positions = await input.stateRepository.list();
+      return `${positions.length} position(s) readable`;
+    }),
+  );
+  checklist.push(
+    await checkItem("actions_store", async () => {
+      const actions = await input.actionRepository.list();
+      return `${actions.length} action(s) readable`;
+    }),
+  );
+  checklist.push(
+    await checkItem("journal_store", async () => {
+      const events = await input.journalRepository.list();
+      return `${events.length} journal event(s) readable`;
+    }),
+  );
 
   if (input.lessonRepository !== undefined) {
-    checklist.push(await checkItem("lesson_store", async () => {
-      const lessons = await input.lessonRepository!.list();
-      return `${lessons.length} lesson(s) readable`;
-    }));
+    checklist.push(
+      await checkItem("lesson_store", async () => {
+        const lessons = await input.lessonRepository!.list();
+        return `${lessons.length} lesson(s) readable`;
+      }),
+    );
   }
 
   if (input.performanceRepository !== undefined) {
-    checklist.push(await checkItem("performance_store", async () => {
-      const summary = await input.performanceRepository!.summary();
-      return `${summary.totalPositionsClosed} performance record(s) summarized`;
-    }));
+    checklist.push(
+      await checkItem("performance_store", async () => {
+        const summary = await input.performanceRepository!.summary();
+        return `${summary.totalPositionsClosed} performance record(s) summarized`;
+      }),
+    );
   }
 
   if (input.poolMemoryRepository !== undefined) {
-    checklist.push(await checkItem("pool_memory_store", async () => {
-      const entries = await input.poolMemoryRepository!.listAll();
-      return `${entries.length} pool memory entr(y/ies) readable`;
-    }));
+    checklist.push(
+      await checkItem("pool_memory_store", async () => {
+        const entries = await input.poolMemoryRepository!.listAll();
+        return `${entries.length} pool memory entr(y/ies) readable`;
+      }),
+    );
   }
 
   if (input.runtimePolicyStore !== undefined) {
-    checklist.push(await checkItem("runtime_policy_store", async () => {
-      const snapshot = await input.runtimePolicyStore!.snapshot();
-      return `${Object.keys(snapshot.overrides).length} runtime override(s) readable`;
-    }));
+    checklist.push(
+      await checkItem("runtime_policy_store", async () => {
+        const snapshot = await input.runtimePolicyStore!.snapshot();
+        return `${Object.keys(snapshot.overrides).length} runtime override(s) readable`;
+      }),
+    );
   }
 
   if (input.signalWeightsStore !== undefined) {
-    checklist.push(await checkItem("signal_weights_store", async () => {
-      const snapshot = await input.signalWeightsStore!.snapshot();
-      return `${Object.keys(snapshot.weights).length} signal weight(s) readable`;
-    }));
+    checklist.push(
+      await checkItem("signal_weights_store", async () => {
+        const snapshot = await input.signalWeightsStore!.snapshot();
+        return `${Object.keys(snapshot.weights).length} signal weight(s) readable`;
+      }),
+    );
   }
 
   if (input.schedulerMetadataStore !== undefined) {
-    checklist.push(await checkItem("scheduler_running_recovery", async () => {
-      const recovered = await input.schedulerMetadataStore!.recoverStaleRunningWorkers(
-        checkedAt,
-      );
-      return recovered.length === 0
-        ? "no stale running worker state found"
-        : `recovered ${recovered.length} stale running worker state(s)`;
-    }));
+    checklist.push(
+      await checkItem("scheduler_running_recovery", async () => {
+        const recovered =
+          await input.schedulerMetadataStore!.recoverStaleRunningWorkers(
+            checkedAt,
+          );
+        return recovered.length === 0
+          ? "no stale running worker state found"
+          : `recovered ${recovered.length} stale running worker state(s)`;
+      }),
+    );
 
-    checklist.push(await checkItem("scheduler_metadata_store", async () => {
-      const snapshot = await input.schedulerMetadataStore!.snapshot();
-      return `${Object.keys(snapshot.workers).length} worker state(s) readable`;
-    }));
+    checklist.push(
+      await checkItem("scheduler_metadata_store", async () => {
+        const snapshot = await input.schedulerMetadataStore!.snapshot();
+        return `${Object.keys(snapshot.workers).length} worker state(s) readable`;
+      }),
+    );
   }
 
   const report = await generateRuntimeReport({

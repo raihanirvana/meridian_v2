@@ -94,7 +94,9 @@ export async function requestRebalance(input: RequestRebalanceInput) {
     input.runtimeControlStore !== undefined &&
     (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
   ) {
-    throw new Error("manual circuit breaker is active; rebalance requests are blocked");
+    throw new Error(
+      "manual circuit breaker is active; rebalance requests are blocked",
+    );
   }
 
   const idempotencyKey =

@@ -20,7 +20,9 @@ import { type PortfolioRiskPolicy } from "../../src/domain/rules/riskRules.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-mgmt-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-mgmt-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -123,9 +125,9 @@ function buildManagementPolicy(
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -380,9 +382,9 @@ describe("management worker", () => {
       minutesOutOfRange: 30,
       ageMinutes: 720,
     });
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "POOL_MEMORY_UPDATED",
-    );
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("POOL_MEMORY_UPDATED");
   });
 
   it("dispatches CLAIM_FEES when management engine requests fee claiming", async () => {

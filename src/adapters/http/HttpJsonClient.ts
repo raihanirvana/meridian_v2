@@ -114,9 +114,7 @@ export class JsonHttpClient {
     this.timeoutMs = options.timeoutMs ?? null;
   }
 
-  public async request<T>(
-    options: JsonHttpRequestOptions<T>,
-  ): Promise<T> {
+  public async request<T>(options: JsonHttpRequestOptions<T>): Promise<T> {
     const url = buildUrl({
       baseUrl: this.baseUrl,
       path: options.path,

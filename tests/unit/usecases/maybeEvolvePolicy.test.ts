@@ -15,12 +15,16 @@ import { type ScreeningPolicy } from "../../../src/domain/rules/screeningRules.j
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-evolve-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-evolve-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
-function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy {
+function buildPolicy(
+  overrides: Partial<ScreeningPolicy> = {},
+): ScreeningPolicy {
   return {
     timeframe: "5m",
     minMarketCapUsd: 150_000,
@@ -47,7 +51,9 @@ function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy 
   };
 }
 
-function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+function buildPerformance(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
   return {
     positionId: "pos_001",
     wallet: "wallet_001",
@@ -80,9 +86,9 @@ function buildPerformance(overrides: Partial<PerformanceRecord> = {}): Performan
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -93,7 +99,9 @@ describe("maybeEvolvePolicy", () => {
     const performanceRepository = new FilePerformanceRepository({ filePath });
 
     for (let index = 0; index < 4; index += 1) {
-      await performanceRepository.append(buildPerformance({ positionId: `pos_${index}` }));
+      await performanceRepository.append(
+        buildPerformance({ positionId: `pos_${index}` }),
+      );
     }
 
     const result = await maybeEvolvePolicy({
@@ -134,11 +142,38 @@ describe("maybeEvolvePolicy", () => {
     });
 
     const records = [
-      buildPerformance({ positionId: "w1", pnlPct: 10, feeTvlRatio: 0.30, organicScore: 88 }),
-      buildPerformance({ positionId: "w2", pnlPct: 9, feeTvlRatio: 0.28, organicScore: 86 }),
-      buildPerformance({ positionId: "w3", pnlPct: 8, feeTvlRatio: 0.32, organicScore: 84 }),
-      buildPerformance({ positionId: "l1", pnlPct: -8, pnlUsd: -8, feeTvlRatio: 0.07, organicScore: 61 }),
-      buildPerformance({ positionId: "l2", pnlPct: -7, pnlUsd: -7, feeTvlRatio: 0.08, organicScore: 62 }),
+      buildPerformance({
+        positionId: "w1",
+        pnlPct: 10,
+        feeTvlRatio: 0.3,
+        organicScore: 88,
+      }),
+      buildPerformance({
+        positionId: "w2",
+        pnlPct: 9,
+        feeTvlRatio: 0.28,
+        organicScore: 86,
+      }),
+      buildPerformance({
+        positionId: "w3",
+        pnlPct: 8,
+        feeTvlRatio: 0.32,
+        organicScore: 84,
+      }),
+      buildPerformance({
+        positionId: "l1",
+        pnlPct: -8,
+        pnlUsd: -8,
+        feeTvlRatio: 0.07,
+        organicScore: 61,
+      }),
+      buildPerformance({
+        positionId: "l2",
+        pnlPct: -7,
+        pnlUsd: -7,
+        feeTvlRatio: 0.08,
+        organicScore: 62,
+      }),
     ];
     for (const record of records) {
       await performanceRepository.append(record);
@@ -157,11 +192,13 @@ describe("maybeEvolvePolicy", () => {
       positionsAtEvolution: 5,
     });
     expect(Object.keys(result.changes)).not.toHaveLength(0);
-    expect((await runtimePolicyStore.snapshot()).overrides).toMatchObject(result.changes);
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "POLICY_EVOLVED",
+    expect((await runtimePolicyStore.snapshot()).overrides).toMatchObject(
+      result.changes,
     );
-    expect((await lessonRepository.list())).toEqual(
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("POLICY_EVOLVED");
+    expect(await lessonRepository.list()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",

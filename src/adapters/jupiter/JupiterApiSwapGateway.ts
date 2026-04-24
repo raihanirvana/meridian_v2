@@ -73,7 +73,9 @@ export class JupiterApiSwapGateway implements SwapGateway {
       adapterName: "JupiterApiSwapGateway.quote",
       baseUrl: options.quoteBaseUrl ?? "https://api.jup.ag/swap/v1/",
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       defaultHeaders,
     });
     this.executeClient =
@@ -82,7 +84,9 @@ export class JupiterApiSwapGateway implements SwapGateway {
         : new JsonHttpClient({
             adapterName: "JupiterApiSwapGateway.execute",
             baseUrl: options.executeBaseUrl,
-            ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
+            ...(options.fetchFn === undefined
+              ? {}
+              : { fetchFn: options.fetchFn }),
             ...(options.timeoutMs === undefined
               ? {}
               : { timeoutMs: options.timeoutMs }),

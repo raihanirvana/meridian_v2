@@ -5,7 +5,10 @@ import {
   computePoolAggregates,
   shouldCooldown,
 } from "../../../src/domain/rules/poolMemoryRules.js";
-import { type PoolDeploy, type PoolMemoryEntry } from "../../../src/domain/entities/PoolMemory.js";
+import {
+  type PoolDeploy,
+  type PoolMemoryEntry,
+} from "../../../src/domain/entities/PoolMemory.js";
 
 function buildDeploy(overrides: Partial<PoolDeploy> = {}): PoolDeploy {
   return {

@@ -5,7 +5,11 @@ import { type PoolMemoryEntry } from "../entities/PoolMemory.js";
 import { PortfolioStateSchema } from "../entities/PortfolioState.js";
 import { type SignalWeights } from "../entities/SignalWeights.js";
 import { applyCooldownFilter } from "./poolMemoryRules.js";
-import { scoreCandidate, CandidateScorePolicySchema, ScreeningCandidateInputSchema } from "../scoring/candidateScore.js";
+import {
+  scoreCandidate,
+  CandidateScorePolicySchema,
+  ScreeningCandidateInputSchema,
+} from "../scoring/candidateScore.js";
 
 export const ScreeningPolicySchema = z
   .object({
@@ -61,7 +65,11 @@ export const ScreeningPolicySchema = z
 export const HardFilterEvaluationSchema = z
   .object({
     hardFilterPassed: z.boolean(),
-    decision: z.enum(["REJECTED_HARD_FILTER", "PASSED_HARD_FILTER", "REJECTED_EXPOSURE"]),
+    decision: z.enum([
+      "REJECTED_HARD_FILTER",
+      "PASSED_HARD_FILTER",
+      "REJECTED_EXPOSURE",
+    ]),
     decisionReason: z.string().min(1),
     rejectionReasons: z.array(z.string().min(1)),
   })
@@ -289,18 +297,21 @@ export function screenAndScoreCandidates(input: {
   createdAt?: string;
   now?: string;
 }): ScreenAndScoreCandidatesResult {
-  const parsedCandidates = ScreeningCandidateInputSchema.array().parse(input.candidates);
+  const parsedCandidates = ScreeningCandidateInputSchema.array().parse(
+    input.candidates,
+  );
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const screeningPolicy = ScreeningPolicySchema.parse(input.screeningPolicy);
   const scoringPolicy = CandidateScorePolicySchema.parse(input.scoringPolicy);
   const createdAt = input.createdAt ?? new Date().toISOString();
-  const candidates = input.poolMemoryMap === undefined
-    ? parsedCandidates
-    : applyCooldownFilter({
-        candidates: parsedCandidates,
-        poolMemoryMap: input.poolMemoryMap,
-        now: input.now ?? createdAt,
-      });
+  const candidates =
+    input.poolMemoryMap === undefined
+      ? parsedCandidates
+      : applyCooldownFilter({
+          candidates: parsedCandidates,
+          poolMemoryMap: input.poolMemoryMap,
+          now: input.now ?? createdAt,
+        });
 
   const evaluatedCandidates = candidates.map((candidate) => {
     const hardFilter = evaluateScreeningHardFilters({
@@ -361,13 +372,18 @@ export function screenAndScoreCandidates(input: {
       }),
     );
 
-  const shortlistedIds = new Set(shortlist.map((candidate) => candidate.candidateId));
+  const shortlistedIds = new Set(
+    shortlist.map((candidate) => candidate.candidateId),
+  );
   const finalCandidates = evaluatedCandidates.map((candidate) => {
     if (!shortlistedIds.has(candidate.candidateId)) {
       return candidate;
     }
 
-    return shortlist.find((item) => item.candidateId === candidate.candidateId) ?? candidate;
+    return (
+      shortlist.find((item) => item.candidateId === candidate.candidateId) ??
+      candidate
+    );
   });
 
   return ScreenAndScoreCandidatesResultSchema.parse({

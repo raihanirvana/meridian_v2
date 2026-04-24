@@ -45,12 +45,14 @@ const PENDING_ACTION_STATUSES = new Set<Action["status"]>([
 const MAX_EXTERNAL_SNAPSHOT_AGE_MINUTES = 15;
 
 function uniqueTokenMints(position: Position): string[] {
-  return [...new Set([
-    position.tokenXMint,
-    position.tokenYMint,
-    position.baseMint,
-    position.quoteMint,
-  ])];
+  return [
+    ...new Set([
+      position.tokenXMint,
+      position.tokenYMint,
+      position.baseMint,
+      position.quoteMint,
+    ]),
+  ];
 }
 
 function isSameUtcDay(left: string, right: string): boolean {
@@ -70,7 +72,8 @@ function deriveDailyRealizedPnlFromJournal(input: {
   return input.events
     .filter(
       (event) =>
-        event.wallet === input.wallet && isSameUtcDay(event.timestamp, input.now),
+        event.wallet === input.wallet &&
+        isSameUtcDay(event.timestamp, input.now),
     )
     .reduce((total, event) => {
       const beforePosition = parsePositionSnapshot(event.before);
@@ -154,7 +157,8 @@ function resolveCircuitBreakerLifecycle(input: {
       circuitBreakerActivatedAt:
         input.previousPortfolioState.circuitBreakerActivatedAt ?? input.now,
       circuitBreakerCooldownStartedAt:
-        input.previousPortfolioState.circuitBreakerCooldownStartedAt ?? input.now,
+        input.previousPortfolioState.circuitBreakerCooldownStartedAt ??
+        input.now,
     };
   }
 
@@ -200,14 +204,19 @@ export async function buildPortfolioState(
   input: BuildPortfolioStateInput,
 ): Promise<PortfolioState> {
   const now = input.now ?? new Date().toISOString();
-  const [positions, actions, journalEvents, walletBalanceSnapshot, solPriceQuote] =
-    await Promise.all([
-      input.stateRepository.list(),
-      input.actionRepository.list(),
-      input.journalRepository.list(),
-      input.walletGateway.getWalletBalance(input.wallet),
-      input.priceGateway.getSolPriceUsd(),
-    ]);
+  const [
+    positions,
+    actions,
+    journalEvents,
+    walletBalanceSnapshot,
+    solPriceQuote,
+  ] = await Promise.all([
+    input.stateRepository.list(),
+    input.actionRepository.list(),
+    input.journalRepository.list(),
+    input.walletGateway.getWalletBalance(input.wallet),
+    input.priceGateway.getSolPriceUsd(),
+  ]);
 
   assertFreshExternalSnapshot({
     source: "wallet",
@@ -230,7 +239,8 @@ export async function buildPortfolioState(
     (total, position) => total + position.currentValueUsd,
     0,
   );
-  const idleWalletUsd = walletBalanceSnapshot.balanceSol * solPriceQuote.priceUsd;
+  const idleWalletUsd =
+    walletBalanceSnapshot.balanceSol * solPriceQuote.priceUsd;
   const totalEquityUsd = idleWalletUsd + totalPositionValueUsd;
   const reservedBalance = Math.min(
     idleWalletUsd,

@@ -3,7 +3,12 @@ import { z } from "zod";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { Action } from "../../domain/entities/Action.js";
+import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
 import { PositionEntryMetadataSchema } from "../../domain/entities/Position.js";
+import {
+  evaluatePortfolioRisk,
+  type PortfolioRiskPolicy,
+} from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
@@ -48,6 +53,12 @@ export interface RequestDeployInput {
   idempotencyKey?: string;
   journalRepository?: JournalRepository;
   runtimeControlStore?: RuntimeControlStore;
+  riskGuard?: {
+    portfolio: PortfolioState;
+    policy: PortfolioRiskPolicy;
+    recentNewDeploys: number;
+    solPriceUsd?: number;
+  };
 }
 
 function buildDeployJournalPayload(action: Action): Record<string, unknown> {
@@ -60,14 +71,61 @@ function buildDeployJournalPayload(action: Action): Record<string, unknown> {
   };
 }
 
-export async function requestDeploy(input: RequestDeployInput): Promise<Action> {
+export async function requestDeploy(
+  input: RequestDeployInput,
+): Promise<Action> {
   const payload = DeployActionRequestPayloadSchema.parse(input.payload);
   const journalTimestamp = input.requestedAt ?? new Date().toISOString();
   if (
     input.runtimeControlStore !== undefined &&
     (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
   ) {
-    throw new Error("manual circuit breaker is active; deploy requests are blocked");
+    throw new Error(
+      "manual circuit breaker is active; deploy requests are blocked",
+    );
+  }
+  if (input.riskGuard !== undefined) {
+    const riskResult = evaluatePortfolioRisk({
+      action: "DEPLOY",
+      portfolio: input.riskGuard.portfolio,
+      policy: input.riskGuard.policy,
+      proposedAllocationUsd: payload.estimatedValueUsd,
+      proposedPoolAddress: payload.poolAddress,
+      proposedTokenMints: [
+        ...new Set([payload.tokenXMint, payload.tokenYMint]),
+      ],
+      recentNewDeploys: input.riskGuard.recentNewDeploys,
+      position: null,
+      ...(input.riskGuard.solPriceUsd === undefined
+        ? {}
+        : { solPriceUsd: input.riskGuard.solPriceUsd }),
+    });
+
+    if (!riskResult.allowed) {
+      if (input.journalRepository !== undefined) {
+        await input.journalRepository.append({
+          timestamp: journalTimestamp,
+          eventType: "DEPLOY_REQUEST_BLOCKED_BY_RISK",
+          actor: input.requestedBy,
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: {
+            requestPayload: payload,
+            riskDecision: riskResult.decision,
+            blockingRules: riskResult.blockingRules,
+            projectedExposureByPool: riskResult.projectedExposureByPool,
+            projectedExposureByToken: riskResult.projectedExposureByToken,
+          },
+          txIds: [],
+          resultStatus: "BLOCKED",
+          error: riskResult.reason,
+        });
+      }
+
+      throw new Error(`deploy blocked by risk guard: ${riskResult.reason}`);
+    }
   }
   const idempotencyKey =
     input.idempotencyKey ??

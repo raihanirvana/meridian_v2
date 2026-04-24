@@ -13,12 +13,17 @@ import {
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-v2-config-"));
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "meridian-v2-config-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
-function writeFixtureFiles(directory: string, overrides?: { userConfig?: string; env?: string }) {
+function writeFixtureFiles(
+  directory: string,
+  overrides?: { userConfig?: string; env?: string },
+) {
   const envPath = path.join(directory, ".env");
   const userConfigPath = path.join(directory, "user-config.json");
 
@@ -241,8 +246,8 @@ describe("loadConfig", () => {
       throw new Error("Expected ConfigValidationError");
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigValidationError);
-        expect((error as ConfigValidationError).details).toEqual(
-          expect.arrayContaining([
+      expect((error as ConfigValidationError).details).toEqual(
+        expect.arrayContaining([
           expect.stringMatching(/risk\.minReserveUsd/i),
           expect.stringMatching(/screening\.unexpectedKey/i),
         ]),
@@ -266,7 +271,7 @@ describe("loadConfig", () => {
     expect(redactedText).not.toContain("llm_secret");
     expect(redactedText).not.toContain("telegram_secret");
     expect(redactedText).toContain("[REDACTED]");
-    expect(redactedText).toContain("\"dryRun\":true");
+    expect(redactedText).toContain('"dryRun":true');
   });
 
   it("treats blank optional .env secrets as undefined instead of invalid", () => {

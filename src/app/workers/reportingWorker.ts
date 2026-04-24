@@ -4,7 +4,10 @@ import type { PerformanceRepositoryInterface } from "../../adapters/storage/Perf
 import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
-import type { NotifierGateway, NotificationResult } from "../../adapters/telegram/NotifierGateway.js";
+import type {
+  NotifierGateway,
+  NotificationResult,
+} from "../../adapters/telegram/NotifierGateway.js";
 import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
 import { logger } from "../../infra/logging/logger.js";
 import { runWithSchedulerMetadata } from "../../infra/scheduler/runWithSchedulerMetadata.js";
@@ -89,7 +92,10 @@ export async function runReportingWorker(
           : { stuckActionThresholdMinutes: input.stuckActionThresholdMinutes }),
         ...(input.runningWorkerThresholdMinutes === undefined
           ? {}
-          : { runningWorkerThresholdMinutes: input.runningWorkerThresholdMinutes }),
+          : {
+              runningWorkerThresholdMinutes:
+                input.runningWorkerThresholdMinutes,
+            }),
       });
 
       const deliveredAlerts: NotificationResult[] = [];

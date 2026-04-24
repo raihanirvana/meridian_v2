@@ -110,9 +110,13 @@ export const CandidateScoreResultSchema = z
   })
   .strict();
 
-export type ScreeningCandidateInput = z.infer<typeof ScreeningCandidateInputSchema>;
+export type ScreeningCandidateInput = z.infer<
+  typeof ScreeningCandidateInputSchema
+>;
 export type CandidateScorePolicy = z.infer<typeof CandidateScorePolicySchema>;
-export type CandidateScoreBreakdown = z.infer<typeof CandidateScoreBreakdownSchema>;
+export type CandidateScoreBreakdown = z.infer<
+  typeof CandidateScoreBreakdownSchema
+>;
 export type CandidateScoreResult = z.infer<typeof CandidateScoreResultSchema>;
 
 function effectiveSignalMultiplier(
@@ -131,9 +135,10 @@ export function scoreCandidate(input: {
   const candidate = ScreeningCandidateInputSchema.parse(input.candidate);
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = CandidateScorePolicySchema.parse(input.policy);
-  const signalWeights = input.signalWeights === undefined
-    ? createDefaultSignalWeights()
-    : SignalWeightsSchema.parse(input.signalWeights);
+  const signalWeights =
+    input.signalWeights === undefined
+      ? createDefaultSignalWeights()
+      : SignalWeightsSchema.parse(input.signalWeights);
 
   const poolExposurePct = portfolio.exposureByPool[candidate.poolAddress] ?? 0;
   const tokenExposurePct = Math.max(
@@ -200,7 +205,8 @@ export function scoreCandidate(input: {
 
   const weights = {
     feeToTvl:
-      policy.weights.feeToTvl * effectiveSignalMultiplier(signalWeights, "feeToTvl"),
+      policy.weights.feeToTvl *
+      effectiveSignalMultiplier(signalWeights, "feeToTvl"),
     volumeConsistency:
       policy.weights.volumeConsistency *
       effectiveSignalMultiplier(signalWeights, "volumeConsistency"),
@@ -217,7 +223,8 @@ export function scoreCandidate(input: {
       policy.weights.tokenAuditHealth *
       effectiveSignalMultiplier(signalWeights, "tokenAuditHealth"),
     smartMoney:
-      policy.weights.smartMoney * effectiveSignalMultiplier(signalWeights, "smartMoney"),
+      policy.weights.smartMoney *
+      effectiveSignalMultiplier(signalWeights, "smartMoney"),
     poolMaturity:
       policy.weights.poolMaturity *
       effectiveSignalMultiplier(signalWeights, "poolMaturity"),

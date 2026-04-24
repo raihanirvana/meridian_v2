@@ -122,7 +122,9 @@ export class HttpLlmGateway implements LlmGateway {
       adapterName: "HttpLlmGateway",
       baseUrl: options.baseUrl,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       defaultHeaders:
         options.apiKey === undefined
           ? {}
@@ -136,8 +138,8 @@ export class HttpLlmGateway implements LlmGateway {
   private resolveModel(kind: "management" | "screening"): string {
     const model =
       kind === "management"
-        ? this.managementModel ?? this.generalModel
-        : this.screeningModel ?? this.generalModel;
+        ? (this.managementModel ?? this.generalModel)
+        : (this.screeningModel ?? this.generalModel);
 
     if (model === null) {
       throw new AdapterResponseValidationError("HttpLlmGateway", [
@@ -173,7 +175,9 @@ export class HttpLlmGateway implements LlmGateway {
       responseSchema: ChatCompletionResponseSchema,
     });
 
-    const content = normalizeMessageContent(response.choices[0]?.message?.content);
+    const content = normalizeMessageContent(
+      response.choices[0]?.message?.content,
+    );
     if (content === null) {
       throw new AdapterResponseValidationError("HttpLlmGateway", [
         "LLM response did not include textual message content",
@@ -184,7 +188,9 @@ export class HttpLlmGateway implements LlmGateway {
       return extractJsonPayload(content);
     } catch (error) {
       throw new AdapterResponseValidationError("HttpLlmGateway", [
-        error instanceof Error ? error.message : "LLM response is not valid JSON",
+        error instanceof Error
+          ? error.message
+          : "LLM response is not valid JSON",
       ]);
     }
   }
@@ -219,7 +225,9 @@ export class HttpLlmGateway implements LlmGateway {
     const parsed = CandidateRankingResultSchema.safeParse(payload);
     if (!parsed.success) {
       throw new AdapterResponseValidationError("HttpLlmGateway", [
-        ...parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
+        ...parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`,
+        ),
       ]);
     }
 
@@ -252,7 +260,9 @@ export class HttpLlmGateway implements LlmGateway {
     const parsed = ManagementExplanationResultSchema.safeParse(payload);
     if (!parsed.success) {
       throw new AdapterResponseValidationError("HttpLlmGateway", [
-        ...parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
+        ...parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`,
+        ),
       ]);
     }
 

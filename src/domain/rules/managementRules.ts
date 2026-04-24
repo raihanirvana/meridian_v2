@@ -39,8 +39,8 @@ export const BaseManagementPolicySchema = z
   })
   .strict();
 
-export const ManagementPolicySchema = BaseManagementPolicySchema
-  .superRefine((policy, ctx) => {
+export const ManagementPolicySchema = BaseManagementPolicySchema.superRefine(
+  (policy, ctx) => {
     if (policy.trailingTakeProfitEnabled !== true) {
       return;
     }
@@ -49,7 +49,8 @@ export const ManagementPolicySchema = BaseManagementPolicySchema
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["trailingTriggerPct"],
-        message: "must be greater than zero when trailingTakeProfitEnabled is true",
+        message:
+          "must be greater than zero when trailingTakeProfitEnabled is true",
       });
     }
 
@@ -57,10 +58,12 @@ export const ManagementPolicySchema = BaseManagementPolicySchema
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["trailingDropPct"],
-        message: "must be greater than zero when trailingTakeProfitEnabled is true",
+        message:
+          "must be greater than zero when trailingTakeProfitEnabled is true",
       });
     }
-  });
+  },
+);
 
 export const ManagementEvaluationInputSchema = z
   .object({
@@ -114,7 +117,8 @@ function elapsedMinutes(from: string | null, now: string): number | null {
 }
 
 function isRangeInvalid(input: ManagementEvaluationInput): boolean {
-  const { activeBin, rangeLowerBin, rangeUpperBin, outOfRangeSince } = input.position;
+  const { activeBin, rangeLowerBin, rangeUpperBin, outOfRangeSince } =
+    input.position;
 
   if (outOfRangeSince !== null) {
     return true;
@@ -142,7 +146,9 @@ function buildResult(input: {
   });
 }
 
-function trailingTakeProfitTriggered(input: ManagementEvaluationInput): boolean {
+function trailingTakeProfitTriggered(
+  input: ManagementEvaluationInput,
+): boolean {
   if (input.policy.trailingTakeProfitEnabled !== true) {
     return false;
   }

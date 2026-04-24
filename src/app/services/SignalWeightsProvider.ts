@@ -3,9 +3,7 @@ import {
   SignalWeightsSchema,
   type SignalWeights,
 } from "../../domain/entities/SignalWeights.js";
-import {
-  type SignalWeightsStore,
-} from "../../adapters/storage/SignalWeightsStore.js";
+import { type SignalWeightsStore } from "../../adapters/storage/SignalWeightsStore.js";
 
 export interface SignalWeightsProvider {
   resolveSignalWeights(): Promise<SignalWeights>;

@@ -29,7 +29,8 @@ export interface SelectedLessonsForRole {
 }
 
 function byOutcomePriority(left: Lesson, right: Lesson): number {
-  const delta = OUTCOME_PRIORITY[left.outcome] - OUTCOME_PRIORITY[right.outcome];
+  const delta =
+    OUTCOME_PRIORITY[left.outcome] - OUTCOME_PRIORITY[right.outcome];
   if (delta !== 0) {
     return delta;
   }
@@ -37,7 +38,10 @@ function byOutcomePriority(left: Lesson, right: Lesson): number {
   return right.createdAt.localeCompare(left.createdAt);
 }
 
-export function defaultLessonCaps(isAutoCycle: boolean, maxLessons?: number): LessonPromptCaps {
+export function defaultLessonCaps(
+  isAutoCycle: boolean,
+  maxLessons?: number,
+): LessonPromptCaps {
   return {
     pinnedCap: isAutoCycle ? 5 : 10,
     roleCap: isAutoCycle ? 6 : 15,
@@ -58,7 +62,9 @@ export function selectLessonsForRole(input: {
     .filter(
       (lesson) =>
         lesson.pinned &&
-        (lesson.role === null || lesson.role === input.role || input.role === "GENERAL"),
+        (lesson.role === null ||
+          lesson.role === input.role ||
+          input.role === "GENERAL"),
     )
     .sort(byOutcomePriority)
     .slice(0, input.caps.pinnedCap);
@@ -73,7 +79,9 @@ export function selectLessonsForRole(input: {
       }
 
       const roleAllowed =
-        lesson.role === null || lesson.role === input.role || input.role === "GENERAL";
+        lesson.role === null ||
+        lesson.role === input.role ||
+        input.role === "GENERAL";
       const tagAllowed =
         roleTags.length === 0 ||
         lesson.tags.some((tag) => roleTags.includes(tag));
@@ -86,13 +94,17 @@ export function selectLessonsForRole(input: {
     usedIds.add(lesson.id);
   }
 
-  const remaining = Math.max(input.caps.recentCap - pinned.length - roleMatched.length, 0);
-  const recent = remaining > 0
-    ? input.lessons
-        .filter((lesson) => !usedIds.has(lesson.id))
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-        .slice(0, remaining)
-    : [];
+  const remaining = Math.max(
+    input.caps.recentCap - pinned.length - roleMatched.length,
+    0,
+  );
+  const recent =
+    remaining > 0
+      ? input.lessons
+          .filter((lesson) => !usedIds.has(lesson.id))
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .slice(0, remaining)
+      : [];
 
   return {
     pinned,
@@ -115,24 +127,30 @@ export function formatLessonsPrompt(sections: SelectedLessonsForRole): string {
   const blocks: string[] = [];
 
   if (sections.pinned.length > 0) {
-    blocks.push([
-      `── PINNED (${sections.pinned.length}) ──`,
-      ...sections.pinned.map(formatLessonLine),
-    ].join("\n"));
+    blocks.push(
+      [
+        `── PINNED (${sections.pinned.length}) ──`,
+        ...sections.pinned.map(formatLessonLine),
+      ].join("\n"),
+    );
   }
 
   if (sections.role.length > 0) {
-    blocks.push([
-      `── ${sections.roleLabel} (${sections.role.length}) ──`,
-      ...sections.role.map(formatLessonLine),
-    ].join("\n"));
+    blocks.push(
+      [
+        `── ${sections.roleLabel} (${sections.role.length}) ──`,
+        ...sections.role.map(formatLessonLine),
+      ].join("\n"),
+    );
   }
 
   if (sections.recent.length > 0) {
-    blocks.push([
-      `── RECENT (${sections.recent.length}) ──`,
-      ...sections.recent.map(formatLessonLine),
-    ].join("\n"));
+    blocks.push(
+      [
+        `── RECENT (${sections.recent.length}) ──`,
+        ...sections.recent.map(formatLessonLine),
+      ].join("\n"),
+    );
   }
 
   return blocks.join("\n\n");

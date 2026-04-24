@@ -31,8 +31,14 @@ import {
 } from "../../adapters/wallet/WalletGateway.js";
 import { ActionSchema } from "../../domain/entities/Action.js";
 import { JournalEventSchema } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
-import { ManagementSignalsSchema, type ManagementSignals } from "../../domain/rules/managementRules.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
+import {
+  ManagementSignalsSchema,
+  type ManagementSignals,
+} from "../../domain/rules/managementRules.js";
 
 const ReplayFailureSchema = z.object({
   type: z.literal("fail"),
@@ -80,47 +86,54 @@ export const ReplaySimulationStepSchema = z.object({
   walletBalanceSol: z.number().nonnegative(),
   solPriceUsd: z.number().positive(),
   onChainPositions: z.array(PositionSchema),
-  signalsByPositionId: z.record(z.string(), ManagementSignalsSchema).default({}),
+  signalsByPositionId: z
+    .record(z.string(), ManagementSignalsSchema)
+    .default({}),
 });
 
-export const ReplaySimulationFixtureSchema = z.object({
-  wallet: z.string().min(1),
-  initialPositions: z.array(PositionSchema).default([]),
-  initialActions: z.array(ActionSchema).default([]),
-  initialJournalEvents: z.array(JournalEventSchema).default([]),
-  steps: z.array(ReplaySimulationStepSchema).min(1),
-  deployResponses: z.array(DeployReplaySchema).default([]),
-  closeResponses: z.array(CloseReplaySchema).default([]),
-  claimFeesResponses: z.array(ClaimFeesReplaySchema).default([]),
-  partialCloseResponses: z.array(PartialCloseReplaySchema).default([]),
-  poolInfoByPool: z.record(z.string(), PoolInfoSchema).default({}),
-}).strict().superRefine((fixture, ctx) => {
-  let previousTimestampMs: number | null = null;
+export const ReplaySimulationFixtureSchema = z
+  .object({
+    wallet: z.string().min(1),
+    initialPositions: z.array(PositionSchema).default([]),
+    initialActions: z.array(ActionSchema).default([]),
+    initialJournalEvents: z.array(JournalEventSchema).default([]),
+    steps: z.array(ReplaySimulationStepSchema).min(1),
+    deployResponses: z.array(DeployReplaySchema).default([]),
+    closeResponses: z.array(CloseReplaySchema).default([]),
+    claimFeesResponses: z.array(ClaimFeesReplaySchema).default([]),
+    partialCloseResponses: z.array(PartialCloseReplaySchema).default([]),
+    poolInfoByPool: z.record(z.string(), PoolInfoSchema).default({}),
+  })
+  .strict()
+  .superRefine((fixture, ctx) => {
+    let previousTimestampMs: number | null = null;
 
-  for (const [index, step] of fixture.steps.entries()) {
-    const currentTimestampMs = Date.parse(step.timestamp);
-    if (Number.isNaN(currentTimestampMs)) {
-      continue;
+    for (const [index, step] of fixture.steps.entries()) {
+      const currentTimestampMs = Date.parse(step.timestamp);
+      if (Number.isNaN(currentTimestampMs)) {
+        continue;
+      }
+
+      if (
+        previousTimestampMs !== null &&
+        currentTimestampMs < previousTimestampMs
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "timestamp"],
+          message: "must be monotonic across replay steps",
+        });
+        return;
+      }
+
+      previousTimestampMs = currentTimestampMs;
     }
-
-    if (
-      previousTimestampMs !== null &&
-      currentTimestampMs < previousTimestampMs
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["steps", index, "timestamp"],
-        message: "must be monotonic across replay steps",
-      });
-      return;
-    }
-
-    previousTimestampMs = currentTimestampMs;
-  }
-});
+  });
 
 export type ReplaySimulationStep = z.infer<typeof ReplaySimulationStepSchema>;
-export type ReplaySimulationFixture = z.infer<typeof ReplaySimulationFixtureSchema>;
+export type ReplaySimulationFixture = z.infer<
+  typeof ReplaySimulationFixtureSchema
+>;
 
 type ReplaySuccess<T> = {
   type: "success";
@@ -131,9 +144,7 @@ type ReplayFailure = z.infer<typeof ReplayFailureSchema>;
 type ReplayTimeout = z.infer<typeof ReplayTimeoutSchema>;
 type ReplayResult<T> = ReplaySuccess<T> | ReplayFailure | ReplayTimeout;
 
-async function resolveReplayResult<T>(
-  entry: ReplayResult<T>,
-): Promise<T> {
+async function resolveReplayResult<T>(entry: ReplayResult<T>): Promise<T> {
   if (entry.type === "success") {
     return entry.value;
   }
@@ -261,9 +272,10 @@ export class ReplaySimulationGateway
     return ClosePositionResultSchema.parse({
       ...result,
       actionType: "CLOSE",
-      closedPositionId: result.closedPositionId.trim().length > 0
-        ? result.closedPositionId
-        : parsedRequest.positionId,
+      closedPositionId:
+        result.closedPositionId.trim().length > 0
+          ? result.closedPositionId
+          : parsedRequest.positionId,
       txIds:
         result.txIds.length > 0
           ? result.txIds
@@ -299,10 +311,14 @@ export class ReplaySimulationGateway
           txIds: ["tx_partial_close_1"],
         },
       } satisfies ReplaySuccess<PartialClosePositionResult>);
-    return PartialClosePositionResultSchema.parse(await resolveReplayResult(replay));
+    return PartialClosePositionResultSchema.parse(
+      await resolveReplayResult(replay),
+    );
   }
 
-  public async listPositionsForWallet(wallet: string): Promise<WalletPositionsSnapshot> {
+  public async listPositionsForWallet(
+    wallet: string,
+  ): Promise<WalletPositionsSnapshot> {
     return WalletPositionsSnapshotSchema.parse({
       wallet,
       positions: this.currentStep.onChainPositions.filter(
@@ -340,7 +356,9 @@ export class ReplaySimulationGateway
     });
   }
 
-  public async getWalletBalance(wallet: string): Promise<WalletBalanceSnapshot> {
+  public async getWalletBalance(
+    wallet: string,
+  ): Promise<WalletBalanceSnapshot> {
     return WalletBalanceSnapshotSchema.parse({
       wallet,
       balanceSol: this.currentStep.walletBalanceSol,
@@ -372,9 +390,7 @@ export function createReplayTimeout(timeoutMs?: number): ReplayTimeout {
   });
 }
 
-export function createReplaySuccess<T>(
-  value: T,
-): ReplaySuccess<T> {
+export function createReplaySuccess<T>(value: T): ReplaySuccess<T> {
   return {
     type: "success",
     value,

@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { HttpTokenIntelGateway } from "../../src/adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../../src/adapters/dlmm/HttpDlmmGateway.js";
 import { HttpLlmGateway } from "../../src/adapters/llm/HttpLlmGateway.js";
-import { AdapterHttpStatusError, AdapterResponseValidationError, AdapterTransportError } from "../../src/adapters/http/HttpJsonClient.js";
+import {
+  AdapterHttpStatusError,
+  AdapterResponseValidationError,
+  AdapterTransportError,
+} from "../../src/adapters/http/HttpJsonClient.js";
 import { JupiterApiSwapGateway } from "../../src/adapters/jupiter/JupiterApiSwapGateway.js";
 import { JupiterSolPriceGateway } from "../../src/adapters/pricing/JupiterSolPriceGateway.js";
 import { HttpScreeningGateway } from "../../src/adapters/screening/HttpScreeningGateway.js";
@@ -94,9 +98,9 @@ describe("real adapters", () => {
       ),
     });
 
-    await expect(
-      screening.listCandidates({ limit: 1 }),
-    ).resolves.toHaveLength(1);
+    await expect(screening.listCandidates({ limit: 1 })).resolves.toHaveLength(
+      1,
+    );
 
     const priceGateway = new JupiterSolPriceGateway({
       fetchFn: createFetchFromResponse(
@@ -131,13 +135,13 @@ describe("real adapters", () => {
       now: () => "2026-04-23T00:00:00.000Z",
     });
 
-    await expect(
-      walletGateway.getWalletBalance("wallet_001"),
-    ).resolves.toEqual({
-      wallet: "wallet_001",
-      balanceSol: 2.5,
-      asOf: "2026-04-23T00:00:00.000Z",
-    });
+    await expect(walletGateway.getWalletBalance("wallet_001")).resolves.toEqual(
+      {
+        wallet: "wallet_001",
+        balanceSol: 2.5,
+        asOf: "2026-04-23T00:00:00.000Z",
+      },
+    );
 
     const intel = new HttpTokenIntelGateway({
       baseUrl: "https://intel.example.com/v1/",
@@ -154,9 +158,7 @@ describe("real adapters", () => {
       ),
     });
 
-    await expect(
-      intel.getTokenRiskSnapshot("mint_001"),
-    ).resolves.toEqual({
+    await expect(intel.getTokenRiskSnapshot("mint_001")).resolves.toEqual({
       tokenMint: "mint_001",
       riskScore: 10,
       topHolderPct: 12,
@@ -240,9 +242,9 @@ describe("real adapters", () => {
       ),
     });
 
-    await expect(
-      screening.listCandidates({ limit: 5 }),
-    ).rejects.toBeInstanceOf(AdapterHttpStatusError);
+    await expect(screening.listCandidates({ limit: 5 })).rejects.toBeInstanceOf(
+      AdapterHttpStatusError,
+    );
   });
 
   it("maps invalid JSON/schema responses into AdapterResponseValidationError", async () => {
@@ -259,9 +261,9 @@ describe("real adapters", () => {
       ),
     });
 
-    await expect(
-      intel.getTokenRiskSnapshot("mint_001"),
-    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+    await expect(intel.getTokenRiskSnapshot("mint_001")).rejects.toBeInstanceOf(
+      AdapterResponseValidationError,
+    );
 
     const llm = new HttpLlmGateway({
       baseUrl: "https://llm.example.com/v1/",
@@ -347,9 +349,9 @@ describe("real adapters", () => {
         }),
     });
 
-    await expect(
-      screening.listCandidates({ limit: 5 }),
-    ).rejects.toBeInstanceOf(AdapterTransportError);
+    await expect(screening.listCandidates({ limit: 5 })).rejects.toBeInstanceOf(
+      AdapterTransportError,
+    );
   });
 
   it("forwards screening timeframe to the HTTP query boundary", async () => {
@@ -462,7 +464,9 @@ describe("real adapters", () => {
       },
     });
 
-    await expect(screening.getCandidateDetails("pool_001")).resolves.toMatchObject({
+    await expect(
+      screening.getCandidateDetails("pool_001"),
+    ).resolves.toMatchObject({
       poolAddress: "pool_001",
       pairLabel: "MEME-SOL",
       feeToTvlRatio: 1.2,

@@ -197,13 +197,19 @@ describe("screening rules", () => {
       "cand_best",
       "cand_mid",
     ]);
-    expect(result.shortlist.every((candidate) => candidate.decision === "SHORTLISTED")).toBe(
-      true,
-    );
     expect(
-      result.candidates.find((candidate) => candidate.candidateId === "cand_low")?.decision,
+      result.shortlist.every(
+        (candidate) => candidate.decision === "SHORTLISTED",
+      ),
+    ).toBe(true);
+    expect(
+      result.candidates.find(
+        (candidate) => candidate.candidateId === "cand_low",
+      )?.decision,
     ).toBe("PASSED_HARD_FILTER");
-    expect(result.shortlist[0]?.score).toBeGreaterThan(result.shortlist[1]?.score ?? 0);
+    expect(result.shortlist[0]?.score).toBeGreaterThan(
+      result.shortlist[1]?.score ?? 0,
+    );
   });
 
   it("blocks candidates by token age, ath distance, and 24h fee-per-tvl floor", () => {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { formatLessonsPrompt, selectLessonsForRole } from "../../src/domain/rules/lessonPromptRules.js";
+import {
+  formatLessonsPrompt,
+  selectLessonsForRole,
+} from "../../src/domain/rules/lessonPromptRules.js";
 import { type Lesson } from "../../src/domain/entities/Lesson.js";
 
 function buildLesson(overrides: Partial<Lesson> = {}): Lesson {

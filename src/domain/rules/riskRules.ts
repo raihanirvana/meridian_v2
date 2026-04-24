@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { PortfolioStateSchema, type PortfolioState } from "../entities/PortfolioState.js";
+import {
+  PortfolioStateSchema,
+  type PortfolioState,
+} from "../entities/PortfolioState.js";
 import { PositionSchema } from "../entities/Position.js";
 import {
   CircuitBreakerStateSchema,
@@ -143,7 +146,9 @@ function uniqueTokenMints(tokenMints: string[]): string[] {
   return [...new Set(tokenMints)];
 }
 
-function getPositionExposureTokenMints(position: z.infer<typeof PositionSchema>): string[] {
+function getPositionExposureTokenMints(
+  position: z.infer<typeof PositionSchema>,
+): string[] {
   return uniqueTokenMints([
     position.tokenXMint,
     position.tokenYMint,
@@ -256,7 +261,8 @@ export function buildPortfolioRiskStateSnapshot(input: {
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = PortfolioRiskPolicySchema.parse(input.policy);
   const dailyLossPct = calculateDailyLossPct(portfolio);
-  const resolvedSolPriceUsd = input.solPriceUsd ?? portfolio.solPriceUsd ?? null;
+  const resolvedSolPriceUsd =
+    input.solPriceUsd ?? portfolio.solPriceUsd ?? null;
   const dailyLossSol =
     resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
       ? 0
@@ -299,9 +305,13 @@ export function projectExposureByPool(input: {
     Math.max(input.walletBalance, 0),
   );
 
-  if (input.releasedPoolAddress !== undefined && input.releasedPoolAddress !== null) {
+  if (
+    input.releasedPoolAddress !== undefined &&
+    input.releasedPoolAddress !== null
+  ) {
     nextExposureByPool[input.releasedPoolAddress] = Math.max(
-      (nextExposureByPool[input.releasedPoolAddress] ?? 0) - releasedAllocationPct,
+      (nextExposureByPool[input.releasedPoolAddress] ?? 0) -
+        releasedAllocationPct,
       0,
     );
   }
@@ -317,7 +327,9 @@ export function projectExposureByPool(input: {
   nextExposureByPool[input.poolAddress] =
     (nextExposureByPool[input.poolAddress] ?? 0) + incrementalPct;
 
-  return z.record(z.string(), z.number().nonnegative()).parse(nextExposureByPool);
+  return z
+    .record(z.string(), z.number().nonnegative())
+    .parse(nextExposureByPool);
 }
 
 export function projectExposureByToken(input: {
@@ -334,7 +346,9 @@ export function projectExposureByToken(input: {
     Math.max(input.releasedAllocationUsd ?? 0, 0),
     Math.max(input.walletBalance, 0),
   );
-  const releasedTokenMints = new Set(uniqueTokenMints(input.releasedTokenMints ?? []));
+  const releasedTokenMints = new Set(
+    uniqueTokenMints(input.releasedTokenMints ?? []),
+  );
 
   for (const tokenMint of releasedTokenMints) {
     nextExposureByToken[tokenMint] = Math.max(
@@ -365,7 +379,8 @@ export function updatePortfolioDailyRiskState(input: {
 }): PortfolioState {
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = PortfolioRiskPolicySchema.parse(input.policy);
-  const nextDailyRealizedPnl = portfolio.dailyRealizedPnl + input.realizedPnlDelta;
+  const nextDailyRealizedPnl =
+    portfolio.dailyRealizedPnl + input.realizedPnlDelta;
   const dailyLossPct = Math.max(
     0,
     toPercent(Math.max(-nextDailyRealizedPnl, 0), portfolio.walletBalance),
@@ -381,9 +396,9 @@ export function updatePortfolioDailyRiskState(input: {
       : Math.max(-nextDailyRealizedPnl, 0) / resolvedSolPriceUsd;
   const circuitBreakerState =
     dailyLossPct >= policy.dailyLossLimitPct ||
-      (policy.maxDailyLossSol !== undefined &&
-        dailyLossSol !== null &&
-        dailyLossSol >= policy.maxDailyLossSol)
+    (policy.maxDailyLossSol !== undefined &&
+      dailyLossSol !== null &&
+      dailyLossSol >= policy.maxDailyLossSol)
       ? "ON"
       : portfolio.circuitBreakerState === "COOLDOWN"
         ? "COOLDOWN"
@@ -415,7 +430,9 @@ export function evaluatePortfolioRisk(
     portfolio: input.portfolio,
     policy: input.policy,
     allocationDeltaUsd,
-    ...(input.solPriceUsd === undefined ? {} : { solPriceUsd: input.solPriceUsd }),
+    ...(input.solPriceUsd === undefined
+      ? {}
+      : { solPriceUsd: input.solPriceUsd }),
   });
   const projectedExposureByPool = projectExposureByPool({
     portfolio: input.portfolio,
@@ -458,7 +475,8 @@ export function evaluatePortfolioRisk(
       action: input.action,
       allowed: true,
       decision: "ALLOW",
-      reason: "Risk-reducing action remains allowed under global portfolio guardrails",
+      reason:
+        "Risk-reducing action remains allowed under global portfolio guardrails",
       blockingRules,
       state,
       projectedExposureByToken,
@@ -565,7 +583,7 @@ export function evaluatePortfolioRisk(
     decision: allowed ? "ALLOW" : "BLOCK",
     reason: allowed
       ? "Portfolio risk guardrails allow this action"
-      : blockingRules[0] ?? "Portfolio risk guardrail blocked this action",
+      : (blockingRules[0] ?? "Portfolio risk guardrail blocked this action"),
     blockingRules,
     state,
     projectedExposureByToken,

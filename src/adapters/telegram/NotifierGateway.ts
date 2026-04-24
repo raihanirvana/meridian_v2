@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const SendMessageInputSchema = z.object({
   recipient: z.string().min(1),
@@ -37,9 +34,13 @@ export interface MockNotifierGatewayBehaviors {
 }
 
 export class MockNotifierGateway implements NotifierGateway {
-  public constructor(private readonly behaviors: MockNotifierGatewayBehaviors) {}
+  public constructor(
+    private readonly behaviors: MockNotifierGatewayBehaviors,
+  ) {}
 
-  public async sendMessage(input: SendMessageInput): Promise<NotificationResult> {
+  public async sendMessage(
+    input: SendMessageInput,
+  ): Promise<NotificationResult> {
     SendMessageInputSchema.parse(input);
     return NotificationResultSchema.parse(
       await resolveMockBehavior(this.behaviors.sendMessage),

@@ -1,10 +1,7 @@
 import { z } from "zod";
 
 import type { Candidate } from "../../domain/entities/Candidate.js";
-import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const ListCandidatesRequestSchema = z.object({
   limit: z.number().int().positive(),
@@ -39,7 +36,9 @@ export interface MockScreeningGatewayBehaviors {
 }
 
 export class MockScreeningGateway implements ScreeningGateway {
-  public constructor(private readonly behaviors: MockScreeningGatewayBehaviors) {}
+  public constructor(
+    private readonly behaviors: MockScreeningGatewayBehaviors,
+  ) {}
 
   public async listCandidates(
     request: ListCandidatesRequest,

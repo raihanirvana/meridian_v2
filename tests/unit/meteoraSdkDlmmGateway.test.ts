@@ -85,7 +85,11 @@ vi.mock("@meteora-ag/dlmm", () => ({
 
 import { MeteoraSdkDlmmGateway } from "../../src/adapters/dlmm/MeteoraSdkDlmmGateway.js";
 
-function createGateway(overrides: Partial<ConstructorParameters<typeof MeteoraSdkDlmmGateway>[0]> = {}) {
+function createGateway(
+  overrides: Partial<
+    ConstructorParameters<typeof MeteoraSdkDlmmGateway>[0]
+  > = {},
+) {
   return new MeteoraSdkDlmmGateway({
     rpcUrl: "https://rpc.example.com",
     walletPrivateKey: JSON.stringify(new Array(64).fill(1)),
@@ -103,7 +107,9 @@ function createPool(overrides: Record<string, unknown> = {}) {
       activeId: 15,
     },
     getActiveBin: vi.fn(async () => ({ binId: 15 })),
-    initializePositionAndAddLiquidityByStrategy: vi.fn(async () => ({ tx: "deploy" })),
+    initializePositionAndAddLiquidityByStrategy: vi.fn(async () => ({
+      tx: "deploy",
+    })),
     createExtendedEmptyPosition: vi.fn(async () => [{ tx: "create" }]),
     addLiquidityByStrategyChunkable: vi.fn(async () => [{ tx: "chunk" }]),
     getPosition: vi.fn(async () => ({
@@ -168,7 +174,9 @@ describe("MeteoraSdkDlmmGateway", () => {
       initialActiveBin: 15,
     });
 
-    expect(pool.initializePositionAndAddLiquidityByStrategy).toHaveBeenCalledWith(
+    expect(
+      pool.initializePositionAndAddLiquidityByStrategy,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         slippage: 125,
       }),
@@ -212,9 +220,11 @@ describe("MeteoraSdkDlmmGateway", () => {
     });
     poolCreateMock.mockResolvedValue(pool);
     const gateway = createGateway();
-    ((gateway as unknown as {
-      poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
-    }).poolByPositionId).set("pos_001", {
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
       value: "pool_001",
       cachedAtMs: Date.now(),
     });
@@ -239,9 +249,11 @@ describe("MeteoraSdkDlmmGateway", () => {
     });
     poolCreateMock.mockResolvedValue(pool);
     const gateway = createGateway();
-    ((gateway as unknown as {
-      poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
-    }).poolByPositionId).set("pos_001", {
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
       value: "pool_001",
       cachedAtMs: Date.now(),
     });
@@ -253,7 +265,9 @@ describe("MeteoraSdkDlmmGateway", () => {
     });
 
     expect(result.preCloseFeesClaimed).toBe(false);
-    expect(result.preCloseFeesClaimError).toContain("claim before close failed");
+    expect(result.preCloseFeesClaimError).toContain(
+      "claim before close failed",
+    );
   });
 
   it("caches token decimals and simulates transactions before submit", async () => {
@@ -344,7 +358,9 @@ describe("MeteoraSdkDlmmGateway", () => {
         rangeUpperBin: 20,
         initialActiveBin: 15,
       }),
-    ).rejects.toThrow("Meteora transaction simulation failed: simulation failed");
+    ).rejects.toThrow(
+      "Meteora transaction simulation failed: simulation failed",
+    );
 
     expect(sendAndConfirmTransactionMock).not.toHaveBeenCalled();
   });
@@ -353,12 +369,16 @@ describe("MeteoraSdkDlmmGateway", () => {
     const pool = createPool();
     poolCreateMock.mockResolvedValue(pool);
     const gateway = createGateway({
-      fetchFn: vi.fn(async () =>
-        new Response(JSON.stringify({ pools: [] }), { status: 200 })),
+      fetchFn: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ pools: [] }), { status: 200 }),
+      ),
     });
-    ((gateway as unknown as {
-      poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
-    }).poolByPositionId).set("pos_001", {
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
       value: "pool_001",
       cachedAtMs: Date.now(),
     });
@@ -401,12 +421,16 @@ describe("MeteoraSdkDlmmGateway", () => {
       },
     });
     const gateway = createGateway({
-      fetchFn: vi.fn(async () =>
-        new Response(JSON.stringify({ pools: [] }), { status: 200 })),
+      fetchFn: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ pools: [] }), { status: 200 }),
+      ),
     });
-    ((gateway as unknown as {
-      poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
-    }).poolByPositionId).set("pos_001", {
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
       value: "pool_001",
       cachedAtMs: Date.now(),
     });

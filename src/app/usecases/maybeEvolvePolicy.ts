@@ -1,9 +1,7 @@
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
 import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
-import {
-  type RuntimePolicyStore,
-} from "../../adapters/config/RuntimePolicyStore.js";
+import { type RuntimePolicyStore } from "../../adapters/config/RuntimePolicyStore.js";
 import { LessonSchema } from "../../domain/entities/Lesson.js";
 import {
   MIN_EVOLVE_POSITIONS,

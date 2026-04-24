@@ -8,7 +8,9 @@ import {
 } from "../../src/domain/rules/lessonRules.js";
 import { type PerformanceRecord } from "../../src/domain/entities/PerformanceRecord.js";
 
-function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+function buildPerformance(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
   return {
     positionId: "pos_001",
     wallet: "wallet_001",

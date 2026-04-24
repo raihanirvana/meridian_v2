@@ -3,7 +3,10 @@ import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRep
 import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
 import type { SignalWeightsStore } from "../../adapters/storage/SignalWeightsStore.js";
 import { LessonSchema } from "../../domain/entities/Lesson.js";
-import { SignalWeightsSchema, type SignalWeights } from "../../domain/entities/SignalWeights.js";
+import {
+  SignalWeightsSchema,
+  type SignalWeights,
+} from "../../domain/entities/SignalWeights.js";
 import {
   MIN_SIGNAL_WEIGHT_SAMPLES,
   recalculateWeights,
@@ -92,7 +95,10 @@ export async function maybeRecalibrateSignalWeights(
         key,
         {
           ...value,
-          sampleSize: Math.max(value?.sampleSize ?? 0, MIN_SIGNAL_WEIGHT_SAMPLES),
+          sampleSize: Math.max(
+            value?.sampleSize ?? 0,
+            MIN_SIGNAL_WEIGHT_SAMPLES,
+          ),
           lastAdjustedAt: now,
         },
       ]),

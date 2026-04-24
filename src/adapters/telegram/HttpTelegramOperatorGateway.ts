@@ -50,7 +50,9 @@ export class HttpTelegramOperatorGateway {
       adapterName: "HttpTelegramOperatorGateway",
       baseUrl: `${z.url().parse(baseUrl).replace(/\/$/, "")}/`,
       ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
     });
   }
 
@@ -67,7 +69,9 @@ export class HttpTelegramOperatorGateway {
       path: this.buildPath("getUpdates"),
       query: {
         ...(input?.offset === undefined ? {} : { offset: input.offset }),
-        ...(input?.timeoutSec === undefined ? {} : { timeout: input.timeoutSec }),
+        ...(input?.timeoutSec === undefined
+          ? {}
+          : { timeout: input.timeoutSec }),
       },
       responseSchema: TelegramGetUpdatesResponseSchema,
     });
@@ -83,11 +87,13 @@ export class HttpTelegramOperatorGateway {
         return [];
       }
 
-      return [{
-        updateId: update.update_id,
-        chatId: String(message.chat.id),
-        text,
-      }];
+      return [
+        {
+          updateId: update.update_id,
+          chatId: String(message.chat.id),
+          text,
+        },
+      ];
     });
   }
 }

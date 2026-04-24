@@ -9,7 +9,10 @@ import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlS
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
 
@@ -54,9 +57,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -110,7 +113,9 @@ function buildClosingForRebalancePosition(input: {
   reason: string;
   now: string;
 }): Position {
-  const requestedStatus = toRebalanceRequestedStatus(input.currentPosition.status);
+  const requestedStatus = toRebalanceRequestedStatus(
+    input.currentPosition.status,
+  );
 
   return PositionSchema.parse({
     ...input.currentPosition,
@@ -130,7 +135,10 @@ function buildReconciliationRequiredPosition(
 ): Position {
   return PositionSchema.parse({
     ...position,
-    status: transitionPositionStatus(position.status, "RECONCILIATION_REQUIRED"),
+    status: transitionPositionStatus(
+      position.status,
+      "RECONCILIATION_REQUIRED",
+    ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: true,
@@ -146,7 +154,9 @@ export async function processRebalanceAction(
     input.action.requestPayload,
   );
   const now = nowTimestamp(input.now);
-  const currentPosition = await input.stateRepository.get(input.action.positionId);
+  const currentPosition = await input.stateRepository.get(
+    input.action.positionId,
+  );
 
   if (currentPosition === null) {
     throw new Error(
@@ -291,7 +301,10 @@ export async function processRebalanceAction(
       }),
       txIds: closeResult.txIds,
       resultStatus: "WAITING_CONFIRMATION",
-      error: errorMessage(error, "rebalance close submission requires reconciliation"),
+      error: errorMessage(
+        error,
+        "rebalance close submission requires reconciliation",
+      ),
     });
 
     return {

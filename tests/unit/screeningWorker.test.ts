@@ -4,7 +4,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MockLlmGateway, type CandidateRankingInput, type LlmGateway } from "../../src/adapters/llm/LlmGateway.js";
+import {
+  MockLlmGateway,
+  type CandidateRankingInput,
+  type LlmGateway,
+} from "../../src/adapters/llm/LlmGateway.js";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { MockScreeningGateway } from "../../src/adapters/screening/ScreeningGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
@@ -20,20 +24,24 @@ import { runScreeningCycle } from "../../src/app/usecases/runScreeningCycle.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-screen-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-screen-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
-function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy {
+function buildPolicy(
+  overrides: Partial<ScreeningPolicy> = {},
+): ScreeningPolicy {
   return {
     timeframe: "5m",
     minMarketCapUsd: 150_000,
@@ -203,7 +211,9 @@ describe("screening worker", () => {
 
     expect(result.shortlist).toHaveLength(0);
     expect(result.candidates[0]?.decision).toBe("REJECTED_HARD_FILTER");
-    expect(result.candidates[0]?.decisionReason).toBe("volume trend below minimum");
+    expect(result.candidates[0]?.decisionReason).toBe(
+      "volume trend below minimum",
+    );
   });
 
   it("injects narrative enrichment into AI shortlist ranking context", async () => {
@@ -461,7 +471,8 @@ describe("screening worker", () => {
       seenRankingInput?.candidates[0]?.smartMoneySnapshot.narrativeSummary,
     ).toBe("Narrative attached");
     expect(
-      seenRankingInput?.candidates[0]?.smartMoneySnapshot.holderDistributionSummary,
+      seenRankingInput?.candidates[0]?.smartMoneySnapshot
+        .holderDistributionSummary,
     ).toBe("Holder spread attached");
   });
 

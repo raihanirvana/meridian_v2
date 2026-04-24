@@ -7,7 +7,10 @@ import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlS
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
@@ -116,9 +119,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -176,7 +179,10 @@ function buildReconcilingPosition(
     status:
       claimConfirmedPosition.status === "RECONCILING"
         ? "RECONCILING"
-        : transitionPositionStatus(claimConfirmedPosition.status, "RECONCILING"),
+        : transitionPositionStatus(
+            claimConfirmedPosition.status,
+            "RECONCILING",
+          ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: false,
@@ -207,7 +213,10 @@ function buildReconciliationRequiredPosition(
 ): Position {
   return PositionSchema.parse({
     ...position,
-    status: transitionPositionStatus(position.status, "RECONCILIATION_REQUIRED"),
+    status: transitionPositionStatus(
+      position.status,
+      "RECONCILIATION_REQUIRED",
+    ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
     needsReconciliation: true,
@@ -219,14 +228,14 @@ function buildCompoundDeployPayload(input: {
   outputMint: string;
   outputAmount: number;
 }): z.infer<typeof DeployActionRequestPayloadSchema> {
-  const amountBase = input.outputMint === input.template.baseMint
-    ? input.outputAmount
-    : 0;
-  const amountQuote = input.outputMint === input.template.quoteMint
-    ? input.outputAmount
-    : 0;
+  const amountBase =
+    input.outputMint === input.template.baseMint ? input.outputAmount : 0;
+  const amountQuote =
+    input.outputMint === input.template.quoteMint ? input.outputAmount : 0;
   if (amountBase <= 0 && amountQuote <= 0) {
-    throw new Error("compound output mint must match pool baseMint or quoteMint");
+    throw new Error(
+      "compound output mint must match pool baseMint or quoteMint",
+    );
   }
 
   return DeployActionRequestPayloadSchema.parse({
@@ -303,16 +312,17 @@ async function runClaimPostProcessing(input: {
           after: null,
           txIds: [],
           resultStatus: "FAILED",
-          error: "claimed base amount unavailable after claim; auto swap skipped",
+          error:
+            "claimed base amount unavailable after claim; auto swap skipped",
         });
         simpleSwapResult = {
           status: "FAILED",
-          error: "claimed base amount unavailable after claim; auto swap skipped",
+          error:
+            "claimed base amount unavailable after claim; auto swap skipped",
         };
       } else {
-      try {
-        simpleSwapResult =
-          await input.postClaimSwapHook(
+        try {
+          simpleSwapResult = await input.postClaimSwapHook(
             PostClaimSwapInputSchema.parse({
               actionId: workingAction.actionId,
               wallet: workingAction.wallet,
@@ -321,25 +331,25 @@ async function runClaimPostProcessing(input: {
               outputMint: claimResult.autoSwapOutputMint,
             }),
           );
-      } catch (error) {
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: input.now,
-          eventType: "CLAIM_AUTO_SWAP_FAILED",
-          actor: workingAction.requestedBy,
-          wallet: workingAction.wallet,
-          positionId: workingAction.positionId,
-          actionId: workingAction.actionId,
-          before: null,
-          after: null,
-          txIds: [],
-          resultStatus: "FAILED",
-          error: errorMessage(error, "claim auto swap failed"),
-        });
-        simpleSwapResult = {
-          status: "FAILED",
-          error: errorMessage(error, "claim auto swap failed"),
-        };
-      }
+        } catch (error) {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: input.now,
+            eventType: "CLAIM_AUTO_SWAP_FAILED",
+            actor: workingAction.requestedBy,
+            wallet: workingAction.wallet,
+            positionId: workingAction.positionId,
+            actionId: workingAction.actionId,
+            before: null,
+            after: null,
+            txIds: [],
+            resultStatus: "FAILED",
+            error: errorMessage(error, "claim auto swap failed"),
+          });
+          simpleSwapResult = {
+            status: "FAILED",
+            error: errorMessage(error, "claim auto swap failed"),
+          };
+        }
       }
 
       claimResult = ClaimConfirmationPayloadSchema.parse({
@@ -381,7 +391,8 @@ async function runClaimPostProcessing(input: {
         compound = ClaimAutoCompoundStateSchema.parse({
           ...compound,
           phase: "FAILED",
-          error: "claimed base amount unavailable after claim; auto-compound skipped",
+          error:
+            "claimed base amount unavailable after claim; auto-compound skipped",
         });
       } else {
         try {
@@ -457,12 +468,13 @@ async function runClaimPostProcessing(input: {
         });
       } else {
         try {
-          const swapResult = z.record(z.string(), z.unknown()).parse(
-            compound.swap ?? {},
-          );
-          const outputAmount = z.number().nonnegative().parse(
-            swapResult.outputAmount,
-          );
+          const swapResult = z
+            .record(z.string(), z.unknown())
+            .parse(compound.swap ?? {});
+          const outputAmount = z
+            .number()
+            .nonnegative()
+            .parse(swapResult.outputAmount);
           const deployPayload = buildCompoundDeployPayload({
             template: compound.deployTemplate,
             outputMint: compound.outputMint,
@@ -500,12 +512,18 @@ async function runClaimPostProcessing(input: {
             after: null,
             txIds: [],
             resultStatus: "FAILED",
-            error: errorMessage(error, "claim auto-compound deploy enqueue failed"),
+            error: errorMessage(
+              error,
+              "claim auto-compound deploy enqueue failed",
+            ),
           });
           compound = ClaimAutoCompoundStateSchema.parse({
             ...compound,
             phase: "FAILED",
-            error: errorMessage(error, "claim auto-compound deploy enqueue failed"),
+            error: errorMessage(
+              error,
+              "claim auto-compound deploy enqueue failed",
+            ),
           });
         }
       }
@@ -603,7 +621,9 @@ export async function finalizeClaimFees(
     positionLock.withLock(action.positionId, async () => {
       const latestAction = await input.actionRepository.get(action.actionId);
       if (latestAction === null) {
-        throw new Error(`Claim action disappeared during finalization: ${action.actionId}`);
+        throw new Error(
+          `Claim action disappeared during finalization: ${action.actionId}`,
+        );
       }
 
       assertClaimAction(latestAction);
@@ -630,12 +650,18 @@ export async function finalizeClaimFees(
         );
       }
 
-      const claimResult = ClaimConfirmationPayloadSchema.parse(latestAction.resultPayload);
+      const claimResult = ClaimConfirmationPayloadSchema.parse(
+        latestAction.resultPayload,
+      );
       let reconcilingPosition: Position;
 
       if (latestAction.status === "WAITING_CONFIRMATION") {
-        const claimingPosition = await input.stateRepository.get(latestAction.positionId);
-        const confirmedPosition = await input.dlmmGateway.getPosition(latestAction.positionId);
+        const claimingPosition = await input.stateRepository.get(
+          latestAction.positionId,
+        );
+        const confirmedPosition = await input.dlmmGateway.getPosition(
+          latestAction.positionId,
+        );
 
         if (
           claimingPosition !== null &&
@@ -669,13 +695,9 @@ export async function finalizeClaimFees(
 
         const claimConfirmedLikePosition =
           confirmedPosition !== null &&
-          (
-            confirmedPosition.status === "CLAIM_CONFIRMED" ||
-            (
-              input.dlmmGateway.reconciliationReadModel === "open_only" &&
-              confirmedPosition.status === "OPEN"
-            )
-          )
+          (confirmedPosition.status === "CLAIM_CONFIRMED" ||
+            (input.dlmmGateway.reconciliationReadModel === "open_only" &&
+              confirmedPosition.status === "OPEN"))
             ? confirmedPosition
             : null;
 
@@ -777,9 +799,13 @@ export async function finalizeClaimFees(
         };
       }
 
-      const currentPosition = await input.stateRepository.get(latestAction.positionId);
+      const currentPosition = await input.stateRepository.get(
+        latestAction.positionId,
+      );
       if (currentPosition === null) {
-        throw new Error(`Claim reconciling position missing for ${latestAction.positionId}`);
+        throw new Error(
+          `Claim reconciling position missing for ${latestAction.positionId}`,
+        );
       }
       reconcilingPosition = currentPosition;
       if (

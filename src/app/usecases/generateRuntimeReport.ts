@@ -1,16 +1,16 @@
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
-import type { PerformanceRepositoryInterface, PerformanceSummary } from "../../adapters/storage/PerformanceRepository.js";
+import type {
+  PerformanceRepositoryInterface,
+  PerformanceSummary,
+} from "../../adapters/storage/PerformanceRepository.js";
 import type { PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepository.js";
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { SchedulerMetadata } from "../../domain/entities/SchedulerMetadata.js";
 import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
 
-import {
-  scanRuntimeAlerts,
-  type RuntimeAlert,
-} from "./scanRuntimeAlerts.js";
+import { scanRuntimeAlerts, type RuntimeAlert } from "./scanRuntimeAlerts.js";
 
 export interface RuntimeReport {
   wallet: string;
@@ -53,9 +53,7 @@ export interface GenerateRuntimeReportInput {
   runningWorkerThresholdMinutes?: number;
 }
 
-function countBy<T extends string>(
-  values: T[],
-): Record<string, number> {
+function countBy<T extends string>(values: T[]): Record<string, number> {
   return values.reduce<Record<string, number>>((counts, value) => {
     counts[value] = (counts[value] ?? 0) + 1;
     return counts;
@@ -91,48 +89,67 @@ export async function generateRuntimeReport(
       ? {}
       : { runningWorkerThresholdMinutes: input.runningWorkerThresholdMinutes }),
   });
-  const performanceSummary = input.performanceRepository === undefined
-    ? null
-    : await input.performanceRepository.summary();
-  const dailyPerformance = input.performanceRepository === undefined
-    ? null
-    : await input.performanceRepository.list({
-        sinceIso: startOfUtcDay(generatedAt),
-      });
-  const lessons = input.lessonRepository === undefined
-    ? null
-    : await input.lessonRepository.list();
-  const poolMemory = input.poolMemoryRepository === undefined
-    ? null
-    : await input.poolMemoryRepository.listAll();
-  const solPriceQuote = input.priceGateway === undefined
-    ? null
-    : await input.priceGateway.getSolPriceUsd();
-  const scheduler = input.schedulerMetadataStore === undefined
-    ? null
-    : await input.schedulerMetadataStore.snapshot();
+  const performanceSummary =
+    input.performanceRepository === undefined
+      ? null
+      : await input.performanceRepository.summary();
+  const dailyPerformance =
+    input.performanceRepository === undefined
+      ? null
+      : await input.performanceRepository.list({
+          sinceIso: startOfUtcDay(generatedAt),
+        });
+  const lessons =
+    input.lessonRepository === undefined
+      ? null
+      : await input.lessonRepository.list();
+  const poolMemory =
+    input.poolMemoryRepository === undefined
+      ? null
+      : await input.poolMemoryRepository.listAll();
+  const solPriceQuote =
+    input.priceGateway === undefined
+      ? null
+      : await input.priceGateway.getSolPriceUsd();
+  const scheduler =
+    input.schedulerMetadataStore === undefined
+      ? null
+      : await input.schedulerMetadataStore.snapshot();
 
-  const positionsByStatus = countBy(positions.map((position) => position.status));
+  const positionsByStatus = countBy(
+    positions.map((position) => position.status),
+  );
   const actionsByStatus = countBy(actions.map((action) => action.status));
   const actionsByType = countBy(actions.map((action) => action.type));
-  const openPositions = positions.filter((position) => position.status === "OPEN").length;
+  const openPositions = positions.filter(
+    (position) => position.status === "OPEN",
+  ).length;
   const pendingActions = actions.filter((action) =>
-    ["QUEUED", "RUNNING", "WAITING_CONFIRMATION", "RECONCILING", "RETRY_QUEUED"].includes(
-      action.status,
-    )
+    [
+      "QUEUED",
+      "RUNNING",
+      "WAITING_CONFIRMATION",
+      "RECONCILING",
+      "RETRY_QUEUED",
+    ].includes(action.status),
   ).length;
   const pendingReconciliationPositions = positions.filter(
     (position) =>
-      position.status === "RECONCILIATION_REQUIRED" || position.needsReconciliation,
+      position.status === "RECONCILIATION_REQUIRED" ||
+      position.needsReconciliation,
   ).length;
-  const cooldownPools = poolMemory === null
-    ? null
-    : poolMemory.filter((entry) => entry.cooldownUntil !== undefined).length;
-  const dailyPnlUsd = dailyPerformance === null
-    ? null
-    : dailyPerformance.reduce((sum, record) => sum + record.pnlUsd, 0);
+  const cooldownPools =
+    poolMemory === null
+      ? null
+      : poolMemory.filter((entry) => entry.cooldownUntil !== undefined).length;
+  const dailyPnlUsd =
+    dailyPerformance === null
+      ? null
+      : dailyPerformance.reduce((sum, record) => sum + record.pnlUsd, 0);
   const dailyPnlSol =
-    dailyPnlUsd === null || solPriceQuote === null || solPriceQuote.priceUsd <= 0
+    dailyPnlUsd === null ||
+    solPriceQuote === null ||
+    solPriceQuote.priceUsd <= 0
       ? null
       : dailyPnlUsd / solPriceQuote.priceUsd;
   const dailyProfitTargetReached =
@@ -154,7 +171,9 @@ export async function generateRuntimeReport(
 
   const issues = [
     ...(pendingReconciliationPositions > 0
-      ? [`${pendingReconciliationPositions} position(s) still need reconciliation`]
+      ? [
+          `${pendingReconciliationPositions} position(s) still need reconciliation`,
+        ]
       : []),
     ...(alerts.length > 0
       ? alerts.map((alert) => `${alert.kind}: ${alert.title}`)

@@ -9,9 +9,7 @@ import {
   type FileSystemAdapter,
   FileStore,
 } from "../../src/adapters/storage/FileStore.js";
-import {
-  JournalRepository,
-} from "../../src/adapters/storage/JournalRepository.js";
+import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import type { JournalStoreCorruptError } from "../../src/adapters/storage/JournalRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { type Action } from "../../src/domain/entities/Action.js";
@@ -21,7 +19,9 @@ import { type Position } from "../../src/domain/entities/Position.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-storage-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-storage-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -104,9 +104,9 @@ function buildJournalEvent(eventType: string, actionId: string): JournalEvent {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -122,8 +122,12 @@ describe("storage repositories", () => {
     await stateRepository.upsert(buildPosition("pos_001"));
     await actionRepository.upsert(buildAction("act_001"));
 
-    const reloadedStateRepository = new StateRepository({ filePath: positionsPath });
-    const reloadedActionRepository = new ActionRepository({ filePath: actionsPath });
+    const reloadedStateRepository = new StateRepository({
+      filePath: positionsPath,
+    });
+    const reloadedActionRepository = new ActionRepository({
+      filePath: actionsPath,
+    });
 
     const positions = await reloadedStateRepository.list();
     const actions = await reloadedActionRepository.list();
@@ -139,10 +143,16 @@ describe("storage repositories", () => {
     const journalPath = path.join(directory, "journal.jsonl");
     const journalRepository = new JournalRepository({ filePath: journalPath });
 
-    await journalRepository.append(buildJournalEvent("ACTION_QUEUED", "act_001"));
-    await journalRepository.append(buildJournalEvent("ACTION_STARTED", "act_001"));
+    await journalRepository.append(
+      buildJournalEvent("ACTION_QUEUED", "act_001"),
+    );
+    await journalRepository.append(
+      buildJournalEvent("ACTION_STARTED", "act_001"),
+    );
 
-    const reloadedJournalRepository = new JournalRepository({ filePath: journalPath });
+    const reloadedJournalRepository = new JournalRepository({
+      filePath: journalPath,
+    });
     const events = await reloadedJournalRepository.list();
 
     expect(events.map((event) => event.eventType)).toEqual([
@@ -154,13 +164,18 @@ describe("storage repositories", () => {
   it("keeps the original file intact when an atomic replace fails midway", async () => {
     const directory = await makeTempDir();
     const positionsPath = path.join(directory, "positions.json");
-    const originalContents = JSON.stringify([buildPosition("pos_original")], null, 2);
+    const originalContents = JSON.stringify(
+      [buildPosition("pos_original")],
+      null,
+      2,
+    );
     await fs.writeFile(positionsPath, originalContents, "utf8");
 
     let renameCount = 0;
     const flakyFs: FileSystemAdapter = {
       access: (filePath) => fs.access(filePath),
-      appendFile: (filePath, data, encoding) => fs.appendFile(filePath, data, encoding),
+      appendFile: (filePath, data, encoding) =>
+        fs.appendFile(filePath, data, encoding),
       mkdir: (dirPath, options) => fs.mkdir(dirPath, options),
       readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
       rename: async (fromPath, toPath) => {
@@ -172,7 +187,8 @@ describe("storage repositories", () => {
         await fs.rename(fromPath, toPath);
       },
       rm: (targetPath, options) => fs.rm(targetPath, options),
-      writeFile: (filePath, data, encoding) => fs.writeFile(filePath, data, encoding),
+      writeFile: (filePath, data, encoding) =>
+        fs.writeFile(filePath, data, encoding),
     };
 
     const stateRepository = new StateRepository({
@@ -185,7 +201,9 @@ describe("storage repositories", () => {
     ).rejects.toThrow(/simulated rename failure/i);
 
     const persistedContents = await fs.readFile(positionsPath, "utf8");
-    const parsed = JSON.parse(persistedContents) as Array<{ positionId: string }>;
+    const parsed = JSON.parse(persistedContents) as Array<{
+      positionId: string;
+    }>;
 
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.positionId).toBe("pos_original");
@@ -196,9 +214,14 @@ describe("storage repositories", () => {
     const filePath = path.join(directory, "custom.json");
     const fileStore = new FileStore();
 
-    await fileStore.writeTextAtomic(filePath, JSON.stringify({ ok: true }, null, 2));
+    await fileStore.writeTextAtomic(
+      filePath,
+      JSON.stringify({ ok: true }, null, 2),
+    );
 
-    await expect(fs.readFile(filePath, "utf8")).resolves.toContain("\"ok\": true");
+    await expect(fs.readFile(filePath, "utf8")).resolves.toContain(
+      '"ok": true',
+    );
   });
 
   it("does not lose updates when two repository upserts happen concurrently", async () => {
@@ -225,14 +248,26 @@ describe("storage repositories", () => {
     const tempPath = `${filePath}.tmp`;
     const fileStore = new FileStore();
 
-    await fs.writeFile(tempPath, JSON.stringify([{ positionId: "from_temp" }]), "utf8");
-    await fs.writeFile(backupPath, JSON.stringify([{ positionId: "from_backup" }]), "utf8");
+    await fs.writeFile(
+      tempPath,
+      JSON.stringify([{ positionId: "from_temp" }]),
+      "utf8",
+    );
+    await fs.writeFile(
+      backupPath,
+      JSON.stringify([{ positionId: "from_backup" }]),
+      "utf8",
+    );
 
     const recoveredFromTemp = await fileStore.readText(filePath);
     expect(recoveredFromTemp).toContain("from_temp");
 
     await fs.rm(filePath, { force: true });
-    await fs.writeFile(backupPath, JSON.stringify([{ positionId: "from_backup" }]), "utf8");
+    await fs.writeFile(
+      backupPath,
+      JSON.stringify([{ positionId: "from_backup" }]),
+      "utf8",
+    );
 
     const recoveredFromBackup = await fileStore.readText(filePath);
     expect(recoveredFromBackup).toContain("from_backup");

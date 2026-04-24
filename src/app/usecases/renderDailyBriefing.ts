@@ -23,9 +23,7 @@ function prefix(enabled: boolean, value: string): string {
   return enabled ? `${value} ` : "";
 }
 
-export function renderDailyBriefing(
-  input: RenderDailyBriefingInput,
-): string {
+export function renderDailyBriefing(input: RenderDailyBriefingInput): string {
   const report = input.report;
   const emoji = input.emoji === true;
   const pnlText =

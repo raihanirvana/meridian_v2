@@ -13,12 +13,16 @@ import { type ScreeningPolicy } from "../../../src/domain/rules/screeningRules.j
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-policy-store-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-policy-store-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
-function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy {
+function buildPolicy(
+  overrides: Partial<ScreeningPolicy> = {},
+): ScreeningPolicy {
   return {
     timeframe: "5m",
     minMarketCapUsd: 150_000,
@@ -47,9 +51,9 @@ function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy 
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -104,13 +108,15 @@ describe("runtime policy store", () => {
   it("throws PolicyStoreCorruptError for invalid file content", async () => {
     const directory = await makeTempDir();
     const filePath = path.join(directory, "policy-overrides.json");
-    await fs.writeFile(filePath, "{\"broken\":true}", "utf8");
+    await fs.writeFile(filePath, '{"broken":true}', "utf8");
 
     const store = new FileRuntimePolicyStore({
       filePath,
       basePolicy: buildPolicy(),
     });
 
-    await expect(store.snapshot()).rejects.toBeInstanceOf(PolicyStoreCorruptError);
+    await expect(store.snapshot()).rejects.toBeInstanceOf(
+      PolicyStoreCorruptError,
+    );
   });
 });

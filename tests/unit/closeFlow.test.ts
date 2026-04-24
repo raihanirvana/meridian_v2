@@ -26,7 +26,9 @@ import { type ScreeningPolicy } from "../../src/domain/rules/screeningRules.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-close-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-close-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -155,7 +157,9 @@ function buildGateway(
   });
 }
 
-function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy {
+function buildPolicy(
+  overrides: Partial<ScreeningPolicy> = {},
+): ScreeningPolicy {
   return {
     timeframe: "5m",
     minMarketCapUsd: 150_000,
@@ -182,7 +186,9 @@ function buildPolicy(overrides: Partial<ScreeningPolicy> = {}): ScreeningPolicy 
   };
 }
 
-function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+function buildPerformance(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
   return {
     positionId: "seed_pos",
     wallet: "wallet_001",
@@ -215,9 +221,9 @@ function buildPerformance(overrides: Partial<PerformanceRecord> = {}): Performan
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -323,7 +329,9 @@ describe("close flow", () => {
     expect(finalized.position?.status).toBe("CLOSED");
     expect(finalized.position?.currentValueUsd).toBe(0);
     expect(finalized.position?.realizedPnlUsd).toBe(30);
-    expect(finalized.position?.outOfRangeSince).toBe("2026-04-19T23:00:00.000Z");
+    expect(finalized.position?.outOfRangeSince).toBe(
+      "2026-04-19T23:00:00.000Z",
+    );
 
     const persistedAction = await actionRepository.get(action.actionId);
     const persistedPosition = await stateRepository.get("pos_001");
@@ -331,8 +339,11 @@ describe("close flow", () => {
 
     expect(persistedAction?.status).toBe("DONE");
     expect(
-      (persistedAction?.resultPayload?.accounting as { postCloseSwap?: { txId?: string } })
-        ?.postCloseSwap?.txId,
+      (
+        persistedAction?.resultPayload?.accounting as {
+          postCloseSwap?: { txId?: string };
+        }
+      )?.postCloseSwap?.txId,
     ).toBe("swap_close_001");
     expect(persistedPosition?.status).toBe("CLOSED");
     expect(journalEvents.map((event) => event.eventType)).toContain(
@@ -522,10 +533,10 @@ describe("close flow", () => {
     expect(performance[0]?.initialValueUsd).toBe(30);
     expect(performance[0]?.finalValueUsd).toBe(60);
     expect(performance[0]?.pnlPct).toBe(100);
-    expect((await lessonRepository.list())).toHaveLength(1);
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "LESSON_RECORDED",
-    );
+    expect(await lessonRepository.list()).toHaveLength(1);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("LESSON_RECORDED");
   });
 
   it("auto-evolves runtime policy after the fifth recorded close performance", async () => {
@@ -558,10 +569,31 @@ describe("close flow", () => {
     });
 
     for (const record of [
-      buildPerformance({ positionId: "w1", pnlPct: 10, feeTvlRatio: 0.30, organicScore: 88 }),
-      buildPerformance({ positionId: "w2", pnlPct: 9, feeTvlRatio: 0.28, organicScore: 86 }),
-      buildPerformance({ positionId: "w3", pnlPct: 8, feeTvlRatio: 0.32, organicScore: 84 }),
-      buildPerformance({ positionId: "l1", pnlPct: -8, pnlUsd: -8, feeTvlRatio: 0.07, organicScore: 61 }),
+      buildPerformance({
+        positionId: "w1",
+        pnlPct: 10,
+        feeTvlRatio: 0.3,
+        organicScore: 88,
+      }),
+      buildPerformance({
+        positionId: "w2",
+        pnlPct: 9,
+        feeTvlRatio: 0.28,
+        organicScore: 86,
+      }),
+      buildPerformance({
+        positionId: "w3",
+        pnlPct: 8,
+        feeTvlRatio: 0.32,
+        organicScore: 84,
+      }),
+      buildPerformance({
+        positionId: "l1",
+        pnlPct: -8,
+        pnlUsd: -8,
+        feeTvlRatio: 0.07,
+        organicScore: 61,
+      }),
     ]) {
       await performanceRepository.append(record);
     }
@@ -634,14 +666,18 @@ describe("close flow", () => {
     });
 
     expect(finalized.outcome).toBe("FINALIZED");
-    expect((await performanceRepository.list())).toHaveLength(5);
-    expect((await lessonRepository.list()).some((lesson) => lesson.outcome === "evolution")).toBe(
-      true,
-    );
-    expect(Object.keys((await runtimePolicyStore.snapshot()).overrides).length).toBeGreaterThan(0);
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "POLICY_EVOLVED",
-    );
+    expect(await performanceRepository.list()).toHaveLength(5);
+    expect(
+      (await lessonRepository.list()).some(
+        (lesson) => lesson.outcome === "evolution",
+      ),
+    ).toBe(true);
+    expect(
+      Object.keys((await runtimePolicyStore.snapshot()).overrides).length,
+    ).toBeGreaterThan(0);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("POLICY_EVOLVED");
   });
 
   it("accepts close requests from MANAGEMENT_REVIEW and moves the position to CLOSING", async () => {
@@ -1004,9 +1040,11 @@ describe("close flow", () => {
     expect(resumed.position?.status).toBe("CLOSED");
     expect(resumed.position?.needsReconciliation).toBe(false);
     expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
-    expect((await stateRepository.get("pos_resume_close"))?.status).toBe("CLOSED");
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "CLOSE_FINALIZED",
+    expect((await stateRepository.get("pos_resume_close"))?.status).toBe(
+      "CLOSED",
     );
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("CLOSE_FINALIZED");
   });
 });

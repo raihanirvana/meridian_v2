@@ -74,7 +74,9 @@ export async function requestClaimFees(input: RequestClaimFeesInput) {
   const position = await input.stateRepository.get(input.positionId);
 
   if (position === null) {
-    throw new Error(`Position not found for claim request: ${input.positionId}`);
+    throw new Error(
+      `Position not found for claim request: ${input.positionId}`,
+    );
   }
 
   if (position.wallet !== input.wallet) {

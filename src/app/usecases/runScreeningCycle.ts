@@ -36,9 +36,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 function asNumber(value: unknown, fieldName: string): number {
@@ -71,7 +71,9 @@ function asNullableString(value: unknown): string | null | undefined {
 }
 
 function asOptionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function toScreeningInput(
@@ -91,7 +93,10 @@ function toScreeningInput(
     symbolPair: candidate.symbolPair,
     tokenXMint: asString(candidate.tokenRiskSnapshot.tokenXMint, "tokenXMint"),
     tokenYMint: asString(candidate.tokenRiskSnapshot.tokenYMint, "tokenYMint"),
-    marketCapUsd: asNumber(candidate.screeningSnapshot.marketCapUsd, "marketCapUsd"),
+    marketCapUsd: asNumber(
+      candidate.screeningSnapshot.marketCapUsd,
+      "marketCapUsd",
+    ),
     tvlUsd: asNumber(candidate.screeningSnapshot.tvlUsd, "tvlUsd"),
     volumeUsd: asNumber(candidate.screeningSnapshot.volumeUsd, "volumeUsd"),
     volumeTrendPct:
@@ -108,18 +113,29 @@ function toScreeningInput(
     feePerTvl24h:
       details.feePerTvl24h ??
       asOptionalNumber(candidate.screeningSnapshot.feePerTvl24h),
-    organicScore: asNumber(candidate.screeningSnapshot.organicScore, "organicScore"),
-    holderCount: asNumber(candidate.screeningSnapshot.holderCount, "holderCount"),
+    organicScore: asNumber(
+      candidate.screeningSnapshot.organicScore,
+      "organicScore",
+    ),
+    holderCount: asNumber(
+      candidate.screeningSnapshot.holderCount,
+      "holderCount",
+    ),
     binStep: asNumber(candidate.screeningSnapshot.binStep, "binStep"),
-    launchpad:
-      asNullableString(candidate.screeningSnapshot.launchpad) ?? null,
+    launchpad: asNullableString(candidate.screeningSnapshot.launchpad) ?? null,
     deployerAddress: asString(
       candidate.tokenRiskSnapshot.deployerAddress,
       "deployerAddress",
     ),
     pairType: asString(candidate.screeningSnapshot.pairType, "pairType"),
-    topHolderPct: asNumber(candidate.tokenRiskSnapshot.topHolderPct, "topHolderPct"),
-    botHolderPct: asNumber(candidate.tokenRiskSnapshot.botHolderPct, "botHolderPct"),
+    topHolderPct: asNumber(
+      candidate.tokenRiskSnapshot.topHolderPct,
+      "topHolderPct",
+    ),
+    botHolderPct: asNumber(
+      candidate.tokenRiskSnapshot.botHolderPct,
+      "botHolderPct",
+    ),
     bundleRiskPct: asNumber(
       candidate.tokenRiskSnapshot.bundleRiskPct,
       "bundleRiskPct",
@@ -137,7 +153,10 @@ function toScreeningInput(
       candidate.smartMoneySnapshot.confidenceScore,
       "confidenceScore",
     ),
-    poolAgeHours: asNumber(candidate.smartMoneySnapshot.poolAgeHours, "poolAgeHours"),
+    poolAgeHours: asNumber(
+      candidate.smartMoneySnapshot.poolAgeHours,
+      "poolAgeHours",
+    ),
     tokenAgeHours:
       details.tokenAgeHours ??
       asOptionalNumber(candidate.smartMoneySnapshot.tokenAgeHours),
@@ -150,7 +169,9 @@ function toScreeningInput(
       null,
     holderDistributionSummary:
       details.holderDistributionSummary ??
-      asNullableString(candidate.smartMoneySnapshot.holderDistributionSummary) ??
+      asNullableString(
+        candidate.smartMoneySnapshot.holderDistributionSummary,
+      ) ??
       null,
     narrativePenaltyScore: asNumber(
       candidate.smartMoneySnapshot.narrativePenaltyScore,
@@ -178,8 +199,7 @@ function mergeCandidateContext(
       ...candidate.smartMoneySnapshot,
       tokenAgeHours: enriched.tokenAgeHours,
       narrativeSummary: enriched.narrativeSummary ?? null,
-      holderDistributionSummary:
-        enriched.holderDistributionSummary ?? null,
+      holderDistributionSummary: enriched.holderDistributionSummary ?? null,
     },
   });
 }
@@ -234,74 +254,87 @@ export async function runScreeningCycle(
   });
   const listedCandidates = await input.screeningGateway.listCandidates({
     limit:
-      input.candidateLimit ??
-      Math.max(screeningPolicy.shortlistLimit * 5, 10),
+      input.candidateLimit ?? Math.max(screeningPolicy.shortlistLimit * 5, 10),
     timeframe: screeningPolicy.timeframe,
   });
 
-  const enrichedResults = await Promise.all(listedCandidates.map(async (candidate) => {
-    const tokenMint = asString(candidate.tokenRiskSnapshot.tokenXMint, "tokenXMint");
-    const narrativePromise = input.tokenIntelGateway === undefined
-      ? Promise.resolve(null)
-      : input.tokenIntelGateway
-          .getTokenNarrativeSnapshot(tokenMint)
-          .catch((error) => {
-            logger.warn(
-              { err: error, tokenMint, poolAddress: candidate.poolAddress },
-              "token narrative enrichment failed; continuing with gateway details",
-            );
-            return null;
-          });
-    const [details, narrative] = await Promise.all([
-      input.screeningGateway.getCandidateDetails(candidate.poolAddress),
-      narrativePromise,
-    ]);
+  const enrichedResults = await Promise.all(
+    listedCandidates.map(async (candidate) => {
+      const tokenMint = asString(
+        candidate.tokenRiskSnapshot.tokenXMint,
+        "tokenXMint",
+      );
+      const narrativePromise =
+        input.tokenIntelGateway === undefined
+          ? Promise.resolve(null)
+          : input.tokenIntelGateway
+              .getTokenNarrativeSnapshot(tokenMint)
+              .catch((error) => {
+                logger.warn(
+                  { err: error, tokenMint, poolAddress: candidate.poolAddress },
+                  "token narrative enrichment failed; continuing with gateway details",
+                );
+                return null;
+              });
+      const [details, narrative] = await Promise.all([
+        input.screeningGateway.getCandidateDetails(candidate.poolAddress),
+        narrativePromise,
+      ]);
 
-    let narrativeSummary = details.narrativeSummary ?? null;
-    let holderDistributionSummary = details.holderDistributionSummary ?? null;
-    if (narrative !== null) {
+      let narrativeSummary = details.narrativeSummary ?? null;
+      let holderDistributionSummary = details.holderDistributionSummary ?? null;
+      if (narrative !== null) {
         narrativeSummary = narrative.narrativeSummary ?? narrativeSummary;
         holderDistributionSummary =
           narrative.holderDistributionSummary ?? holderDistributionSummary;
-    }
+      }
 
-    const screeningInput = toScreeningInput(candidate, {
-      ...(details.feePerTvl24h === undefined
-        ? {}
-        : { feePerTvl24h: details.feePerTvl24h }),
-      ...(details.tokenAgeHours === undefined
-        ? {}
-        : { tokenAgeHours: details.tokenAgeHours }),
-      ...(details.athDistancePct === undefined
-        ? {}
-        : { athDistancePct: details.athDistancePct }),
-      ...(details.volumeTrendPct === undefined
-        ? {}
-        : { volumeTrendPct: details.volumeTrendPct }),
-      ...(narrativeSummary === null ? {} : { narrativeSummary }),
-      ...(holderDistributionSummary === null
-        ? {}
-        : { holderDistributionSummary }),
-    });
-    return {
-      screeningInput,
-      enrichedCandidate: mergeCandidateContext(candidate, screeningInput, now),
-    };
-  }));
+      const screeningInput = toScreeningInput(candidate, {
+        ...(details.feePerTvl24h === undefined
+          ? {}
+          : { feePerTvl24h: details.feePerTvl24h }),
+        ...(details.tokenAgeHours === undefined
+          ? {}
+          : { tokenAgeHours: details.tokenAgeHours }),
+        ...(details.athDistancePct === undefined
+          ? {}
+          : { athDistancePct: details.athDistancePct }),
+        ...(details.volumeTrendPct === undefined
+          ? {}
+          : { volumeTrendPct: details.volumeTrendPct }),
+        ...(narrativeSummary === null ? {} : { narrativeSummary }),
+        ...(holderDistributionSummary === null
+          ? {}
+          : { holderDistributionSummary }),
+      });
+      return {
+        screeningInput,
+        enrichedCandidate: mergeCandidateContext(
+          candidate,
+          screeningInput,
+          now,
+        ),
+      };
+    }),
+  );
   const enrichedInputs = enrichedResults.map((item) => item.screeningInput);
-  const enrichedCandidates = enrichedResults.map((item) => item.enrichedCandidate);
+  const enrichedCandidates = enrichedResults.map(
+    (item) => item.enrichedCandidate,
+  );
 
-  const signalWeights = input.signalWeightsProvider === undefined
-    ? undefined
-    : await input.signalWeightsProvider.resolveSignalWeights();
-  const poolMemoryMap = input.poolMemoryRepository === undefined
-    ? undefined
-    : Object.fromEntries(
-        (await input.poolMemoryRepository.listAll()).map((entry) => [
-          entry.poolAddress,
-          { cooldownUntil: entry.cooldownUntil },
-        ]),
-      );
+  const signalWeights =
+    input.signalWeightsProvider === undefined
+      ? undefined
+      : await input.signalWeightsProvider.resolveSignalWeights();
+  const poolMemoryMap =
+    input.poolMemoryRepository === undefined
+      ? undefined
+      : Object.fromEntries(
+          (await input.poolMemoryRepository.listAll()).map((entry) => [
+            entry.poolAddress,
+            { cooldownUntil: entry.cooldownUntil },
+          ]),
+        );
 
   const deterministic = screenAndScoreCandidates({
     candidates: enrichedInputs,
@@ -315,24 +348,27 @@ export async function runScreeningCycle(
   });
 
   const candidateById = new Map(
-    deterministic.candidates.map((candidate) => [candidate.candidateId, candidate] as const),
+    deterministic.candidates.map(
+      (candidate) => [candidate.candidateId, candidate] as const,
+    ),
   );
   const aiShortlist = await rankShortlistWithAi({
     shortlist: deterministic.shortlist.map(
-      (candidate) => enrichedCandidates.find(
-        (item) => item.candidateId === candidate.candidateId,
-      ) ?? candidate,
+      (candidate) =>
+        enrichedCandidates.find(
+          (item) => item.candidateId === candidate.candidateId,
+        ) ?? candidate,
     ),
     aiMode: input.aiMode ?? "disabled",
-    lessonPromptService:
-      input.lessonPromptService ??
-      {
-        async buildLessonsPrompt() {
-          return null;
-        },
+    lessonPromptService: input.lessonPromptService ?? {
+      async buildLessonsPrompt() {
+        return null;
       },
+    },
     ...(input.llmGateway === undefined ? {} : { llmGateway: input.llmGateway }),
-    ...(input.aiTimeoutMs === undefined ? {} : { timeoutMs: input.aiTimeoutMs }),
+    ...(input.aiTimeoutMs === undefined
+      ? {}
+      : { timeoutMs: input.aiTimeoutMs }),
   });
 
   const finalCandidates = deterministic.candidates.map((candidate) => {

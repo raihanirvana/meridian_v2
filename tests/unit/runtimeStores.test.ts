@@ -9,16 +9,18 @@ import { createRuntimeStores } from "../../src/runtime/createRuntimeStores.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-runtime-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-runtime-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -63,8 +65,12 @@ describe("runtime stores", () => {
     });
 
     expect(stores.paths.dataDir).toBe(directory);
-    expect(stores.paths.positionsFilePath).toBe(path.join(directory, "positions.json"));
-    expect(stores.paths.lessonsFilePath).toBe(path.join(directory, "lessons.json"));
+    expect(stores.paths.positionsFilePath).toBe(
+      path.join(directory, "positions.json"),
+    );
+    expect(stores.paths.lessonsFilePath).toBe(
+      path.join(directory, "lessons.json"),
+    );
     expect(await stores.lessonRepository.list()).toHaveLength(1);
     await expect(fs.access(directory)).resolves.toBeUndefined();
   }, 10_000);

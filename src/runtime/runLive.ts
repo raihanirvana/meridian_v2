@@ -20,7 +20,10 @@ import { MeteoraPoolDiscoveryScreeningGateway } from "../adapters/screening/Mete
 import type { ManagementSignals } from "../domain/rules/managementRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
 import type { UserConfig } from "../infra/config/configSchema.js";
-import { loadConfig, redactSecretsForLogging } from "../infra/config/loadConfig.js";
+import {
+  loadConfig,
+  redactSecretsForLogging,
+} from "../infra/config/loadConfig.js";
 import { createLogger } from "../infra/logging/logger.js";
 import { DefaultLessonPromptService } from "../app/services/LessonPromptService.js";
 import { DefaultPolicyProvider } from "../app/services/PolicyProvider.js";
@@ -48,9 +51,7 @@ const RuntimeBootstrapEnvSchema = z
   })
   .strict();
 
-function emptyToUndefined(
-  value: string | undefined,
-): string | undefined {
+function emptyToUndefined(value: string | undefined): string | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -76,7 +77,7 @@ function parseRuntimeDotEnv(contents: string): Record<string, string> {
     const key = line.slice(0, separatorIndex).trim();
     let value = line.slice(separatorIndex + 1).trim();
     if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
@@ -120,13 +121,11 @@ function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
   });
 }
 
-function createConservativeSignalProvider(): (
-  input: {
-    position: unknown;
-    portfolio: unknown;
-    now: string;
-  },
-) => Promise<ManagementSignals> {
+function createConservativeSignalProvider(): (input: {
+  position: unknown;
+  portfolio: unknown;
+  now: string;
+}) => Promise<ManagementSignals> {
   return async (_input) => ({
     forcedManualClose: false,
     severeTokenRisk: false,
@@ -138,22 +137,20 @@ function createConservativeSignalProvider(): (
   });
 }
 
-function toRuntimeScreeningPolicy(
-  userScreening: {
-    timeframe: "5m" | "1h" | "24h";
-    minMarketCapUsd: number;
-    maxMarketCapUsd: number;
-    minTvlUsd: number;
-    minVolumeUsd: number;
-    minVolumeTrendPct?: number | undefined;
-    minFeeActiveTvlRatio: number;
-    minFeePerTvl24h: number;
-    minOrganic: number;
-    minHolderCount: number;
-    allowedBinSteps: number[];
-    blockedLaunchpads: string[];
-  },
-): ScreeningPolicy {
+function toRuntimeScreeningPolicy(userScreening: {
+  timeframe: "5m" | "1h" | "24h";
+  minMarketCapUsd: number;
+  maxMarketCapUsd: number;
+  minTvlUsd: number;
+  minVolumeUsd: number;
+  minVolumeTrendPct?: number | undefined;
+  minFeeActiveTvlRatio: number;
+  minFeePerTvl24h: number;
+  minOrganic: number;
+  minHolderCount: number;
+  allowedBinSteps: number[];
+  blockedLaunchpads: string[];
+}): ScreeningPolicy {
   return {
     ...userScreening,
     blockedTokenMints: [],
@@ -181,15 +178,25 @@ function startOperatorStdinLoop(input: {
   actionQueue: ReturnType<typeof createRuntimeStores>["actionQueue"];
   stateRepository: ReturnType<typeof createRuntimeStores>["stateRepository"];
   actionRepository: ReturnType<typeof createRuntimeStores>["actionRepository"];
-  journalRepository: ReturnType<typeof createRuntimeStores>["journalRepository"];
+  journalRepository: ReturnType<
+    typeof createRuntimeStores
+  >["journalRepository"];
   walletGateway: WalletGateway;
   priceGateway: PriceGateway;
   riskPolicy: UserConfig["risk"];
   lessonRepository: ReturnType<typeof createRuntimeStores>["lessonRepository"];
-  performanceRepository: ReturnType<typeof createRuntimeStores>["performanceRepository"];
-  poolMemoryRepository: ReturnType<typeof createRuntimeStores>["poolMemoryRepository"];
-  runtimePolicyStore: ReturnType<typeof createRuntimeStores>["runtimePolicyStore"];
-  runtimeControlStore: ReturnType<typeof createRuntimeStores>["runtimeControlStore"];
+  performanceRepository: ReturnType<
+    typeof createRuntimeStores
+  >["performanceRepository"];
+  poolMemoryRepository: ReturnType<
+    typeof createRuntimeStores
+  >["poolMemoryRepository"];
+  runtimePolicyStore: ReturnType<
+    typeof createRuntimeStores
+  >["runtimePolicyStore"];
+  runtimeControlStore: ReturnType<
+    typeof createRuntimeStores
+  >["runtimeControlStore"];
   policyProvider: DefaultPolicyProvider;
   reportingSolMode: boolean;
 }): (() => void) | null {
@@ -249,7 +256,10 @@ function startOperatorStdinLoop(input: {
           error instanceof Error && error.message.trim().length > 0
             ? error.message
             : "operator command failed";
-        input.logger.warn({ err: error, rawCommand }, "operator stdin command failed");
+        input.logger.warn(
+          { err: error, rawCommand },
+          "operator stdin command failed",
+        );
         process.stderr.write(`${message}\n`);
       });
   });
@@ -274,15 +284,25 @@ function startTelegramOperatorPolling(input: {
   actionQueue: ReturnType<typeof createRuntimeStores>["actionQueue"];
   stateRepository: ReturnType<typeof createRuntimeStores>["stateRepository"];
   actionRepository: ReturnType<typeof createRuntimeStores>["actionRepository"];
-  journalRepository: ReturnType<typeof createRuntimeStores>["journalRepository"];
+  journalRepository: ReturnType<
+    typeof createRuntimeStores
+  >["journalRepository"];
   walletGateway: WalletGateway;
   priceGateway: PriceGateway;
   riskPolicy: UserConfig["risk"];
   lessonRepository: ReturnType<typeof createRuntimeStores>["lessonRepository"];
-  performanceRepository: ReturnType<typeof createRuntimeStores>["performanceRepository"];
-  poolMemoryRepository: ReturnType<typeof createRuntimeStores>["poolMemoryRepository"];
-  runtimePolicyStore: ReturnType<typeof createRuntimeStores>["runtimePolicyStore"];
-  runtimeControlStore: ReturnType<typeof createRuntimeStores>["runtimeControlStore"];
+  performanceRepository: ReturnType<
+    typeof createRuntimeStores
+  >["performanceRepository"];
+  poolMemoryRepository: ReturnType<
+    typeof createRuntimeStores
+  >["poolMemoryRepository"];
+  runtimePolicyStore: ReturnType<
+    typeof createRuntimeStores
+  >["runtimePolicyStore"];
+  runtimeControlStore: ReturnType<
+    typeof createRuntimeStores
+  >["runtimeControlStore"];
   policyProvider: DefaultPolicyProvider;
   reportingSolMode: boolean;
 }): (() => void) | null {
@@ -519,8 +539,7 @@ async function main() {
           ...(runtimeEnv.METEORA_DLMM_DATA_API_BASE_URL === undefined
             ? {}
             : {
-                dataApiBaseUrl:
-                  runtimeEnv.METEORA_DLMM_DATA_API_BASE_URL,
+                dataApiBaseUrl: runtimeEnv.METEORA_DLMM_DATA_API_BASE_URL,
               }),
         })
       : new HttpDlmmGateway({
@@ -617,10 +636,8 @@ async function main() {
 
   if (
     config.user.notifications.telegramEnabled &&
-    (
-      config.secrets.TELEGRAM_BOT_TOKEN === undefined ||
-      config.user.notifications.alertChatId === undefined
-    )
+    (config.secrets.TELEGRAM_BOT_TOKEN === undefined ||
+      config.user.notifications.alertChatId === undefined)
   ) {
     logger.warn(
       {
@@ -633,11 +650,9 @@ async function main() {
 
   if (
     config.user.notifications.telegramOperatorCommandsEnabled &&
-    (
-      config.user.notifications.telegramEnabled !== true ||
+    (config.user.notifications.telegramEnabled !== true ||
       config.secrets.TELEGRAM_BOT_TOKEN === undefined ||
-      config.user.notifications.alertChatId === undefined
-    )
+      config.user.notifications.alertChatId === undefined)
   ) {
     logger.warn(
       {

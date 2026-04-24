@@ -10,7 +10,10 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
@@ -65,9 +68,9 @@ function nowTimestamp(now?: () => string): string {
 }
 
 function toJournalRecord(value: unknown): Record<string, unknown> {
-  return z.record(z.string(), z.unknown()).parse(
-    JSON.parse(JSON.stringify(value)),
-  );
+  return z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(JSON.stringify(value)));
 }
 
 async function appendJournalEvent(
@@ -93,7 +96,10 @@ function buildPendingDeployPosition(input: {
   positionId: string;
   now: string;
 }): Position {
-  const deployingStatus = transitionPositionStatus("DEPLOY_REQUESTED", "DEPLOYING");
+  const deployingStatus = transitionPositionStatus(
+    "DEPLOY_REQUESTED",
+    "DEPLOYING",
+  );
 
   return PositionSchema.parse({
     positionId: input.positionId,
@@ -143,10 +149,13 @@ function buildOpenPosition(input: {
   now: string;
 }): Position {
   const rangeLowerBin =
-    input.confirmedPosition.rangeLowerBin ?? input.pendingPosition.rangeLowerBin;
+    input.confirmedPosition.rangeLowerBin ??
+    input.pendingPosition.rangeLowerBin;
   const rangeUpperBin =
-    input.confirmedPosition.rangeUpperBin ?? input.pendingPosition.rangeUpperBin;
-  const activeBin = input.confirmedPosition.activeBin ?? input.pendingPosition.activeBin;
+    input.confirmedPosition.rangeUpperBin ??
+    input.pendingPosition.rangeUpperBin;
+  const activeBin =
+    input.confirmedPosition.activeBin ?? input.pendingPosition.activeBin;
 
   return PositionSchema.parse({
     ...input.pendingPosition,
@@ -223,9 +232,12 @@ export async function processDeployAction(
 ): Promise<QueueExecutionResult> {
   assertDeployAction(input.action);
 
-  const payload = DeployActionRequestPayloadSchema.parse(input.action.requestPayload);
+  const payload = DeployActionRequestPayloadSchema.parse(
+    input.action.requestPayload,
+  );
   const now = nowTimestamp(input.now);
-  let deployResult: z.infer<typeof DeployActionResultPayloadSchema> | null = null;
+  let deployResult: z.infer<typeof DeployActionResultPayloadSchema> | null =
+    null;
 
   if (
     input.runtimeControlStore !== undefined &&
@@ -329,12 +341,13 @@ export async function processDeployAction(
       error: null,
     };
   } catch (error) {
-    const reconciliationPosition = buildReconciliationRequiredPositionFromDeployData({
-      action: input.action,
-      payload,
-      positionId: deployResult.positionId,
-      now,
-    });
+    const reconciliationPosition =
+      buildReconciliationRequiredPositionFromDeployData({
+        action: input.action,
+        payload,
+        positionId: deployResult.positionId,
+        now,
+      });
 
     try {
       await input.stateRepository.upsert(reconciliationPosition);
@@ -393,11 +406,12 @@ export async function confirmDeployAction(
     action.status === "FAILED" ||
     action.status === "ABORTED"
   ) {
-    const resultPayload = DeployActionResultPayloadSchema.safeParse(action.resultPayload);
-    const existingPosition =
-      resultPayload.success
-        ? await input.stateRepository.get(resultPayload.data.positionId)
-        : null;
+    const resultPayload = DeployActionResultPayloadSchema.safeParse(
+      action.resultPayload,
+    );
+    const existingPosition = resultPayload.success
+      ? await input.stateRepository.get(resultPayload.data.positionId)
+      : null;
 
     return {
       action,
@@ -412,14 +426,18 @@ export async function confirmDeployAction(
     );
   }
 
-  const deployResult = DeployActionResultPayloadSchema.parse(action.resultPayload);
+  const deployResult = DeployActionResultPayloadSchema.parse(
+    action.resultPayload,
+  );
   const positionLock = input.positionLock ?? new PositionLock();
 
   return walletLock.withLock(action.wallet, () =>
     positionLock.withLock(deployResult.positionId, async () => {
       const latestAction = await input.actionRepository.get(action.actionId);
       if (latestAction === null) {
-        throw new Error(`Deploy action disappeared during confirmation: ${action.actionId}`);
+        throw new Error(
+          `Deploy action disappeared during confirmation: ${action.actionId}`,
+        );
       }
 
       assertDeployAction(latestAction);
@@ -443,8 +461,12 @@ export async function confirmDeployAction(
         );
       }
 
-      const payload = DeployActionRequestPayloadSchema.parse(latestAction.requestPayload);
-      const pendingPosition = await input.stateRepository.get(deployResult.positionId);
+      const payload = DeployActionRequestPayloadSchema.parse(
+        latestAction.requestPayload,
+      );
+      const pendingPosition = await input.stateRepository.get(
+        deployResult.positionId,
+      );
       const confirmedPosition = await input.dlmmGateway.getPosition(
         deployResult.positionId,
       );
@@ -531,9 +553,9 @@ export async function confirmDeployAction(
               ? `Deploy confirmation requires reconciliation because local pending position is missing for ${deployResult.positionId}`
               : pendingPosition.status !== "DEPLOYING"
                 ? `Deploy confirmation requires reconciliation because local position status is ${pendingPosition.status} for ${deployResult.positionId}`
-              : confirmedPosition === null
-                ? `Deploy confirmation not found for position ${deployResult.positionId}`
-                : `Deploy confirmation returned non-open status ${confirmedPosition.status} for ${deployResult.positionId}`,
+                : confirmedPosition === null
+                  ? `Deploy confirmation not found for position ${deployResult.positionId}`
+                  : `Deploy confirmation returned non-open status ${confirmedPosition.status} for ${deployResult.positionId}`,
           completedAt: now,
         } satisfies Action;
 

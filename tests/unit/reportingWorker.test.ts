@@ -19,7 +19,9 @@ import type { NotifierGateway } from "../../src/adapters/telegram/NotifierGatewa
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-reporting-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-reporting-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -117,9 +119,9 @@ function buildPerformanceRecord(
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 

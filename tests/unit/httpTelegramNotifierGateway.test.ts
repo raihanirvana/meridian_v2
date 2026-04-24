@@ -5,21 +5,23 @@ import { HttpTelegramNotifierGateway } from "../../src/adapters/telegram/HttpTel
 
 describe("http telegram notifier gateway", () => {
   it("sends sendMessage to Telegram bot API", async () => {
-    const fetchFn = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          ok: true,
-          result: {
-            message_id: 1,
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              message_id: 1,
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
           },
-        }),
-        {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        },
-      ));
+        ),
+    );
 
     const gateway = new HttpTelegramNotifierGateway({
       botToken: "telegram-token",
@@ -51,21 +53,23 @@ describe("http telegram notifier gateway", () => {
   });
 
   it("formats sendAlert as title plus body", async () => {
-    const fetchFn = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          ok: true,
-          result: {
-            message_id: 2,
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              message_id: 2,
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
           },
-        }),
-        {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        },
-      ));
+        ),
+    );
 
     const gateway = new HttpTelegramNotifierGateway({
       botToken: "telegram-token",

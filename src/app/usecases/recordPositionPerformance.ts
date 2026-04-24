@@ -1,10 +1,6 @@
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
-import {
-  type LessonRepositoryInterface,
-} from "../../adapters/storage/LessonRepository.js";
-import {
-  type PerformanceRepositoryInterface,
-} from "../../adapters/storage/PerformanceRepository.js";
+import { type LessonRepositoryInterface } from "../../adapters/storage/LessonRepository.js";
+import { type PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
 import { type Lesson } from "../../domain/entities/Lesson.js";
 import {
   PerformanceRecordSchema,

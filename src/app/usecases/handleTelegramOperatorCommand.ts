@@ -8,8 +8,10 @@ import {
   type OperatorCommandExecutionResult,
 } from "./operatorCommands.js";
 
-export interface HandleTelegramOperatorCommandInput
-  extends Omit<ExecuteOperatorCommandInput, "command"> {
+export interface HandleTelegramOperatorCommandInput extends Omit<
+  ExecuteOperatorCommandInput,
+  "command"
+> {
   notifierGateway: NotifierGateway;
   recipient: string;
   rawCommand: string;

@@ -37,10 +37,7 @@ import {
 } from "./requestRebalance.js";
 
 function proposedTokenMints(payload: RebalanceActionRequestPayload): string[] {
-  return [...new Set([
-    payload.redeploy.baseMint,
-    payload.redeploy.quoteMint,
-  ])];
+  return [...new Set([payload.redeploy.baseMint, payload.redeploy.quoteMint])];
 }
 
 function diffMinutes(from: string | null, to: string): number {
@@ -100,8 +97,12 @@ function tryDeriveFreshSnapshotPnlPct(input: {
     return null;
   }
 
-  const estimatedInitialValueUsd = position.currentValueUsd - position.unrealizedPnlUsd;
-  if (!Number.isFinite(estimatedInitialValueUsd) || estimatedInitialValueUsd <= 0) {
+  const estimatedInitialValueUsd =
+    position.currentValueUsd - position.unrealizedPnlUsd;
+  if (
+    !Number.isFinite(estimatedInitialValueUsd) ||
+    estimatedInitialValueUsd <= 0
+  ) {
     return null;
   }
 
@@ -295,7 +296,8 @@ export async function runManagementCycle(
   let previousPortfolioState = input.previousPortfolioState ?? null;
   const positions = (await input.stateRepository.list())
     .filter(
-      (position) => position.wallet === input.wallet && position.status === "OPEN",
+      (position) =>
+        position.wallet === input.wallet && position.status === "OPEN",
     )
     .sort((left, right) => left.positionId.localeCompare(right.positionId));
 
@@ -349,7 +351,8 @@ export async function runManagementCycle(
         after: null,
         txIds: [],
         resultStatus: "RECONCILE_ONLY",
-        error: error instanceof Error ? error.message : "signal provider failed",
+        error:
+          error instanceof Error ? error.message : "signal provider failed",
       });
       signals = fallbackIncompleteSignals();
     }
@@ -432,8 +435,12 @@ export async function runManagementCycle(
       triggerReasons: evaluation.triggerReasons,
       lessonPromptService:
         input.lessonPromptService ?? missingLessonPromptService,
-      ...(input.llmGateway === undefined ? {} : { llmGateway: input.llmGateway }),
-      ...(input.aiTimeoutMs === undefined ? {} : { timeoutMs: input.aiTimeoutMs }),
+      ...(input.llmGateway === undefined
+        ? {}
+        : { llmGateway: input.llmGateway }),
+      ...(input.aiTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: input.aiTimeoutMs }),
     });
 
     if (evaluation.action === "PARTIAL_CLOSE") {
@@ -637,8 +644,9 @@ export async function runManagementCycle(
         action: "REBALANCE",
         portfolio,
         policy: input.riskPolicy,
-        proposedAllocationUsd:
-          deriveRebalanceCapitalRequirement(rebalancePayload.redeploy),
+        proposedAllocationUsd: deriveRebalanceCapitalRequirement(
+          rebalancePayload.redeploy,
+        ),
         proposedPoolAddress: rebalancePayload.redeploy.poolAddress,
         proposedTokenMints: proposedTokenMints(rebalancePayload),
         recentNewDeploys,
@@ -671,8 +679,9 @@ export async function runManagementCycle(
       action: "REBALANCE",
       portfolio,
       policy: input.riskPolicy,
-      proposedAllocationUsd:
-        deriveRebalanceCapitalRequirement(rebalancePayload.redeploy),
+      proposedAllocationUsd: deriveRebalanceCapitalRequirement(
+        rebalancePayload.redeploy,
+      ),
       proposedPoolAddress: rebalancePayload.redeploy.poolAddress,
       proposedTokenMints: proposedTokenMints(rebalancePayload),
       recentNewDeploys,

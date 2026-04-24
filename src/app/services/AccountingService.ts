@@ -24,7 +24,9 @@ export const CloseAccountingSummarySchema = z
   })
   .strict();
 
-export type CloseAccountingSummary = z.infer<typeof CloseAccountingSummarySchema>;
+export type CloseAccountingSummary = z.infer<
+  typeof CloseAccountingSummarySchema
+>;
 
 export function resolveOutOfRangeSince(
   input: ResolveOutOfRangeSinceInput,

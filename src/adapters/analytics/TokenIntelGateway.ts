@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  type MockBehavior,
-  resolveMockBehavior,
-} from "../mockBehavior.js";
+import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const TokenRiskSnapshotSchema = z.object({
   tokenMint: z.string().min(1),
@@ -26,7 +23,9 @@ export const TokenNarrativeSnapshotSchema = z.object({
 
 export type TokenRiskSnapshot = z.infer<typeof TokenRiskSnapshotSchema>;
 export type SmartMoneySnapshot = z.infer<typeof SmartMoneySnapshotSchema>;
-export type TokenNarrativeSnapshot = z.infer<typeof TokenNarrativeSnapshotSchema>;
+export type TokenNarrativeSnapshot = z.infer<
+  typeof TokenNarrativeSnapshotSchema
+>;
 
 export interface TokenIntelGateway {
   getTokenRiskSnapshot(tokenMint: string): Promise<TokenRiskSnapshot>;

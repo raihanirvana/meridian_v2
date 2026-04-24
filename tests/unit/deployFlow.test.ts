@@ -24,7 +24,9 @@ import { type Position } from "../../src/domain/entities/Position.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-deploy-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-deploy-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -102,9 +104,9 @@ function buildGatewayPosition(
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -225,7 +227,9 @@ describe("deploy flow", () => {
 
     expect(persistedAction?.status).toBe("DONE");
     expect(persistedPosition?.status).toBe("OPEN");
-    expect(persistedPosition?.entryMetadata).toEqual(deployPayload.entryMetadata);
+    expect(persistedPosition?.entryMetadata).toEqual(
+      deployPayload.entryMetadata,
+    );
     expect(journalEvents.map((event) => event.eventType)).toContain(
       "DEPLOY_CONFIRMED",
     );
@@ -370,7 +374,9 @@ describe("deploy flow", () => {
     expect(
       (await journalRepository.list()).map((event) => event.eventType),
     ).toContain("DEPLOY_BLOCKED_MANUAL_CIRCUIT_BREAKER");
-    expect((await actionRepository.get(action.actionId))?.status).toBe("ABORTED");
+    expect((await actionRepository.get(action.actionId))?.status).toBe(
+      "ABORTED",
+    );
   });
 
   it("sets outOfRangeSince when a confirmed deploy is already outside the configured range", async () => {
@@ -1010,9 +1016,9 @@ describe("deploy flow", () => {
     expect(resumed.position?.needsReconciliation).toBe(false);
     expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
     expect((await stateRepository.get("pos_resume"))?.status).toBe("OPEN");
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "DEPLOY_CONFIRMED",
-    );
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("DEPLOY_CONFIRMED");
   });
 
   it("keeps action in WAITING_CONFIRMATION if confirmed position payload cannot be normalized into OPEN state", async () => {
@@ -1224,7 +1230,8 @@ describe("deploy flow", () => {
     let failPositionWrite = true;
     const flakyFs: FileSystemAdapter = {
       access: (filePath) => fs.access(filePath),
-      appendFile: (filePath, data, encoding) => fs.appendFile(filePath, data, encoding),
+      appendFile: (filePath, data, encoding) =>
+        fs.appendFile(filePath, data, encoding),
       mkdir: (dirPath, options) => fs.mkdir(dirPath, options),
       readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
       rename: (fromPath, toPath) => fs.rename(fromPath, toPath),
@@ -1358,7 +1365,8 @@ describe("deploy flow", () => {
     let positionWriteCount = 0;
     const flakyFs: FileSystemAdapter = {
       access: (filePath) => fs.access(filePath),
-      appendFile: (filePath, data, encoding) => fs.appendFile(filePath, data, encoding),
+      appendFile: (filePath, data, encoding) =>
+        fs.appendFile(filePath, data, encoding),
       mkdir: (dirPath, options) => fs.mkdir(dirPath, options),
       readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
       rename: (fromPath, toPath) => fs.rename(fromPath, toPath),
@@ -1470,7 +1478,9 @@ describe("deploy flow", () => {
     ).rejects.toThrow(/simulated timeout reconciliation write failure/i);
 
     const persistedAction = await actionRepository.get(action.actionId);
-    const persistedPosition = await stateRepository.get("pos_timeout_write_fail");
+    const persistedPosition = await stateRepository.get(
+      "pos_timeout_write_fail",
+    );
 
     expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
     expect(persistedPosition?.status).toBe("DEPLOYING");

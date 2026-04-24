@@ -27,7 +27,10 @@ function stableStringify(value: unknown): string {
   );
 
   return `{${entries
-    .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableStringify(nestedValue)}`)
+    .map(
+      ([key, nestedValue]) =>
+        `${JSON.stringify(key)}:${stableStringify(nestedValue)}`,
+    )
     .join(",")}}`;
 }
 

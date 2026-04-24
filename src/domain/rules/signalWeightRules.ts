@@ -129,13 +129,12 @@ function buildUpdatedEntry(input: {
     };
   }
 
-  const deltaFactor = Math.min(
-    Math.abs(correlation),
-    1,
-  ) * MAX_SIGNAL_WEIGHT_CHANGE_PER_STEP;
-  const nextWeight = correlation > 0
-    ? currentEntry.weight * (1 + deltaFactor)
-    : currentEntry.weight * (1 - deltaFactor);
+  const deltaFactor =
+    Math.min(Math.abs(correlation), 1) * MAX_SIGNAL_WEIGHT_CHANGE_PER_STEP;
+  const nextWeight =
+    correlation > 0
+      ? currentEntry.weight * (1 + deltaFactor)
+      : currentEntry.weight * (1 - deltaFactor);
   const roundedWeight = roundWeight(
     clamp(nextWeight, SIGNAL_WEIGHT_FLOOR, SIGNAL_WEIGHT_CEILING),
   );
@@ -169,7 +168,9 @@ export function recalculateWeights(input: {
   currentWeights: SignalWeights;
 }): SignalWeightRecalculationResult {
   const currentWeights = SignalWeightsSchema.parse(input.currentWeights);
-  const changes: Partial<Record<SignalWeightKey, SignalWeights[SignalWeightKey]>> = {};
+  const changes: Partial<
+    Record<SignalWeightKey, SignalWeights[SignalWeightKey]>
+  > = {};
   const rationale: Partial<Record<SignalWeightKey, string>> = {};
 
   for (const key of SIGNAL_WEIGHT_KEYS) {

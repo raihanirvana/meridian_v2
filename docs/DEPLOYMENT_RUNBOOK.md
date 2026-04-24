@@ -1,19 +1,23 @@
 # Deployment Runbook
 
 ## Purpose
+
 This runbook explains how to boot `meridian_v2` in supervised runtime mode using the built-in `runLive.ts` entrypoint.
 
 This repo is ready for supervised live operation, but the current bootstrap still has a few intentional constraints:
+
 - `runLive.ts` wires a conservative `signalProvider`
 - `rebalancePlanner` is currently `null`
 
 Because of those constraints, this runbook is best used for:
+
 - first supervised boot
 - dry-run runtime validation
 - small-capital supervised trials
 - live lifecycle verification with strong operator oversight
 
 ## Prerequisites
+
 - Node.js `>=18`
 - npm installed
 - valid `.env`
@@ -23,14 +27,17 @@ Because of those constraints, this runbook is best used for:
 Do not run two runtime supervisors against the same data directory.
 
 ## Required Files
+
 - [.env](../.env)
 - [user-config.json](../user-config.json)
 
 Template references:
+
 - [.env.example](../.env.example)
 - [user-config.example.json](../user-config.example.json)
 
 ## Minimum Environment
+
 Required in `.env`:
 
 ```dotenv
@@ -79,18 +86,22 @@ TELEGRAM_BOT_TOKEN=...
 ```
 
 Telegram delivery becomes active only when all three are true:
+
 - `notifications.telegramEnabled = true`
 - `notifications.alertChatId` is set in `user-config.json`
 - `TELEGRAM_BOT_TOKEN` is set in `.env`
 
 Telegram inbound operator commands become active only when all four are true:
+
 - `notifications.telegramEnabled = true`
 - `notifications.telegramOperatorCommandsEnabled = true`
 - `notifications.alertChatId` is set in `user-config.json`
 - `TELEGRAM_BOT_TOKEN` is set in `.env`
 
 ## Recommended First Config
+
 For first supervised deployment, keep:
+
 - `runtime.dryRun = true`
 - `ai.mode = "disabled"` or `"advisory"`
 - `notifications.telegramEnabled = false`
@@ -99,11 +110,13 @@ For first supervised deployment, keep:
 - `management.trailingTakeProfitEnabled = false` unless you specifically want to test it
 
 Suggested first-pass runtime behavior:
+
 - deploys blocked manually until health checks are clean
 - no auto-compounding
 - no AI-driven changes beyond advisory
 
 Operator command surface:
+
 - `runtime.operatorStdinEnabled = true` enables stdin commands inside `npm run live`
 - `notifications.telegramOperatorCommandsEnabled = true` enables inbound Telegram operator commands from the configured `alertChatId`
 - examples:
@@ -114,6 +127,7 @@ Operator command surface:
   - `circuit_breaker_clear`
 
 ## Boot Commands
+
 Install dependencies if needed:
 
 ```bash
@@ -133,6 +147,7 @@ npm run live
 ```
 
 This command:
+
 - builds the project
 - boots `dist/runtime/runLive.js`
 - runs startup recovery
@@ -145,13 +160,16 @@ This command:
 - then starts periodic timers
 
 ## What To Expect At Boot
+
 On successful boot, logs should show:
+
 - runtime bootstrap configuration loaded
 - startup recovery completed
 - startup cycle completed
 - runtime supervisor is running
 
 Expected warnings that are currently non-fatal:
+
 - `telegramEnabled=true but Telegram notifier is not fully configured`
 - `telegramOperatorCommandsEnabled=true but inbound Telegram operator polling is not fully configured`
 - `AI mode is enabled but live LlmGateway is not fully configured`
@@ -159,9 +177,11 @@ Expected warnings that are currently non-fatal:
 Those warnings are intentional signals about incomplete runtime wiring, not immediate boot failures.
 
 ## Runtime Data Directory
+
 The runtime persists state under `MERIDIAN_DATA_DIR`, or the default resolved data dir if unset.
 
 Key files include:
+
 - `positions.json`
 - `actions.json`
 - `journal.jsonl`
@@ -173,11 +193,14 @@ Key files include:
 - `runtime-control.json`
 
 Before first live boot:
+
 - ensure the directory is writable
 - ensure only one supervisor process will use it
 
 ## Health Validation
+
 Immediately after boot, validate:
+
 - no startup checklist item is `ok: false`
 - `scheduler-metadata.json` is being updated
 - `journal.jsonl` is appendable
@@ -187,6 +210,7 @@ Immediately after boot, validate:
 If startup status is `UNSAFE`, stop and inspect before continuing.
 
 ## Safe First Activation Path
+
 Use this progression:
 
 1. `runtime.dryRun = true`
@@ -198,12 +222,15 @@ Use this progression:
 7. keep auto-compound disabled initially
 
 ## Suggested Process Management
+
 Any single-process supervisor is acceptable:
+
 - `pm2`
 - `systemd`
 - `supervisord`
 
 Requirements:
+
 - automatic restart on crash
 - one instance only
 - stdout/stderr log capture
@@ -216,9 +243,11 @@ pm2 start npm --name meridian-v2 -- run live
 ```
 
 ## Stop Procedure
+
 Send `SIGINT` or `SIGTERM`.
 
 `runLive.ts` already:
+
 - clears queue/reconciliation/management/reporting timers
 - clears the screening timeout
 - logs shutdown signal
@@ -226,7 +255,9 @@ Send `SIGINT` or `SIGTERM`.
 Avoid hard kill unless the process is wedged.
 
 ## Known Runtime Constraints
+
 Current `runLive.ts` constraints:
+
 - rebalance planner not wired
 - signal provider is conservative
 - Telegram inbound uses long-polling only; webhook mode is not implemented
@@ -234,7 +265,9 @@ Current `runLive.ts` constraints:
 This means the runtime is suited for supervised operation, but not yet full unattended production autonomy.
 
 ## When To Abort Launch
+
 Do not proceed to live mode if:
+
 - startup recovery returns `UNSAFE`
 - data directory is shared by another process
 - DLMM base URL is unknown or untrusted
@@ -242,5 +275,7 @@ Do not proceed to live mode if:
 - `PUBLIC_WALLET_ADDRESS` does not match intended operator wallet
 
 ## Immediate Next Step
+
 After using this runbook, execute the supervised live checklist:
+
 - [SUPERVISED_LIVE_CHECKLIST.md](./SUPERVISED_LIVE_CHECKLIST.md)

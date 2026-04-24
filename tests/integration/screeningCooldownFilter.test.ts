@@ -65,7 +65,9 @@ const scoringPolicy = {
   },
 } as const;
 
-function buildCandidate(overrides: Partial<ScreeningCandidateInput> = {}): ScreeningCandidateInput {
+function buildCandidate(
+  overrides: Partial<ScreeningCandidateInput> = {},
+): ScreeningCandidateInput {
   return {
     candidateId: "cand_001",
     poolAddress: "pool_001",
@@ -124,8 +126,8 @@ describe("screening cooldown filter", () => {
       createdAt: "2026-04-22T12:00:00.000Z",
     });
 
-    expect(result.candidates.map((candidate) => candidate.candidateId)).toEqual([
-      "cand_open",
-    ]);
+    expect(result.candidates.map((candidate) => candidate.candidateId)).toEqual(
+      ["cand_open"],
+    );
   });
 });

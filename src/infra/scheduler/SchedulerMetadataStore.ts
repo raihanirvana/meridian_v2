@@ -19,7 +19,9 @@ export interface SchedulerMetadataStoreOptions extends FileStoreOptions {
 export interface SchedulerMetadataStore {
   snapshot(): Promise<SchedulerMetadata>;
   get(worker: SchedulerWorkerName): Promise<SchedulerWorkerState>;
-  recoverStaleRunningWorkers(recoveredAt: string): Promise<SchedulerWorkerState[]>;
+  recoverStaleRunningWorkers(
+    recoveredAt: string,
+  ): Promise<SchedulerWorkerState[]>;
   tryStartRun(input: {
     worker: SchedulerWorkerName;
     triggerSource: SchedulerTriggerSource;
@@ -69,13 +71,19 @@ function parseStore(raw: string | null, filePath: string): SchedulerMetadata {
 
   const validated = SchedulerMetadataSchema.safeParse(parsed);
   if (!validated.success) {
-    throw new SchedulerMetadataCorruptError(filePath, formatZodError(validated.error));
+    throw new SchedulerMetadataCorruptError(
+      filePath,
+      formatZodError(validated.error),
+    );
   }
 
   return validated.data;
 }
 
-function nextDueAt(completedAt: string, intervalSec: number | null): string | null {
+function nextDueAt(
+  completedAt: string,
+  intervalSec: number | null,
+): string | null {
   if (intervalSec === null) {
     return null;
   }
@@ -93,9 +101,10 @@ export class FileSchedulerMetadataStore implements SchedulerMetadataStore {
   private readonly filePath: string;
 
   public constructor(options: SchedulerMetadataStoreOptions) {
-    this.fileStore = options.fs === undefined
-      ? new FileStore()
-      : new FileStore({ fs: options.fs });
+    this.fileStore =
+      options.fs === undefined
+        ? new FileStore()
+        : new FileStore({ fs: options.fs });
     this.filePath = options.filePath;
   }
 
@@ -182,7 +191,8 @@ export class FileSchedulerMetadataStore implements SchedulerMetadataStore {
         lastError: null,
         runCount: currentState.runCount + 1,
         manualRunCount:
-          currentState.manualRunCount + (input.triggerSource === "manual" ? 1 : 0),
+          currentState.manualRunCount +
+          (input.triggerSource === "manual" ? 1 : 0),
         intervalSec: input.intervalSec ?? currentState.intervalSec,
       });
       const nextStore = SchedulerMetadataSchema.parse({
@@ -198,10 +208,12 @@ export class FileSchedulerMetadataStore implements SchedulerMetadataStore {
       return JSON.stringify(nextStore, null, 2);
     });
 
-    return result ?? {
-      started: false,
-      state: await this.get(input.worker),
-    };
+    return (
+      result ?? {
+        started: false,
+        state: await this.get(input.worker),
+      }
+    );
   }
 
   public async finishRun(input: {

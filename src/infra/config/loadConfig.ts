@@ -53,7 +53,7 @@ function parseDotEnv(contents: string): Record<string, string> {
     const key = line.slice(0, separatorIndex).trim();
     let value = line.slice(separatorIndex + 1).trim();
     if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
@@ -70,7 +70,10 @@ function buildSecretInput(
   runtimeEnv: NodeJS.ProcessEnv,
 ): Partial<EnvSecrets> {
   const input: Partial<EnvSecrets> = {};
-  const pickOptional = (runtimeValue: string | undefined, fileValue: string | undefined) => {
+  const pickOptional = (
+    runtimeValue: string | undefined,
+    fileValue: string | undefined,
+  ) => {
     const value = runtimeValue ?? fileValue;
     if (value === undefined) {
       return undefined;
@@ -160,7 +163,9 @@ function formatZodIssues(error: {
 }
 
 function readUserConfig(userConfigPath: string): unknown {
-  const rawContents = fs.readFileSync(userConfigPath, "utf8").replace(/^\uFEFF/, "");
+  const rawContents = fs
+    .readFileSync(userConfigPath, "utf8")
+    .replace(/^\uFEFF/, "");
   return JSON.parse(rawContents);
 }
 
@@ -179,7 +184,9 @@ function assertNoSecretsInUserConfig(input: unknown): void {
   }
 }
 
-export function redactSecretsForLogging(config: ResolvedConfig): Record<string, unknown> {
+export function redactSecretsForLogging(
+  config: ResolvedConfig,
+): Record<string, unknown> {
   return {
     secrets: {
       WALLET_PRIVATE_KEY: "[REDACTED]",
@@ -190,7 +197,9 @@ export function redactSecretsForLogging(config: ResolvedConfig): Record<string, 
       ANALYTICS_API_KEY: config.secrets.ANALYTICS_API_KEY
         ? "[REDACTED]"
         : undefined,
-      JUPITER_API_KEY: config.secrets.JUPITER_API_KEY ? "[REDACTED]" : undefined,
+      JUPITER_API_KEY: config.secrets.JUPITER_API_KEY
+        ? "[REDACTED]"
+        : undefined,
       LLM_API_KEY: config.secrets.LLM_API_KEY ? "[REDACTED]" : undefined,
       LLM_BASE_URL: config.secrets.LLM_BASE_URL ? "[REDACTED]" : undefined,
       TELEGRAM_BOT_TOKEN: config.secrets.TELEGRAM_BOT_TOKEN

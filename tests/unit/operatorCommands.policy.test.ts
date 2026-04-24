@@ -12,12 +12,17 @@ import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
 import { DefaultPolicyProvider } from "../../src/app/services/PolicyProvider.js";
-import { executeOperatorCommand, parseOperatorCommand } from "../../src/app/usecases/operatorCommands.js";
+import {
+  executeOperatorCommand,
+  parseOperatorCommand,
+} from "../../src/app/usecases/operatorCommands.js";
 
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-policy-cmd-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-policy-cmd-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -48,9 +53,9 @@ const basePolicy = {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -124,7 +129,7 @@ describe("operator commands policy", () => {
       },
     });
 
-    expect(showResult.text).toContain("\"minFeeActiveTvlRatio\": 0.08");
+    expect(showResult.text).toContain('"minFeeActiveTvlRatio": 0.08');
 
     const resetResult = await executeOperatorCommand({
       command: parseOperatorCommand({ raw: "policy reset confirm=true" }),

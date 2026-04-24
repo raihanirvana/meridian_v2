@@ -18,16 +18,18 @@ import { type Position } from "../../src/domain/entities/Position.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-claim-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-claim-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -1047,7 +1049,8 @@ describe("claim flow", () => {
       claimedBaseAmountSource: "unavailable",
       autoCompound: {
         phase: "FAILED",
-        error: "claimed base amount unavailable after claim; auto-compound skipped",
+        error:
+          "claimed base amount unavailable after claim; auto-compound skipped",
       },
     });
 

@@ -14,12 +14,16 @@ import { type PerformanceRecord } from "../../../src/domain/entities/Performance
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "meridian-v2-darwin-"));
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meridian-v2-darwin-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
-function buildPerformance(overrides: Partial<PerformanceRecord> = {}): PerformanceRecord {
+function buildPerformance(
+  overrides: Partial<PerformanceRecord> = {},
+): PerformanceRecord {
   return {
     positionId: "pos_001",
     wallet: "wallet_001",
@@ -52,9 +56,9 @@ function buildPerformance(overrides: Partial<PerformanceRecord> = {}): Performan
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0, tempDirs.length).map((directory) =>
-      fs.rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0, tempDirs.length)
+      .map((directory) => fs.rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -123,12 +127,16 @@ describe("maybeRecalibrateSignalWeights", () => {
 
     expect(result.skipped).not.toBe(true);
     expect(result.changes.feeToTvl?.weight).toBeGreaterThan(1);
-    expect((await signalWeightsStore.load()).feeToTvl.weight).toBeGreaterThan(1);
-    expect((await lessonRepository.list()).some((lesson) => lesson.rule.includes("AUTO-DARWIN"))).toBe(
-      true,
+    expect((await signalWeightsStore.load()).feeToTvl.weight).toBeGreaterThan(
+      1,
     );
-    expect((await journalRepository.list()).map((event) => event.eventType)).toContain(
-      "SIGNAL_WEIGHTS_RECALIBRATED",
-    );
+    expect(
+      (await lessonRepository.list()).some((lesson) =>
+        lesson.rule.includes("AUTO-DARWIN"),
+      ),
+    ).toBe(true);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("SIGNAL_WEIGHTS_RECALIBRATED");
   });
 });

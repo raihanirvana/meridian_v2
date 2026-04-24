@@ -1,4 +1,7 @@
-import { PositionSchema, type Position } from "../../domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../domain/entities/Position.js";
 
 import { FileStore, type FileStoreOptions } from "./FileStore.js";
 
@@ -28,7 +31,9 @@ export class StateRepository {
 
   public async get(positionId: string): Promise<Position | null> {
     const positions = await this.list();
-    return positions.find((position) => position.positionId === positionId) ?? null;
+    return (
+      positions.find((position) => position.positionId === positionId) ?? null
+    );
   }
 
   public async upsert(position: Position): Promise<void> {
@@ -37,7 +42,8 @@ export class StateRepository {
       const positions =
         raw === null ? [] : PositionSchema.array().parse(JSON.parse(raw));
       const nextPositions = positions.filter(
-        (currentPosition) => currentPosition.positionId !== validated.positionId,
+        (currentPosition) =>
+          currentPosition.positionId !== validated.positionId,
       );
       nextPositions.push(validated);
 

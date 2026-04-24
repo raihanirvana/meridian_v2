@@ -1,8 +1,6 @@
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
-import type {
-  SchedulerMetadataStore,
-} from "../../infra/scheduler/SchedulerMetadataStore.js";
+import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
 
 const PENDING_ACTION_STATUSES = new Set<string>([
   "QUEUED",
@@ -49,7 +47,8 @@ export async function scanRuntimeAlerts(
 ): Promise<RuntimeAlert[]> {
   const now = input.now ?? new Date().toISOString();
   const stuckActionThresholdMinutes = input.stuckActionThresholdMinutes ?? 30;
-  const runningWorkerThresholdMinutes = input.runningWorkerThresholdMinutes ?? 30;
+  const runningWorkerThresholdMinutes =
+    input.runningWorkerThresholdMinutes ?? 30;
   const actions = (await input.actionRepository.list()).filter(
     (action) => action.wallet === input.wallet,
   );
@@ -82,7 +81,8 @@ export async function scanRuntimeAlerts(
 
   const pendingReconcile = positions.filter(
     (position) =>
-      position.status === "RECONCILIATION_REQUIRED" || position.needsReconciliation,
+      position.status === "RECONCILIATION_REQUIRED" ||
+      position.needsReconciliation,
   );
   if (pendingReconcile.length > 0) {
     alerts.push({
@@ -98,12 +98,16 @@ export async function scanRuntimeAlerts(
   if (input.schedulerMetadataStore !== undefined) {
     const schedulerSnapshot = await input.schedulerMetadataStore.snapshot();
     for (const workerState of Object.values(schedulerSnapshot.workers)) {
-      if (workerState.status !== "RUNNING" || workerState.lastStartedAt === null) {
+      if (
+        workerState.status !== "RUNNING" ||
+        workerState.lastStartedAt === null
+      ) {
         continue;
       }
 
       if (
-        ageMinutes(workerState.lastStartedAt, now) < runningWorkerThresholdMinutes
+        ageMinutes(workerState.lastStartedAt, now) <
+        runningWorkerThresholdMinutes
       ) {
         continue;
       }

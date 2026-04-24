@@ -1,6 +1,4 @@
-import {
-  type PerformanceRecord,
-} from "../entities/PerformanceRecord.js";
+import { type PerformanceRecord } from "../entities/PerformanceRecord.js";
 import {
   ScreeningPolicySchema,
   type ScreeningPolicy,
@@ -10,7 +8,9 @@ export const MIN_EVOLVE_POSITIONS = 5;
 export const MAX_CHANGE_PER_STEP = 0.2;
 
 export interface ThresholdEvolutionResult {
-  changes: Partial<Pick<ScreeningPolicy, "minFeeActiveTvlRatio" | "minOrganic">>;
+  changes: Partial<
+    Pick<ScreeningPolicy, "minFeeActiveTvlRatio" | "minOrganic">
+  >;
   rationale: Record<string, string>;
 }
 
@@ -22,7 +22,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function nudge(current: number, target: number, maxChangePerStep: number): number {
+function nudge(
+  current: number,
+  target: number,
+  maxChangePerStep: number,
+): number {
   if (!isFiniteNum(current) || !isFiniteNum(target)) {
     return current;
   }
@@ -66,8 +70,12 @@ export function evolveThresholds(input: {
   const rationale: Record<string, string> = {};
 
   {
-    const winnerFees = winners.map((record) => record.feeTvlRatio).filter(isFiniteNum);
-    const loserFees = losers.map((record) => record.feeTvlRatio).filter(isFiniteNum);
+    const winnerFees = winners
+      .map((record) => record.feeTvlRatio)
+      .filter(isFiniteNum);
+    const loserFees = losers
+      .map((record) => record.feeTvlRatio)
+      .filter(isFiniteNum);
     const current = currentPolicy.minFeeActiveTvlRatio;
 
     if (winnerFees.length >= 2) {
@@ -82,13 +90,16 @@ export function evolveThresholds(input: {
         const rounded = Number(next.toFixed(2));
         if (rounded > current) {
           changes.minFeeActiveTvlRatio = rounded;
-          rationale.minFeeActiveTvlRatio =
-            `Lowest winner fee_tvl=${minWinnerFee.toFixed(2)} — raised floor from ${current} -> ${rounded}`;
+          rationale.minFeeActiveTvlRatio = `Lowest winner fee_tvl=${minWinnerFee.toFixed(2)} — raised floor from ${current} -> ${rounded}`;
         }
       }
     }
 
-    if (loserFees.length >= 2 && winnerFees.length > 0 && changes.minFeeActiveTvlRatio === undefined) {
+    if (
+      loserFees.length >= 2 &&
+      winnerFees.length > 0 &&
+      changes.minFeeActiveTvlRatio === undefined
+    ) {
       const maxLoserFee = Math.max(...loserFees);
       const minWinnerFee = Math.min(...winnerFees);
       if (maxLoserFee < current * 1.5 && minWinnerFee > maxLoserFee) {
@@ -101,16 +112,19 @@ export function evolveThresholds(input: {
         const rounded = Number(next.toFixed(2));
         if (rounded > current) {
           changes.minFeeActiveTvlRatio = rounded;
-          rationale.minFeeActiveTvlRatio =
-            `Losers had fee_tvl<=${maxLoserFee.toFixed(2)}, winners higher — raised floor from ${current} -> ${rounded}`;
+          rationale.minFeeActiveTvlRatio = `Losers had fee_tvl<=${maxLoserFee.toFixed(2)}, winners higher — raised floor from ${current} -> ${rounded}`;
         }
       }
     }
   }
 
   {
-    const loserOrganics = losers.map((record) => record.organicScore).filter(isFiniteNum);
-    const winnerOrganics = winners.map((record) => record.organicScore).filter(isFiniteNum);
+    const loserOrganics = losers
+      .map((record) => record.organicScore)
+      .filter(isFiniteNum);
+    const winnerOrganics = winners
+      .map((record) => record.organicScore)
+      .filter(isFiniteNum);
     const current = currentPolicy.minOrganic;
 
     if (loserOrganics.length >= 2 && winnerOrganics.length >= 1) {
@@ -126,8 +140,7 @@ export function evolveThresholds(input: {
         );
         if (next > current) {
           changes.minOrganic = next;
-          rationale.minOrganic =
-            `Winner avg organic ${avgWinnerOrganic.toFixed(0)} vs loser avg ${avgLoserOrganic.toFixed(0)} — raised from ${current} -> ${next}`;
+          rationale.minOrganic = `Winner avg organic ${avgWinnerOrganic.toFixed(0)} vs loser avg ${avgLoserOrganic.toFixed(0)} — raised from ${current} -> ${next}`;
         }
       }
     }
