@@ -5,7 +5,14 @@ import {
   evaluateScreeningHardFilters,
   screenAndScoreCandidates,
 } from "../../src/domain/rules/screeningRules.js";
+import {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "../../src/domain/rules/poolFeatureRules.js";
 import { type ScreeningCandidateInput } from "../../src/domain/scoring/candidateScore.js";
+
+const now = "2026-04-21T00:00:00.000Z";
 
 function buildPortfolio(
   overrides: Partial<PortfolioState> = {},
@@ -55,6 +62,31 @@ function buildCandidate(
     smartMoneyConfidenceScore: 83,
     poolAgeHours: 96,
     narrativePenaltyScore: 10,
+    marketFeatureSnapshot: buildMarketFeatureSnapshot({
+      volume24hUsd: 25_000,
+      fees24hUsd: 15,
+      tvlUsd: 50_000,
+      volatility1hPct: 5,
+      trendStrength1h: 20,
+      meanReversionScore: 70,
+      organicVolumeScore: 80,
+      washTradingRiskScore: 5,
+    }),
+    dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+      binStep: 100,
+      activeBin: 1000,
+      activeBinObservedAt: now,
+      depthNearActiveUsd: 20_000,
+      depthWithin10BinsUsd: 40_000,
+      depthWithin25BinsUsd: 50_000,
+      estimatedSlippageBpsForDefaultSize: 100,
+      rangeStabilityScore: 70,
+      now,
+    }),
+    dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+      now,
+      hasActiveBin: true,
+    }),
     ...overrides,
   };
 }
@@ -190,7 +222,7 @@ describe("screening rules", () => {
       portfolio: buildPortfolio(),
       screeningPolicy,
       scoringPolicy,
-      createdAt: "2026-04-21T00:00:00.000Z",
+      createdAt: now,
     });
 
     expect(result.shortlist.map((candidate) => candidate.candidateId)).toEqual([
@@ -236,6 +268,58 @@ describe("screening rules", () => {
         "price is too close to ath",
         "24h fee-per-tvl below minimum",
       ]),
+    );
+  });
+
+  it("rejects candidates with stale or missing active-bin strategy snapshots", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+          binStep: 100,
+          activeBin: null,
+          activeBinObservedAt: null,
+          now,
+        }),
+        dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+          now,
+          hasActiveBin: false,
+        }),
+      }),
+      portfolio: buildPortfolio(),
+      policy: screeningPolicy,
+    });
+
+    expect(result.hardFilterPassed).toBe(false);
+    expect(result.rejectionReasons).toEqual(
+      expect.arrayContaining([
+        "strategy snapshot is stale",
+        "active bin unavailable",
+      ]),
+    );
+  });
+
+  it("rejects candidates when estimated DLMM slippage is above the deploy limit", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+          binStep: 100,
+          activeBin: 1000,
+          activeBinObservedAt: now,
+          depthNearActiveUsd: 20_000,
+          estimatedSlippageBpsForDefaultSize: 450,
+          now,
+        }),
+      }),
+      portfolio: buildPortfolio(),
+      policy: {
+        ...screeningPolicy,
+        maxEstimatedSlippageBps: 300,
+      },
+    });
+
+    expect(result.hardFilterPassed).toBe(false);
+    expect(result.rejectionReasons).toContain(
+      "estimated slippage above maximum",
     );
   });
 });

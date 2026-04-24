@@ -17,11 +17,17 @@ import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockTokenIntelGateway } from "../../src/adapters/analytics/TokenIntelGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 import { type Candidate } from "../../src/domain/entities/Candidate.js";
+import {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "../../src/domain/rules/poolFeatureRules.js";
 import { type ScreeningPolicy } from "../../src/domain/rules/screeningRules.js";
 import { type PortfolioRiskPolicy } from "../../src/domain/rules/riskRules.js";
 import { runScreeningCycle } from "../../src/app/usecases/runScreeningCycle.js";
 
 const tempDirs: string[] = [];
+const now = "2026-04-22T10:00:00.000Z";
 
 async function makeTempDir(): Promise<string> {
   const directory = await fs.mkdtemp(
@@ -74,6 +80,10 @@ function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "ABC-SOL",
+    tokenXMint: "mint_abc",
+    tokenYMint: "mint_sol",
+    baseMint: "mint_abc",
+    quoteMint: "mint_sol",
     screeningSnapshot: {
       marketCapUsd: 500_000,
       tvlUsd: 50_000,
@@ -87,6 +97,23 @@ function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
       pairType: "volatile",
       launchpad: null,
     },
+    marketFeatureSnapshot: buildMarketFeatureSnapshot({
+      volume24hUsd: 25_000,
+      fees24hUsd: 15,
+      tvlUsd: 50_000,
+      organicVolumeScore: 80,
+      washTradingRiskScore: 5,
+    }),
+    dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+      binStep: 100,
+      activeBin: 1000,
+      activeBinObservedAt: now,
+      depthNearActiveUsd: 20_000,
+      depthWithin10BinsUsd: 40_000,
+      depthWithin25BinsUsd: 50_000,
+      estimatedSlippageBpsForDefaultSize: 100,
+      now,
+    }),
     tokenRiskSnapshot: {
       deployerAddress: "deployer_ok",
       topHolderPct: 18,
@@ -104,12 +131,16 @@ function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
       tokenAgeHours: 24,
       narrativePenaltyScore: 10,
     },
+    dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+      now,
+      hasActiveBin: true,
+    }),
     hardFilterPassed: true,
     score: 80,
     scoreBreakdown: {},
     decision: "SHORTLISTED",
     decisionReason: "selected upstream",
-    createdAt: "2026-04-22T10:00:00.000Z",
+    createdAt: now,
     ...overrides,
   };
 }

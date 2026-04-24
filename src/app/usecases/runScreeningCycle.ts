@@ -177,6 +177,9 @@ function toScreeningInput(
       candidate.smartMoneySnapshot.narrativePenaltyScore,
       "narrativePenaltyScore",
     ),
+    marketFeatureSnapshot: candidate.marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot: candidate.dlmmMicrostructureSnapshot,
+    dataFreshnessSnapshot: candidate.dataFreshnessSnapshot,
   });
 }
 
@@ -195,6 +198,9 @@ function mergeCandidateContext(
       athDistancePct: enriched.athDistancePct,
       volumeTrendPct: enriched.volumeTrendPct,
     },
+    marketFeatureSnapshot: enriched.marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot: enriched.dlmmMicrostructureSnapshot,
+    dataFreshnessSnapshot: enriched.dataFreshnessSnapshot,
     smartMoneySnapshot: {
       ...candidate.smartMoneySnapshot,
       tokenAgeHours: enriched.tokenAgeHours,
@@ -384,6 +390,10 @@ export async function runScreeningCycle(
         ...candidate.screeningSnapshot,
         ...enriched.screeningSnapshot,
       },
+      marketFeatureSnapshot: enriched.marketFeatureSnapshot,
+      dlmmMicrostructureSnapshot: enriched.dlmmMicrostructureSnapshot,
+      dataFreshnessSnapshot: enriched.dataFreshnessSnapshot,
+      strategySuitability: candidate.strategySuitability,
       smartMoneySnapshot: {
         ...candidate.smartMoneySnapshot,
         ...enriched.smartMoneySnapshot,

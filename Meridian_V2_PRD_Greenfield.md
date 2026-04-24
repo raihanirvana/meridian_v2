@@ -117,6 +117,7 @@ Fitur-fitur ini **tidak wajib di batch awal**:
 
 - Screening pool DLMM berdasarkan hard filters dan scoring.
 - Memilih candidate terbaik untuk deploy berdasarkan deterministic scoring; AI opsional untuk ranking akhir.
+- Mengizinkan AI, dalam mode terbatas, memberi rekomendasi strategi DLMM (`spot`, `curve`, `bid_ask`), range bin, slippage, dan parameter exit, tetapi selalu divalidasi rules engine sebelum dipakai.
 - Membuka posisi baru secara aman.
 - Memantau posisi yang sedang aktif.
 - Menutup, partial close, claim fee, atau rebalance berdasarkan rules yang jelas.
@@ -201,9 +202,12 @@ src/
       rebalanceRules.ts
       riskRules.ts
       accountingRules.ts
+      poolFeatureRules.ts
+      strategyDecisionRules.ts
     scoring/
       candidateScore.ts
       managementPriority.ts
+      strategySuitabilityScore.ts
     stateMachines/
       positionLifecycle.ts
       actionLifecycle.ts
@@ -216,6 +220,7 @@ src/
       screenMarket.ts
       buildCandidateDetails.ts
       decideDeploy.ts
+      reviewStrategyWithAi.ts
       requestDeploy.ts
       requestClose.ts
       requestPartialClose.ts
@@ -249,6 +254,7 @@ src/
       TelegramGateway.ts
     llm/
       LlmGateway.ts
+      AiStrategyReviewer.ts
     storage/
       FileStore.ts
       StateRepository.ts
@@ -318,15 +324,95 @@ Field minimal:
 - `candidateId`
 - `poolAddress`
 - `symbolPair`
+- `tokenXMint`
+- `tokenYMint`
+- `baseMint`
+- `quoteMint`
 - `screeningSnapshot`
+- `marketFeatureSnapshot`
+- `dlmmMicrostructureSnapshot`
 - `tokenRiskSnapshot`
 - `smartMoneySnapshot`
+- `dataFreshnessSnapshot`
 - `hardFilterPassed`
 - `score`
 - `scoreBreakdown`
+- `strategySuitability`
+- `aiStrategyDecision` optional
+- `finalStrategyDecision` optional
 - `decision`
 - `decisionReason`
 - `createdAt`
+- `lastReviewedAt`
+
+### 7.2.1 Field tambahan screening wajib
+
+`marketFeatureSnapshot` harus menampung minimal:
+
+- `volume5mUsd`
+- `volume15mUsd`
+- `volume1hUsd`
+- `volume24hUsd`
+- `fees5mUsd`
+- `fees15mUsd`
+- `fees1hUsd`
+- `fees24hUsd`
+- `tvlUsd`
+- `feeTvlRatio1h`
+- `feeTvlRatio24h`
+- `volumeTvlRatio1h`
+- `volumeTvlRatio24h`
+- `priceChange5mPct`
+- `priceChange15mPct`
+- `priceChange1hPct`
+- `priceChange24hPct`
+- `volatility5mPct`
+- `volatility15mPct`
+- `volatility1hPct`
+- `trendStrength15m`
+- `trendStrength1h`
+- `meanReversionScore`
+- `washTradingRiskScore`
+- `organicVolumeScore`
+
+`dlmmMicrostructureSnapshot` harus menampung minimal:
+
+- `binStep`
+- `activeBin`
+- `activeBinSource`
+- `activeBinObservedAt`
+- `activeBinAgeMs`
+- `activeBinDriftFromDiscovery`
+- `depthNearActiveUsd`
+- `depthWithin10BinsUsd`
+- `depthWithin25BinsUsd`
+- `liquidityImbalancePct`
+- `spreadBps`
+- `estimatedSlippageBpsForDefaultSize`
+- `outOfRangeRiskScore`
+- `rangeStabilityScore`
+
+`dataFreshnessSnapshot` harus menampung minimal:
+
+- `screeningSnapshotAt`
+- `poolDetailFetchedAt`
+- `tokenIntelFetchedAt`
+- `chainSnapshotFetchedAt`
+- `oldestRequiredSnapshotAgeMs`
+- `isFreshEnoughForDeploy`
+
+### 7.2.2 Strategy suitability
+
+`strategySuitability` adalah hasil deterministic awal sebelum AI:
+
+- `curveScore`
+- `spotScore`
+- `bidAskScore`
+- `recommendedByRules` (`curve`, `spot`, `bid_ask`, `none`)
+- `strategyRiskFlags`
+- `reasonCodes`
+
+AI boleh membaca field ini, tetapi tidak boleh mengabaikan hard reject dan tidak boleh memilih strategi di luar allowlist config.
 
 ## 7.3 Entity: Action
 
@@ -708,6 +794,104 @@ AI tidak boleh:
 3. **Constrained action** — AI boleh memilih satu action dari daftar action yang sudah diizinkan engine.
 
 Mode default V2 untuk lifecycle inti: **Advisory**.
+
+---
+
+## 9.11 Rule group K — AI Strategy Selector untuk deploy
+
+AI Strategy Selector adalah layer opsional setelah hard filter dan scoring deterministic.
+Tujuannya bukan mengganti rules engine, melainkan memberi rekomendasi strategi DLMM untuk kandidat yang sudah layak.
+
+### Input minimal ke AI Strategy Selector
+
+- candidate identity: `poolAddress`, `symbolPair`, mints
+- score deterministic dan `scoreBreakdown`
+- `marketFeatureSnapshot`
+- `dlmmMicrostructureSnapshot`
+- `tokenRiskSnapshot`
+- `smartMoneySnapshot`
+- portfolio context: open positions, max deploy size, daily loss remaining, exposure
+- allowed strategies dari config
+
+### Output wajib AI
+
+AI wajib mengembalikan JSON ketat:
+
+- `poolAddress`
+- `decision` (`deploy`, `watch`, `reject`)
+- `recommendedStrategy` (`curve`, `spot`, `bid_ask`, `none`)
+- `confidence` 0..1
+- `riskLevel` (`low`, `medium`, `high`)
+- `binsBelow`
+- `binsAbove`
+- `slippageBps`
+- `maxPositionAgeMinutes`
+- `stopLossPct`
+- `takeProfitPct`
+- `trailingStopPct`
+- `reasons[]`
+- `rejectIf[]`
+
+### Validator wajib setelah AI
+
+`StrategyDecisionValidator` harus menolak rekomendasi AI jika:
+
+- candidate gagal hard filter,
+- score deterministic di bawah threshold,
+- AI confidence di bawah `minAiStrategyConfidence`,
+- `riskLevel = high`,
+- strategy tidak ada di allowlist,
+- `binsBelow` atau `binsAbove` melebihi batas config,
+- `slippageBps` melebihi `maxSlippageBps`,
+- snapshot tidak fresh,
+- active bin drift melebihi `maxActiveBinDrift`,
+- exposure/capital/risk rule gagal,
+- simulation DLMM gagal.
+
+### Prinsip final
+
+AI boleh memilih strategi. Rules engine memberi izin. Simulation membuktikan aman. Baru action queue boleh submit.
+
+---
+
+## 9.12 Rule group L — Strategy suitability deterministic
+
+Sebelum AI dipanggil, engine harus menghitung kecocokan strategi secara deterministic agar AI tidak bekerja dari data mentah saja.
+
+### Curve cocok jika
+
+- volatilitas rendah,
+- harga sideways,
+- volume stabil,
+- depth dekat active bin cukup,
+- token risk rendah,
+- pair relatif mature atau stable-ish.
+
+### Spot cocok jika
+
+- volatilitas sedang,
+- trend tidak terlalu kuat,
+- volume/TVL sehat,
+- depth cukup merata,
+- strategi butuh buffer simetris.
+
+### Bid-Ask cocok jika
+
+- volatilitas tinggi tetapi mean-reverting,
+- volume besar dan relatif organik,
+- depth cukup untuk default size,
+- spread/slippage masih aman,
+- tidak sedang pump/dump satu arah.
+
+### Reject strategy jika
+
+- snapshot stale,
+- active bin berubah terlalu jauh,
+- depth terlalu dangkal,
+- price move 5m/15m ekstrem,
+- fee/TVL terlihat tidak realistis,
+- token risk memburuk,
+- data sumber tidak lengkap.
 
 ---
 
@@ -2045,6 +2229,233 @@ Menambah exit logic yang lebih adaptif dan automation compound yang dulu ada di 
 
 ---
 
+## Batch 22 — Screening feature enrichment untuk DLMM strategy fit
+
+### Tujuan
+
+Menambahkan field-field screening yang dibutuhkan untuk memilih strategi DLMM secara adaptif, bukan lagi hanya memakai strategy global dari config.
+
+### Bangun
+
+- `src/domain/rules/poolFeatureRules.ts`
+- `src/domain/scoring/strategySuitabilityScore.ts`
+- perluasan `Candidate` schema dengan:
+  - `marketFeatureSnapshot`
+  - `dlmmMicrostructureSnapshot`
+  - `dataFreshnessSnapshot`
+  - `strategySuitability`
+- mapper dari adapter screening/API ke field domain baru
+- validation untuk snapshot age dan missing feature
+
+### Field screening tambahan wajib
+
+Market/volume:
+
+- `volume5mUsd`, `volume15mUsd`, `volume1hUsd`, `volume24hUsd`
+- `fees5mUsd`, `fees15mUsd`, `fees1hUsd`, `fees24hUsd`
+- `volumeTvlRatio1h`, `volumeTvlRatio24h`
+- `feeTvlRatio1h`, `feeTvlRatio24h`
+
+Price/volatility:
+
+- `priceChange5mPct`, `priceChange15mPct`, `priceChange1hPct`, `priceChange24hPct`
+- `volatility5mPct`, `volatility15mPct`, `volatility1hPct`
+- `trendStrength15m`, `trendStrength1h`
+- `meanReversionScore`
+
+DLMM microstructure:
+
+- `binStep`
+- `activeBin`
+- `activeBinObservedAt`
+- `activeBinAgeMs`
+- `activeBinDriftFromDiscovery`
+- `depthNearActiveUsd`
+- `depthWithin10BinsUsd`
+- `depthWithin25BinsUsd`
+- `liquidityImbalancePct`
+- `spreadBps`
+- `estimatedSlippageBpsForDefaultSize`
+- `rangeStabilityScore`
+- `outOfRangeRiskScore`
+
+Freshness:
+
+- `screeningSnapshotAt`
+- `poolDetailFetchedAt`
+- `tokenIntelFetchedAt`
+- `chainSnapshotFetchedAt`
+- `oldestRequiredSnapshotAgeMs`
+- `isFreshEnoughForDeploy`
+
+### Output
+
+- Candidate shortlist tetap deterministic, tetapi sekarang membawa konteks strategi lengkap.
+- Setiap candidate punya `strategySuitability` berisi score untuk `curve`, `spot`, dan `bid_ask`.
+- Candidate dengan snapshot stale tidak eligible untuk deploy.
+
+### Tests
+
+- missing `activeBin` atau stale snapshot menghasilkan hard reject.
+- volatility rendah + sideways memberi `curveScore` tinggi.
+- volatility sedang + depth cukup memberi `spotScore` tinggi.
+- volatility tinggi + mean reversion memberi `bidAskScore` tinggi.
+- pump/dump satu arah menurunkan `bidAskScore` dan bisa reject.
+- estimated slippage di atas limit membuat candidate tidak eligible deploy.
+
+### DoD
+
+- Existing screening tetap jalan tanpa AI.
+- Tidak ada deploy candidate tanpa `isFreshEnoughForDeploy = true`.
+- Strategy suitability deterministic bisa dijelaskan lewat `reasonCodes`.
+
+### Prompt vibecode
+
+“Extend Meridian V2 screening with DLMM strategy-fit features. Add marketFeatureSnapshot, dlmmMicrostructureSnapshot, dataFreshnessSnapshot, and deterministic strategySuitability scoring for curve/spot/bid_ask. Reject stale active-bin data and shallow depth. Add unit tests for low-vol curve, moderate-vol spot, mean-reverting bid_ask, and one-way pump/dump rejection.”
+
+---
+
+## Batch 23 — AI Strategy Reviewer dengan strict JSON schema
+
+### Tujuan
+
+Membuat AI bisa menganalisis shortlist pool dan merekomendasikan strategi DLMM (`curve`, `spot`, `bid_ask`, atau `none`) tanpa punya akses write langsung.
+
+### Bangun
+
+- `src/adapters/llm/AiStrategyReviewer.ts`
+- `src/app/usecases/reviewStrategyWithAi.ts`
+- schema `StrategyReviewResultSchema`
+- prompt builder khusus strategy review
+- timeout dan fallback deterministic
+- journal event `AI_STRATEGY_REVIEWED`
+
+### Output AI wajib
+
+```ts
+{
+  poolAddress: string;
+  decision: "deploy" | "watch" | "reject";
+  recommendedStrategy: "curve" | "spot" | "bid_ask" | "none";
+  confidence: number;
+  riskLevel: "low" | "medium" | "high";
+  binsBelow: number;
+  binsAbove: number;
+  slippageBps: number;
+  maxPositionAgeMinutes: number;
+  stopLossPct: number;
+  takeProfitPct: number;
+  trailingStopPct: number;
+  reasons: string[];
+  rejectIf: string[];
+}
+```
+
+### Prompt policy
+
+AI harus dipaksa mengikuti prinsip:
+
+- capital preservation lebih penting dari APY,
+- hard reject tidak boleh diabaikan,
+- bid-ask hanya untuk volatile mean-reverting pool,
+- curve hanya untuk low-vol sideways/stable-ish pool,
+- spot untuk moderate-vol non-directional pool,
+- confidence rendah harus `watch` atau `reject`, bukan `deploy`.
+
+### Tests
+
+- valid AI output diparse dan disimpan.
+- invalid enum strategy ditolak.
+- confidence rendah mengubah deploy menjadi watch/reject.
+- timeout AI fallback ke deterministic strategy.
+- AI tidak dipanggil untuk candidate yang gagal hard filter.
+- response non-JSON tidak boleh crash worker.
+
+### DoD
+
+- AI strategy reviewer tidak bisa membuat action queue entry.
+- Semua output AI masuk journal untuk audit.
+- Bot tetap bisa jalan jika AI mati.
+
+### Prompt vibecode
+
+“Implement an optional AiStrategyReviewer that receives pre-filtered DLMM candidate snapshots and returns strict JSON strategy recommendations. It must recommend curve/spot/bid_ask/none plus bins, slippage, risk params, confidence, and reasons. Invalid output, timeout, or low confidence must fall back to deterministic strategy and never enqueue deploy directly.”
+
+---
+
+## Batch 24 — StrategyDecisionValidator dan deploy integration dry-run first
+
+### Tujuan
+
+Menghubungkan rekomendasi strategi AI ke deploy payload dengan validator deterministic dan mode aktivasi bertahap.
+
+### Bangun
+
+- `src/domain/rules/strategyDecisionRules.ts`
+- `StrategyDecisionValidator`
+- perluasan config:
+  - `ai.strategyReviewEnabled`
+  - `ai.allowAiStrategyForDeploy`
+  - `ai.minAiStrategyConfidence`
+  - `deploy.maxActiveBinDrift`
+  - `deploy.maxBinsBelow`
+  - `deploy.maxBinsAbove`
+  - `deploy.maxSlippageBps`
+  - `deploy.requireFreshSnapshot`
+  - `deploy.strategyFallbackMode` (`config_static`, `deterministic_best`, `reject`)
+- ubah `buildAutoDeployPayload()` agar bisa memakai `finalStrategyDecision`
+- journal event `STRATEGY_DECISION_VALIDATED`
+- dry-run report yang membandingkan:
+  - config static strategy,
+  - deterministic strategy,
+  - AI recommended strategy,
+  - final validated strategy.
+
+### Validator rules
+
+Tolak strategy decision jika:
+
+- candidate score < threshold,
+- AI confidence < threshold,
+- `riskLevel = high`,
+- strategy tidak allowlisted,
+- bins melebihi limit,
+- slippage melebihi limit,
+- active bin drift > limit,
+- snapshot stale,
+- estimated slippage > limit,
+- risk engine menolak exposure/capital,
+- DLMM simulation gagal.
+
+### Aktivasi bertahap
+
+1. **recommendation_only** — AI menulis rekomendasi ke journal, deploy tetap config static.
+2. **dry_run_payload** — deploy payload dry-run memakai AI strategy, tetapi tidak submit.
+3. **manual_live** — operator bisa memilih rekomendasi AI untuk manual deploy kecil.
+4. **guarded_auto** — auto deploy boleh memakai AI strategy hanya jika score, confidence, risk, freshness, drift, dan simulation semuanya lolos.
+
+### Tests
+
+- AI deploy recommendation ditolak bila score rendah.
+- AI bid_ask ditolak bila volatility tinggi tetapi trend satu arah.
+- AI curve ditolak bila volatility terlalu tinggi.
+- binsAbove/binsBelow clamp atau reject sesuai policy.
+- `strategyFallbackMode = reject` menolak jika AI invalid.
+- dry-run report memuat tiga versi strategi.
+- guarded auto tidak submit jika simulation gagal.
+
+### DoD
+
+- Tidak ada path `AI says deploy -> submit` langsung.
+- Deploy payload selalu berasal dari `finalStrategyDecision` yang sudah divalidasi.
+- Mode default tetap aman: `strategyReviewEnabled=false` atau `recommendation_only`.
+
+### Prompt vibecode
+
+“Add StrategyDecisionValidator and integrate AI strategy decisions into auto-deploy in dry-run-first mode. Add config gates for min confidence, max active-bin drift, max bins, max slippage, and fallback behavior. Deploy must only use a finalStrategyDecision after deterministic validation and simulation; never submit directly from AI output.”
+
+---
+
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:
@@ -2061,9 +2472,12 @@ Agar bug minimal, aktifkan fitur dalam urutan ini:
 10. Workers
 11. CLI/Telegram
 12. AI advisory
-13. Real adapters
-14. Dry-run simulator
-15. Supervised live
+13. Screening feature enrichment + deterministic strategy suitability
+14. AI strategy reviewer recommendation-only
+15. StrategyDecisionValidator dry-run integration
+16. Real adapters
+17. Dry-run simulator
+18. Supervised live
 
 ### Jangan dibalik
 

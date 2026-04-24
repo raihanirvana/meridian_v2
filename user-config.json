@@ -20,6 +20,9 @@
     "minFeeActiveTvlRatio": 0.05,
     "minFeePerTvl24h": 0.01,
     "minOrganic": 60,
+    "requireFreshSnapshot": true,
+    "maxEstimatedSlippageBps": 300,
+    "maxStrategySnapshotAgeMs": 120000,
     "minHolderCount": 500,
     "allowedBinSteps": [80, 100, 125],
     "blockedLaunchpads": [],
@@ -51,7 +54,7 @@
     "rebalanceEnabled": true
   },
   "ai": {
-    "mode": "advisory",
+    "mode": "disabled",
     "generalModel": "gpt-4.1-mini",
     "managementModel": "gpt-4.1-mini",
     "screeningModel": "gpt-4.1-mini",

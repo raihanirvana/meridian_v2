@@ -9,11 +9,17 @@ import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { MockScreeningGateway } from "../../src/adapters/screening/ScreeningGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
 import type { Candidate } from "../../src/domain/entities/Candidate.js";
+import {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "../../src/domain/rules/poolFeatureRules.js";
 import type { UserConfig } from "../../src/infra/config/configSchema.js";
 import { createRuntimeStores } from "../../src/runtime/createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "../../src/runtime/createRuntimeSupervisor.js";
 
 const tempDirs: string[] = [];
+const now = "2026-04-22T10:00:00.000Z";
 
 async function makeTempDir(): Promise<string> {
   const directory = await fs.mkdtemp(
@@ -106,6 +112,7 @@ function buildUserConfig(overrides: Partial<UserConfig> = {}): UserConfig {
       binsBelow: 69,
       binsAbove: 0,
       slippageBps: 300,
+      maxActiveBinDrift: 3,
     },
     poolMemory: {
       snapshotsEnabled: false,
@@ -147,6 +154,10 @@ function buildCandidate(): Candidate {
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "ABC-SOL",
+    tokenXMint: "mint_abc",
+    tokenYMint: "So11111111111111111111111111111111111111112",
+    baseMint: "mint_abc",
+    quoteMint: "So11111111111111111111111111111111111111112",
     screeningSnapshot: {
       marketCapUsd: 500_000,
       tvlUsd: 50_000,
@@ -160,6 +171,23 @@ function buildCandidate(): Candidate {
       pairType: "volatile",
       launchpad: null,
     },
+    marketFeatureSnapshot: buildMarketFeatureSnapshot({
+      volume24hUsd: 25_000,
+      fees24hUsd: 15,
+      tvlUsd: 50_000,
+      organicVolumeScore: 80,
+      washTradingRiskScore: 5,
+    }),
+    dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+      binStep: 80,
+      activeBin: 1000,
+      activeBinObservedAt: now,
+      depthNearActiveUsd: 20_000,
+      depthWithin10BinsUsd: 40_000,
+      depthWithin25BinsUsd: 50_000,
+      estimatedSlippageBpsForDefaultSize: 100,
+      now,
+    }),
     tokenRiskSnapshot: {
       deployerAddress: "deployer_ok",
       topHolderPct: 18,
@@ -177,12 +205,16 @@ function buildCandidate(): Candidate {
       tokenAgeHours: 24,
       narrativePenaltyScore: 10,
     },
+    dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+      now,
+      hasActiveBin: true,
+    }),
     hardFilterPassed: true,
     score: 80,
     scoreBreakdown: {},
     decision: "SHORTLISTED",
     decisionReason: "selected upstream",
-    createdAt: "2026-04-22T10:00:00.000Z",
+    createdAt: now,
   };
 }
 

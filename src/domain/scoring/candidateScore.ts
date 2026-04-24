@@ -6,6 +6,11 @@ import {
   type SignalWeights,
 } from "../entities/SignalWeights.js";
 import { PortfolioStateSchema } from "../entities/PortfolioState.js";
+import {
+  DataFreshnessSnapshotSchema,
+  DlmmMicrostructureSnapshotSchema,
+  MarketFeatureSnapshotSchema,
+} from "../entities/Candidate.js";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -56,6 +61,9 @@ export const ScreeningCandidateInputSchema = z
     narrativeSummary: z.string().min(1).nullable().optional(),
     holderDistributionSummary: z.string().min(1).nullable().optional(),
     narrativePenaltyScore: z.number().min(0).max(100),
+    marketFeatureSnapshot: MarketFeatureSnapshotSchema.optional(),
+    dlmmMicrostructureSnapshot: DlmmMicrostructureSnapshotSchema.optional(),
+    dataFreshnessSnapshot: DataFreshnessSnapshotSchema.optional(),
   })
   .strict();
 

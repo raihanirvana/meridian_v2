@@ -7,10 +7,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FileSignalWeightsStore } from "../../src/adapters/storage/SignalWeightsStore.js";
 import { DefaultSignalWeightsProvider } from "../../src/app/services/SignalWeightsProvider.js";
 import { type PortfolioState } from "../../src/domain/entities/PortfolioState.js";
+import {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "../../src/domain/rules/poolFeatureRules.js";
 import { screenAndScoreCandidates } from "../../src/domain/rules/screeningRules.js";
 import { type ScreeningCandidateInput } from "../../src/domain/scoring/candidateScore.js";
 
 const tempDirs: string[] = [];
+const now = "2026-04-22T12:00:00.000Z";
 
 async function makeTempDir(): Promise<string> {
   const directory = await fs.mkdtemp(
@@ -111,6 +117,27 @@ function buildCandidate(
     smartMoneyConfidenceScore: 83,
     poolAgeHours: 96,
     narrativePenaltyScore: 10,
+    marketFeatureSnapshot: buildMarketFeatureSnapshot({
+      volume24hUsd: 25_000,
+      fees24hUsd: 15,
+      tvlUsd: 50_000,
+      organicVolumeScore: 80,
+      washTradingRiskScore: 5,
+    }),
+    dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+      binStep: 100,
+      activeBin: 1000,
+      activeBinObservedAt: now,
+      depthNearActiveUsd: 20_000,
+      depthWithin10BinsUsd: 40_000,
+      depthWithin25BinsUsd: 50_000,
+      estimatedSlippageBpsForDefaultSize: 100,
+      now,
+    }),
+    dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+      now,
+      hasActiveBin: true,
+    }),
     ...overrides,
   };
 }

@@ -246,6 +246,9 @@ export function createRuntimeSupervisor(
     ...(input.config.screening.athFilterPct === undefined
       ? {}
       : { athFilterPct: input.config.screening.athFilterPct }),
+    requireFreshSnapshot: input.config.screening.requireFreshSnapshot,
+    maxEstimatedSlippageBps: input.config.screening.maxEstimatedSlippageBps,
+    maxStrategySnapshotAgeMs: input.config.screening.maxStrategySnapshotAgeMs,
     minHolderCount: input.config.screening.minHolderCount,
     allowedBinSteps: input.config.screening.allowedBinSteps,
     blockedLaunchpads: input.config.screening.blockedLaunchpads,

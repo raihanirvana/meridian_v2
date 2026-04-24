@@ -634,8 +634,9 @@ Status: Complete
 
 ## Next Recommended Step
 
-- Batch 22 — portfolio/operator polish atau parity lanjutan
+- Batch 23 — AI Strategy Reviewer recommendation-only dengan strict JSON schema
 - Prioritas implementasi berikutnya:
+  - strategy decision validator dry-run-first di Batch 24 sebelum AI strategy boleh menyentuh deploy payload live
   - partial-close pipeline resmi agar `N34` bisa ditutup
   - observability/hardening debt yang masih deferred
   - parity knob/UX tambahan yang sudah masuk roadmap setelah Batch 21
@@ -693,4 +694,10 @@ Status: Complete
   - reconciliation snapshot sekarang menyinkronkan posisi lokal open/hold/review dari live DLMM snapshot, supaya management tidak membaca PnL/range/bin stale
   - autonomous screening deploy sekarang tersedia via `deploy.autoDeployFromShortlist`; jika aktif dan runtime bukan dry-run, top shortlist akan diubah menjadi `DEPLOY` action resmi lewat queue, bukan direct write
   - screening live sekarang bisa memakai Meteora Pool Discovery langsung bila `SCREENING_API_BASE_URL` kosong, sehingga autonomous shortlist tidak membutuhkan screening API custom seperti repo lama
-- `npm test` terakhir hijau dengan total `250` tests passed
+- Batch 22 sekarang sudah masuk:
+  - `Candidate` membawa `marketFeatureSnapshot`, `dlmmMicrostructureSnapshot`, `dataFreshnessSnapshot`, dan `strategySuitability` sebagai konteks strategy-fit deterministic
+  - screening hard filter sekarang menolak kandidat dengan snapshot strategy stale, active bin tidak tersedia, atau estimated slippage di atas batas policy
+  - `MeteoraPoolDiscoveryScreeningGateway` memetakan field market/volume/fee/price-change/depth/active-bin ke snapshot V2 bila tersedia dari API, dengan fallback konservatif
+  - `scoreStrategySuitability()` memberi rekomendasi deterministic `curve` / `spot` / `bid_ask` / `none` sebelum AI strategy reviewer ada
+  - config screening menambah `requireFreshSnapshot`, `maxEstimatedSlippageBps`, dan `maxStrategySnapshotAgeMs`
+- `npm test` terakhir hijau dengan total `263` tests passed

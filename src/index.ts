@@ -33,7 +33,15 @@ export {
 export { ActionSchema, type Action } from "./domain/entities/Action.js";
 export {
   CandidateSchema,
+  DataFreshnessSnapshotSchema,
+  DlmmMicrostructureSnapshotSchema,
+  MarketFeatureSnapshotSchema,
+  StrategySuitabilitySchema,
   type Candidate,
+  type DataFreshnessSnapshot,
+  type DlmmMicrostructureSnapshot,
+  type MarketFeatureSnapshot,
+  type StrategySuitability,
 } from "./domain/entities/Candidate.js";
 export {
   JournalEventSchema,
@@ -141,6 +149,16 @@ export {
   type ScreenAndScoreCandidatesResult,
   type ScreeningPolicy,
 } from "./domain/rules/screeningRules.js";
+export {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "./domain/rules/poolFeatureRules.js";
+export {
+  scoreStrategySuitability,
+  StrategySuitabilityInputSchema,
+  type StrategySuitabilityInput,
+} from "./domain/scoring/strategySuitabilityScore.js";
 export {
   evolveThresholds,
   MAX_CHANGE_PER_STEP,

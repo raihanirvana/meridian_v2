@@ -1,15 +1,30 @@
 import { z } from "zod";
 
-import { CandidateSchema, type Candidate } from "../entities/Candidate.js";
+import {
+  CandidateSchema,
+  defaultDataFreshnessSnapshot,
+  defaultDlmmMicrostructureSnapshot,
+  defaultMarketFeatureSnapshot,
+  type Candidate,
+  type DataFreshnessSnapshot,
+  type DlmmMicrostructureSnapshot,
+  type MarketFeatureSnapshot,
+} from "../entities/Candidate.js";
 import { type PoolMemoryEntry } from "../entities/PoolMemory.js";
 import { PortfolioStateSchema } from "../entities/PortfolioState.js";
 import { type SignalWeights } from "../entities/SignalWeights.js";
 import { applyCooldownFilter } from "./poolMemoryRules.js";
 import {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "./poolFeatureRules.js";
+import {
   scoreCandidate,
   CandidateScorePolicySchema,
   ScreeningCandidateInputSchema,
 } from "../scoring/candidateScore.js";
+import { scoreStrategySuitability } from "../scoring/strategySuitabilityScore.js";
 
 export const ScreeningPolicySchema = z
   .object({
@@ -38,6 +53,9 @@ export const ScreeningPolicySchema = z
     rejectDuplicatePoolExposure: z.boolean(),
     rejectDuplicateTokenExposure: z.boolean(),
     shortlistLimit: z.number().int().positive(),
+    requireFreshSnapshot: z.boolean().optional(),
+    maxEstimatedSlippageBps: z.number().positive().optional(),
+    maxStrategySnapshotAgeMs: z.number().int().positive().optional(),
   })
   .strict()
   .superRefine((policy, ctx) => {
@@ -87,6 +105,88 @@ export type HardFilterEvaluation = z.infer<typeof HardFilterEvaluationSchema>;
 export type ScreenAndScoreCandidatesResult = z.infer<
   typeof ScreenAndScoreCandidatesResultSchema
 >;
+
+function deriveMarketFeatureSnapshot(
+  candidate: z.infer<typeof ScreeningCandidateInputSchema>,
+): MarketFeatureSnapshot {
+  return (
+    candidate.marketFeatureSnapshot ??
+    buildMarketFeatureSnapshot({
+      volume24hUsd: candidate.volumeUsd,
+      fees24hUsd:
+        candidate.feePerTvl24h === undefined
+          ? (candidate.feeToTvlRatio / 100) * candidate.tvlUsd
+          : (candidate.feePerTvl24h / 100) * candidate.tvlUsd,
+      tvlUsd: candidate.tvlUsd,
+      organicVolumeScore: candidate.organicScore,
+      washTradingRiskScore: candidate.washTradingRiskPct,
+    })
+  );
+}
+
+function deriveDlmmMicrostructureSnapshot(
+  candidate: z.infer<typeof ScreeningCandidateInputSchema>,
+  createdAt: string,
+): DlmmMicrostructureSnapshot {
+  return (
+    candidate.dlmmMicrostructureSnapshot ??
+    buildDlmmMicrostructureSnapshot({
+      binStep: candidate.binStep,
+      activeBin: null,
+      activeBinSource: "unavailable",
+      activeBinObservedAt: null,
+      depthNearActiveUsd: candidate.tvlUsd,
+      depthWithin10BinsUsd: candidate.tvlUsd,
+      depthWithin25BinsUsd: candidate.tvlUsd,
+      estimatedSlippageBpsForDefaultSize: 0,
+      rangeStabilityScore: 50,
+      now: createdAt,
+    })
+  );
+}
+
+function deriveDataFreshnessSnapshot(input: {
+  candidate: z.infer<typeof ScreeningCandidateInputSchema>;
+  dlmm: DlmmMicrostructureSnapshot;
+  createdAt: string;
+  maxAgeMs?: number;
+}): DataFreshnessSnapshot {
+  return (
+    input.candidate.dataFreshnessSnapshot ??
+    buildDataFreshnessSnapshot({
+      now: input.createdAt,
+      ...(input.maxAgeMs === undefined ? {} : { maxAgeMs: input.maxAgeMs }),
+      hasActiveBin: input.dlmm.activeBin !== null,
+    })
+  );
+}
+
+function enrichStrategyFeatureInput(
+  candidate: z.infer<typeof ScreeningCandidateInputSchema>,
+  policy: ScreeningPolicy,
+  createdAt: string,
+): z.infer<typeof ScreeningCandidateInputSchema> {
+  const marketFeatureSnapshot = deriveMarketFeatureSnapshot(candidate);
+  const dlmmMicrostructureSnapshot = deriveDlmmMicrostructureSnapshot(
+    candidate,
+    createdAt,
+  );
+  const dataFreshnessSnapshot = deriveDataFreshnessSnapshot({
+    candidate,
+    dlmm: dlmmMicrostructureSnapshot,
+    createdAt,
+    ...(policy.maxStrategySnapshotAgeMs === undefined
+      ? {}
+      : { maxAgeMs: policy.maxStrategySnapshotAgeMs }),
+  });
+
+  return ScreeningCandidateInputSchema.parse({
+    ...candidate,
+    marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot,
+    dataFreshnessSnapshot,
+  });
+}
 
 export function evaluateScreeningHardFilters(input: {
   candidate: z.infer<typeof ScreeningCandidateInputSchema>;
@@ -186,6 +286,35 @@ export function evaluateScreeningHardFilters(input: {
   if (!policy.allowedPairTypes.includes(candidate.pairType)) {
     rejectionReasons.push("pair type not allowed");
   }
+  const marketFeatureSnapshot =
+    candidate.marketFeatureSnapshot ?? defaultMarketFeatureSnapshot();
+  const dlmmMicrostructureSnapshot =
+    candidate.dlmmMicrostructureSnapshot ?? defaultDlmmMicrostructureSnapshot();
+  const dataFreshnessSnapshot =
+    candidate.dataFreshnessSnapshot ?? defaultDataFreshnessSnapshot();
+  if (
+    (policy.requireFreshSnapshot ?? true) &&
+    !dataFreshnessSnapshot.isFreshEnoughForDeploy
+  ) {
+    rejectionReasons.push("strategy snapshot is stale");
+  }
+  if (
+    (policy.requireFreshSnapshot ?? true) &&
+    dlmmMicrostructureSnapshot.activeBin === null
+  ) {
+    rejectionReasons.push("active bin unavailable");
+  }
+  if (
+    dlmmMicrostructureSnapshot.estimatedSlippageBpsForDefaultSize >
+    (policy.maxEstimatedSlippageBps ?? 300)
+  ) {
+    rejectionReasons.push("estimated slippage above maximum");
+  }
+  if (
+    marketFeatureSnapshot.washTradingRiskScore > policy.maxWashTradingRiskPct
+  ) {
+    rejectionReasons.push("feature wash trading risk above maximum");
+  }
 
   const duplicatePoolExposure =
     policy.rejectDuplicatePoolExposure &&
@@ -234,15 +363,41 @@ function buildCandidateEntity(input: {
   candidate: z.infer<typeof ScreeningCandidateInputSchema>;
   hardFilter: HardFilterEvaluation;
   createdAt: string;
+  screeningPolicy: ScreeningPolicy;
   score?: number;
   scoreBreakdown?: Record<string, number>;
   decision?: Candidate["decision"];
   decisionReason?: string;
 }): Candidate {
+  const marketFeatureSnapshot = deriveMarketFeatureSnapshot(input.candidate);
+  const dlmmMicrostructureSnapshot = deriveDlmmMicrostructureSnapshot(
+    input.candidate,
+    input.createdAt,
+  );
+  const dataFreshnessSnapshot = deriveDataFreshnessSnapshot({
+    candidate: input.candidate,
+    dlmm: dlmmMicrostructureSnapshot,
+    createdAt: input.createdAt,
+    ...(input.screeningPolicy.maxStrategySnapshotAgeMs === undefined
+      ? {}
+      : { maxAgeMs: input.screeningPolicy.maxStrategySnapshotAgeMs }),
+  });
+  const strategySuitability = scoreStrategySuitability({
+    marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot,
+    dataFreshnessSnapshot,
+    maxEstimatedSlippageBps:
+      input.screeningPolicy.maxEstimatedSlippageBps ?? 300,
+  });
+
   return CandidateSchema.parse({
     candidateId: input.candidate.candidateId,
     poolAddress: input.candidate.poolAddress,
     symbolPair: input.candidate.symbolPair,
+    tokenXMint: input.candidate.tokenXMint,
+    tokenYMint: input.candidate.tokenYMint,
+    baseMint: input.candidate.tokenXMint,
+    quoteMint: input.candidate.tokenYMint,
     screeningSnapshot: {
       marketCapUsd: input.candidate.marketCapUsd,
       tvlUsd: input.candidate.tvlUsd,
@@ -278,6 +433,10 @@ function buildCandidateEntity(input: {
         input.candidate.holderDistributionSummary ?? null,
       narrativePenaltyScore: input.candidate.narrativePenaltyScore,
     },
+    marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot,
+    dataFreshnessSnapshot,
+    strategySuitability,
     hardFilterPassed: input.hardFilter.hardFilterPassed,
     score: input.score ?? 0,
     scoreBreakdown: input.scoreBreakdown ?? {},
@@ -314,22 +473,28 @@ export function screenAndScoreCandidates(input: {
         });
 
   const evaluatedCandidates = candidates.map((candidate) => {
-    const hardFilter = evaluateScreeningHardFilters({
+    const featureEnrichedCandidate = enrichStrategyFeatureInput(
       candidate,
+      screeningPolicy,
+      createdAt,
+    );
+    const hardFilter = evaluateScreeningHardFilters({
+      candidate: featureEnrichedCandidate,
       portfolio,
       policy: screeningPolicy,
     });
 
     if (!hardFilter.hardFilterPassed) {
       return buildCandidateEntity({
-        candidate,
+        candidate: featureEnrichedCandidate,
         hardFilter,
         createdAt,
+        screeningPolicy,
       });
     }
 
     const score = scoreCandidate({
-      candidate,
+      candidate: featureEnrichedCandidate,
       portfolio,
       policy: scoringPolicy,
       ...(input.signalWeights === undefined
@@ -338,9 +503,10 @@ export function screenAndScoreCandidates(input: {
     });
 
     return buildCandidateEntity({
-      candidate,
+      candidate: featureEnrichedCandidate,
       hardFilter,
       createdAt,
+      screeningPolicy,
       score: score.scoreTotal,
       scoreBreakdown: score.scoreBreakdown,
       decision: "PASSED_HARD_FILTER",

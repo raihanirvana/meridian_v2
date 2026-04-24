@@ -4,6 +4,12 @@ import {
   CandidateSchema,
   type Candidate,
 } from "../../domain/entities/Candidate.js";
+import {
+  buildDataFreshnessSnapshot,
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "../../domain/rules/poolFeatureRules.js";
+import { scoreStrategySuitability } from "../../domain/scoring/strategySuitabilityScore.js";
 import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
 
 import {
@@ -138,6 +144,20 @@ function extractBinStep(pool: Record<string, unknown>): number | undefined {
   );
 }
 
+function extractActiveBin(pool: Record<string, unknown>): number | undefined {
+  const dlmmParams = optionalRecord(pool.dlmm_params ?? pool.dlmmParams);
+  return firstNumber(
+    pool.active_bin,
+    pool.activeBin,
+    pool.active_id,
+    pool.activeId,
+    dlmmParams.active_bin,
+    dlmmParams.activeBin,
+    dlmmParams.active_id,
+    dlmmParams.activeId,
+  );
+}
+
 function extractFeePerTvl(input: {
   pool: Record<string, unknown>;
   feeToTvlRatio: number;
@@ -257,6 +277,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       pool.token_y_mint,
     );
     const binStep = extractBinStep(pool);
+    const activeBin = extractActiveBin(pool);
 
     if (
       poolAddress === undefined ||
@@ -355,11 +376,141 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       feeUsd,
       tvlUsd,
     });
+    const volume5mUsd = firstNumber(pool.volume_5m, pool.volume5mUsd);
+    const volume15mUsd = firstNumber(pool.volume_15m, pool.volume15mUsd);
+    const volume1hUsd = firstNumber(pool.volume_1h, pool.volume1hUsd);
+    const volume24hUsd = firstNumber(
+      pool.volume_24h,
+      pool.volume24hUsd,
+      volumeUsd,
+    );
+    const fees24hUsd = firstNumber(pool.fee_24h, pool.fees24hUsd, feeUsd);
+    const fees1hUsd = firstNumber(pool.fee_1h, pool.fees1hUsd);
+    const priceChange5mPct = firstNumber(
+      pool.price_change_5m,
+      pool.priceChange5mPct,
+    );
+    const priceChange15mPct = firstNumber(
+      pool.price_change_15m,
+      pool.priceChange15mPct,
+    );
+    const priceChange1hPct = firstNumber(
+      pool.price_change_1h,
+      pool.priceChange1hPct,
+    );
+    const priceChange24hPct = firstNumber(
+      pool.price_change_24h,
+      pool.priceChange24hPct,
+    );
+    const depthNearActiveUsd =
+      firstNumber(
+        pool.depth_near_active_usd,
+        pool.depthNearActiveUsd,
+        pool.liquidity_near_active_usd,
+      ) ?? tvlUsd * 0.2;
+    const depthWithin10BinsUsd =
+      firstNumber(pool.depth_within_10_bins_usd, pool.depthWithin10BinsUsd) ??
+      tvlUsd * 0.5;
+    const depthWithin25BinsUsd =
+      firstNumber(pool.depth_within_25_bins_usd, pool.depthWithin25BinsUsd) ??
+      tvlUsd;
+    const estimatedSlippageBpsForDefaultSize =
+      firstNumber(
+        pool.estimated_slippage_bps,
+        pool.estimatedSlippageBpsForDefaultSize,
+        pool.slippage_bps,
+      ) ?? 0;
+    const volatility5mPct = firstNumber(
+      pool.volatility_5m,
+      pool.volatility5mPct,
+    );
+    const volatility15mPct = firstNumber(
+      pool.volatility_15m,
+      pool.volatility15mPct,
+    );
+    const volatility1hPct = firstNumber(
+      pool.volatility_1h,
+      pool.volatility1hPct,
+    );
+    const trendStrength15m = firstNumber(
+      pool.trend_strength_15m,
+      pool.trendStrength15m,
+    );
+    const trendStrength1h = firstNumber(
+      pool.trend_strength_1h,
+      pool.trendStrength1h,
+    );
+    const meanReversionScore = firstNumber(
+      pool.mean_reversion_score,
+      pool.meanReversionScore,
+    );
+    const marketFeatureSnapshot = buildMarketFeatureSnapshot({
+      ...(volume5mUsd === undefined ? {} : { volume5mUsd }),
+      ...(volume15mUsd === undefined ? {} : { volume15mUsd }),
+      ...(volume1hUsd === undefined ? {} : { volume1hUsd }),
+      ...(volume24hUsd === undefined ? {} : { volume24hUsd }),
+      ...(fees1hUsd === undefined ? {} : { fees1hUsd }),
+      ...(fees24hUsd === undefined ? {} : { fees24hUsd }),
+      tvlUsd,
+      ...(priceChange5mPct === undefined ? {} : { priceChange5mPct }),
+      ...(priceChange15mPct === undefined ? {} : { priceChange15mPct }),
+      ...(priceChange1hPct === undefined ? {} : { priceChange1hPct }),
+      ...(priceChange24hPct === undefined ? {} : { priceChange24hPct }),
+      ...(volatility5mPct === undefined ? {} : { volatility5mPct }),
+      ...(volatility15mPct === undefined ? {} : { volatility15mPct }),
+      ...(volatility1hPct === undefined ? {} : { volatility1hPct }),
+      ...(trendStrength15m === undefined ? {} : { trendStrength15m }),
+      ...(trendStrength1h === undefined ? {} : { trendStrength1h }),
+      ...(meanReversionScore === undefined ? {} : { meanReversionScore }),
+      washTradingRiskScore: washTradingRiskPct,
+      organicVolumeScore: organicScore,
+    });
+    const liquidityImbalancePct = firstNumber(
+      pool.liquidity_imbalance_pct,
+      pool.liquidityImbalancePct,
+    );
+    const spreadBps = firstNumber(pool.spread_bps, pool.spreadBps);
+    const outOfRangeRiskScore = firstNumber(
+      pool.out_of_range_risk_score,
+      pool.outOfRangeRiskScore,
+    );
+    const rangeStabilityScore = firstNumber(
+      pool.range_stability_score,
+      pool.rangeStabilityScore,
+    );
+    const dlmmMicrostructureSnapshot = buildDlmmMicrostructureSnapshot({
+      binStep,
+      activeBin: activeBin ?? null,
+      activeBinSource: activeBin === undefined ? "unavailable" : "screening",
+      activeBinObservedAt: activeBin === undefined ? null : now,
+      depthNearActiveUsd,
+      depthWithin10BinsUsd,
+      depthWithin25BinsUsd,
+      ...(liquidityImbalancePct === undefined ? {} : { liquidityImbalancePct }),
+      ...(spreadBps === undefined ? {} : { spreadBps }),
+      estimatedSlippageBpsForDefaultSize,
+      ...(outOfRangeRiskScore === undefined ? {} : { outOfRangeRiskScore }),
+      ...(rangeStabilityScore === undefined ? {} : { rangeStabilityScore }),
+      now,
+    });
+    const dataFreshnessSnapshot = buildDataFreshnessSnapshot({
+      now,
+      hasActiveBin: activeBin !== undefined,
+    });
+    const strategySuitability = scoreStrategySuitability({
+      marketFeatureSnapshot,
+      dlmmMicrostructureSnapshot,
+      dataFreshnessSnapshot,
+    });
 
     return CandidateSchema.parse({
       candidateId: poolAddress,
       poolAddress,
       symbolPair,
+      tokenXMint,
+      tokenYMint,
+      baseMint: tokenXMint,
+      quoteMint: tokenYMint,
       screeningSnapshot: {
         marketCapUsd:
           firstNumber(tokenX.market_cap, tokenX.marketCap, pool.market_cap) ??
@@ -392,6 +543,8 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
           tokenX.ath_distance_pct,
         ),
       },
+      marketFeatureSnapshot,
+      dlmmMicrostructureSnapshot,
       tokenRiskSnapshot: {
         tokenXMint,
         tokenYMint,
@@ -425,6 +578,8 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
         holderDistributionSummary: null,
         narrativePenaltyScore: 0,
       },
+      dataFreshnessSnapshot,
+      strategySuitability,
       hardFilterPassed: true,
       score: 0,
       scoreBreakdown: {},
