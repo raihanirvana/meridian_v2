@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HttpTokenIntelGateway } from "../../src/adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../../src/adapters/dlmm/HttpDlmmGateway.js";
+import { HttpAiStrategyReviewer } from "../../src/adapters/llm/HttpAiStrategyReviewer.js";
 import { HttpLlmGateway } from "../../src/adapters/llm/HttpLlmGateway.js";
 import {
   AdapterHttpStatusError,
@@ -232,6 +233,63 @@ describe("real adapters", () => {
       action: "CLOSE",
       reasoning: "Stop loss triggered",
     });
+
+    const strategyReviewer = new HttpAiStrategyReviewer({
+      baseUrl: "https://llm.example.com/v1/",
+      model: "gpt-test",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    poolAddress: "pool_001",
+                    decision: "deploy",
+                    recommendedStrategy: "bid_ask",
+                    confidence: 0.82,
+                    riskLevel: "medium",
+                    binsBelow: 69,
+                    binsAbove: 0,
+                    slippageBps: 250,
+                    maxPositionAgeMinutes: 720,
+                    stopLossPct: 5,
+                    takeProfitPct: 12,
+                    trailingStopPct: 2,
+                    reasons: ["mean reverting"],
+                    rejectIf: ["active bin drifts"],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      strategyReviewer.reviewCandidateStrategy({
+        candidate: {
+          candidateId: "cand_001",
+          poolAddress: "pool_001",
+          symbolPair: "SOL-USDC",
+          screeningSnapshot: {},
+          tokenRiskSnapshot: {},
+          smartMoneySnapshot: {},
+          hardFilterPassed: true,
+          score: 90,
+          scoreBreakdown: { quality: 90 },
+          decision: "SHORTLISTED",
+          decisionReason: "Passed deterministic shortlist",
+          createdAt: "2026-04-21T12:00:00.000Z",
+        },
+        systemPrompt: "review strategy",
+      }),
+    ).resolves.toMatchObject({
+      poolAddress: "pool_001",
+      recommendedStrategy: "bid_ask",
+    });
   });
 
   it("maps non-2xx HTTP responses into AdapterHttpStatusError", async () => {
@@ -288,6 +346,45 @@ describe("real adapters", () => {
       llm.rankCandidates({
         candidates: [],
         systemPrompt: "rank",
+      }),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+
+    const strategyReviewer = new HttpAiStrategyReviewer({
+      baseUrl: "https://llm.example.com/v1/",
+      model: "gpt-test",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "not-json",
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      strategyReviewer.reviewCandidateStrategy({
+        candidate: {
+          candidateId: "cand_001",
+          poolAddress: "pool_001",
+          symbolPair: "SOL-USDC",
+          screeningSnapshot: {},
+          tokenRiskSnapshot: {},
+          smartMoneySnapshot: {},
+          hardFilterPassed: true,
+          score: 90,
+          scoreBreakdown: { quality: 90 },
+          decision: "SHORTLISTED",
+          decisionReason: "Passed deterministic shortlist",
+          createdAt: "2026-04-21T12:00:00.000Z",
+        },
+        systemPrompt: "review strategy",
       }),
     ).rejects.toBeInstanceOf(AdapterResponseValidationError);
 

@@ -634,7 +634,7 @@ Status: Complete
 
 ## Next Recommended Step
 
-- Batch 23 — AI Strategy Reviewer recommendation-only dengan strict JSON schema
+- Batch 24 — StrategyDecisionValidator + deploy integration dry-run-first
 - Prioritas implementasi berikutnya:
   - strategy decision validator dry-run-first di Batch 24 sebelum AI strategy boleh menyentuh deploy payload live
   - partial-close pipeline resmi agar `N34` bisa ditutup
@@ -700,4 +700,9 @@ Status: Complete
   - `MeteoraPoolDiscoveryScreeningGateway` memetakan field market/volume/fee/price-change/depth/active-bin ke snapshot V2 bila tersedia dari API, dengan fallback konservatif
   - `scoreStrategySuitability()` memberi rekomendasi deterministic `curve` / `spot` / `bid_ask` / `none` sebelum AI strategy reviewer ada
   - config screening menambah `requireFreshSnapshot`, `maxEstimatedSlippageBps`, dan `maxStrategySnapshotAgeMs`
+- Batch 23 sekarang sudah masuk:
+  - `AiStrategyReviewer` adapter boundary baru dengan strict `StrategyReviewResultSchema`
+  - `HttpAiStrategyReviewer` bisa memanggil chat-completions compatible endpoint dan menolak non-JSON / schema invalid sebagai adapter validation error
+  - `reviewStrategyWithAi()` menjalankan review recommendation-only, skip AI untuk kandidat hard-filter failed, fallback deterministic saat timeout/invalid/non-JSON, dan downgrade `deploy` ber-confidence rendah menjadi `watch`
+  - setiap review menulis journal `AI_STRATEGY_REVIEWED`; tidak ada path yang membuat action queue entry atau deploy payload live
 - `npm test` terakhir hijau dengan total `263` tests passed

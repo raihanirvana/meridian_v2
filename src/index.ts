@@ -351,9 +351,22 @@ export {
   type MockLlmGatewayBehaviors,
 } from "./adapters/llm/LlmGateway.js";
 export {
+  AiStrategyReviewInputSchema,
+  MockAiStrategyReviewer,
+  StrategyReviewResultSchema,
+  type AiStrategyReviewer,
+  type AiStrategyReviewInput,
+  type MockAiStrategyReviewerBehaviors,
+  type StrategyReviewResult,
+} from "./adapters/llm/AiStrategyReviewer.js";
+export {
   HttpLlmGateway,
   type HttpLlmGatewayOptions,
 } from "./adapters/llm/HttpLlmGateway.js";
+export {
+  HttpAiStrategyReviewer,
+  type HttpAiStrategyReviewerOptions,
+} from "./adapters/llm/HttpAiStrategyReviewer.js";
 export {
   MockNotifierGateway,
   type MockNotifierGatewayBehaviors,
@@ -588,6 +601,15 @@ export {
   type MaybeEvolvePolicyInput,
   type MaybeEvolvePolicyResult,
 } from "./app/usecases/maybeEvolvePolicy.js";
+export {
+  reviewStrategyWithAi,
+  StrategyReviewWithAiItemSchema,
+  StrategyReviewWithAiResultSchema,
+  type ReviewStrategyWithAiInput,
+  type StrategyReviewSource,
+  type StrategyReviewWithAiItem,
+  type StrategyReviewWithAiResult,
+} from "./app/usecases/reviewStrategyWithAi.js";
 export {
   MIN_SIGNAL_RECALIBRATION_POSITIONS,
   maybeRecalibrateSignalWeights,
