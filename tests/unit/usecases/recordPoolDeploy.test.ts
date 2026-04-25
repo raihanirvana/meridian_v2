@@ -120,4 +120,39 @@ describe("recordPoolDeploy", () => {
       (await journalRepository.list()).map((event) => event.eventType),
     ).toContain("POOL_MEMORY_UPDATED");
   });
+
+  it("does not duplicate deploy history for the same position", async () => {
+    const directory = await makeTempDir();
+    const repository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
+
+    await recordPoolDeploy({
+      poolMemoryRepository: repository,
+      poolAddress: "pool_001",
+      name: "SOL-USDC",
+      baseMint: "mint_sol",
+      deploy: buildDeploy({
+        positionId: "pos_001",
+        sourceActionId: "action_001",
+      }),
+      now: "2026-04-22T02:00:00.000Z",
+    });
+    const entry = await recordPoolDeploy({
+      poolMemoryRepository: repository,
+      poolAddress: "pool_001",
+      name: "SOL-USDC",
+      baseMint: "mint_sol",
+      deploy: buildDeploy({
+        positionId: "pos_001",
+        sourceActionId: "action_001",
+        pnlPct: 20,
+      }),
+      now: "2026-04-22T02:05:00.000Z",
+    });
+
+    expect(entry.totalDeploys).toBe(1);
+    expect(entry.deploys).toHaveLength(1);
+    expect(entry.avgPnlPct).toBe(5);
+  });
 });

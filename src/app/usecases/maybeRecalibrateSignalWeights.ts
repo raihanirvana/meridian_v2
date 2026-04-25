@@ -27,7 +27,10 @@ export interface MaybeRecalibrateSignalWeightsInput {
 export type MaybeRecalibrateSignalWeightsResult =
   | {
       skipped: true;
-      reason: "flag_disabled" | "position_count_gate";
+      reason:
+        | "flag_disabled"
+        | "position_count_gate"
+        | "already_recalibrated_for_position_count";
     }
   | {
       skipped?: false;
@@ -73,7 +76,18 @@ export async function maybeRecalibrateSignalWeights(
     };
   }
 
-  const currentWeights = await input.signalWeightsStore.load();
+  const currentSnapshot = await input.signalWeightsStore.snapshot();
+  if (
+    currentSnapshot.metadata.positionsAtRecalibration ===
+    positionsAtRecalibration
+  ) {
+    return {
+      skipped: true,
+      reason: "already_recalibrated_for_position_count",
+    };
+  }
+
+  const currentWeights = currentSnapshot.weights;
   const recalculated = recalculateWeights({
     performance,
     currentWeights,
@@ -105,7 +119,10 @@ export async function maybeRecalibrateSignalWeights(
     ),
   });
 
-  await input.signalWeightsStore.replace(nextWeights);
+  await input.signalWeightsStore.replace(nextWeights, {
+    lastRecalibratedAt: now,
+    positionsAtRecalibration,
+  });
 
   await input.journalRepository?.append({
     timestamp: now,

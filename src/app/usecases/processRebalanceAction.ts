@@ -27,6 +27,10 @@ export const RebalanceCloseSubmittedPayloadSchema = z
   .object({
     phase: z.literal("CLOSE_SUBMITTED"),
     closeResult: CloseActionResultPayloadSchema,
+    closeAccounting: z.record(z.string(), z.unknown()).optional(),
+    closedPositionId: z.string().min(1).optional(),
+    availableCapitalUsd: z.number().nonnegative().optional(),
+    performanceSnapshot: PositionSchema.optional(),
   })
   .strict();
 

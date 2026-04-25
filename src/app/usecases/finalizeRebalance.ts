@@ -25,6 +25,7 @@ import {
 } from "../services/AccountingService.js";
 
 import { RebalanceCloseSubmittedPayloadSchema } from "./processRebalanceAction.js";
+import { runLessonHookIdempotent, type LessonHook } from "./finalizeClose.js";
 import {
   RebalanceActionRequestPayloadSchema,
   deriveRebalanceCapitalRequirement,
@@ -44,6 +45,7 @@ export const RebalanceRedeploySubmittedPayloadSchema = z
     closeAccounting: z.record(z.string(), z.unknown()),
     closedPositionId: z.string().min(1),
     availableCapitalUsd: z.number().nonnegative(),
+    performanceSnapshot: PositionSchema.optional(),
     redeployResult: DeployActionResultPayloadSchema,
     redeployRequest: DeployActionRequestPayloadSchema.optional(),
   })
@@ -56,6 +58,7 @@ export const RebalanceCompletedPayloadSchema = z
     closeAccounting: z.record(z.string(), z.unknown()),
     closedPositionId: z.string().min(1),
     availableCapitalUsd: z.number().nonnegative(),
+    performanceSnapshot: PositionSchema.optional(),
     redeployResult: DeployActionResultPayloadSchema,
     redeployRequest: DeployActionRequestPayloadSchema.optional(),
     confirmedPositionId: z.string().min(1),
@@ -69,6 +72,7 @@ export const RebalanceAbortedPayloadSchema = z
     closeAccounting: z.record(z.string(), z.unknown()),
     closedPositionId: z.string().min(1),
     availableCapitalUsd: z.number().nonnegative(),
+    performanceSnapshot: PositionSchema.optional(),
     failureReason: z.string().min(1),
   })
   .strict();
@@ -104,6 +108,7 @@ export interface FinalizeRebalanceInput {
   walletLock?: WalletLock;
   positionLock?: PositionLock;
   now?: () => string;
+  lessonHook?: LessonHook;
 }
 
 export interface FinalizeRebalanceResult {
@@ -413,6 +418,7 @@ function buildRedeploySubmittedPayload(input: {
   closeAccounting: Record<string, unknown>;
   closedPositionId: string;
   availableCapitalUsd: number;
+  performanceSnapshot?: Position;
   redeployRequest: DeployActionRequestPayload;
   redeployResult: z.infer<typeof DeployActionResultPayloadSchema>;
 }): RebalanceRedeploySubmittedPayload {
@@ -422,6 +428,9 @@ function buildRedeploySubmittedPayload(input: {
     closeAccounting: input.closeAccounting,
     closedPositionId: input.closedPositionId,
     availableCapitalUsd: input.availableCapitalUsd,
+    ...(input.performanceSnapshot === undefined
+      ? {}
+      : { performanceSnapshot: input.performanceSnapshot }),
     redeployRequest: input.redeployRequest,
     redeployResult: input.redeployResult,
   });
@@ -437,6 +446,11 @@ function buildCompletedPayload(input: {
     closeAccounting: input.redeploySubmitted.closeAccounting,
     closedPositionId: input.redeploySubmitted.closedPositionId,
     availableCapitalUsd: input.redeploySubmitted.availableCapitalUsd,
+    ...(input.redeploySubmitted.performanceSnapshot === undefined
+      ? {}
+      : {
+          performanceSnapshot: input.redeploySubmitted.performanceSnapshot,
+        }),
     redeployResult: input.redeploySubmitted.redeployResult,
     ...(input.redeploySubmitted.redeployRequest === undefined
       ? {}
@@ -450,6 +464,7 @@ function buildAbortedPayload(input: {
   closeAccounting: Record<string, unknown>;
   closedPositionId: string;
   availableCapitalUsd: number;
+  performanceSnapshot?: Position;
   failureReason: string;
 }): RebalanceAbortedPayload {
   return RebalanceAbortedPayloadSchema.parse({
@@ -458,6 +473,9 @@ function buildAbortedPayload(input: {
     closeAccounting: input.closeAccounting,
     closedPositionId: input.closedPositionId,
     availableCapitalUsd: input.availableCapitalUsd,
+    ...(input.performanceSnapshot === undefined
+      ? {}
+      : { performanceSnapshot: input.performanceSnapshot }),
     failureReason: input.failureReason,
   });
 }
@@ -551,6 +569,40 @@ async function finalizeCloseLeg(input: {
     input.latestAction.actionId,
     input.now,
   );
+  const recordedPerformanceSnapshot =
+    input.closeSubmitted.performanceSnapshot;
+
+  if (closingPosition !== null && closingPosition.status === "CLOSED") {
+    const closeConfirmedPosition =
+      recordedPerformanceSnapshot ?? closeConfirmedPositionLike;
+
+    if (closeConfirmedPosition === null) {
+      throw Object.assign(
+        new Error(
+          `Rebalance close finalization requires reconciliation because closed old leg ${input.latestAction.positionId} has no performance snapshot`,
+        ),
+        {
+          reconciliationSourcePosition: closingPosition,
+        },
+      );
+    }
+
+    return {
+      closingPosition,
+      closeConfirmedPosition,
+      closedPosition: closingPosition,
+      closeAccounting:
+        input.closeSubmitted.closeAccounting ??
+        toJournalRecord(buildCloseAccountingSummary(closingPosition, null)),
+      availableCapitalUsd:
+        input.closeSubmitted.availableCapitalUsd ??
+        resolveUsableEstimatedReleasedValueUsd({
+          estimatedReleasedValueUsd:
+            input.closeSubmitted.closeResult.estimatedReleasedValueUsd,
+          fallbackCurrentValueUsd: closeConfirmedPosition.currentValueUsd,
+        }),
+    };
+  }
 
   if (
     closingPosition === null ||
@@ -622,6 +674,51 @@ function buildPostCloseRedeployPayload(input: {
   });
 }
 
+async function ensureOldLegLearning(input: {
+  action: Action & { type: "REBALANCE"; positionId: string };
+  position: Position | null;
+  lessonHook?: LessonHook;
+  journalRepository?: JournalRepository;
+  now: string;
+}): Promise<void> {
+  if (
+    input.lessonHook === undefined ||
+    input.position === null ||
+    input.position.status !== "CLOSED"
+  ) {
+    return;
+  }
+
+  const request = RebalanceActionRequestPayloadSchema.safeParse(
+    input.action.requestPayload,
+  );
+  const payload = RebalanceActionResultPayloadSchema.safeParse(
+    input.action.resultPayload,
+  );
+
+  if (!request.success || !payload.success) {
+    return;
+  }
+
+  if (payload.data.phase === "CLOSE_SUBMITTED") {
+    return;
+  }
+
+  await runLessonHookIdempotent({
+    lessonHook: input.lessonHook,
+    ...(input.journalRepository === undefined
+      ? {}
+      : { journalRepository: input.journalRepository }),
+    position: input.position,
+    ...(payload.data.performanceSnapshot === undefined
+      ? {}
+      : { performanceSnapshotPosition: payload.data.performanceSnapshot }),
+    closedAction: input.action,
+    reason: request.data.reason,
+    now: input.now,
+  });
+}
+
 export async function finalizeRebalance(
   input: FinalizeRebalanceInput,
 ): Promise<FinalizeRebalanceResult> {
@@ -641,9 +738,21 @@ export async function finalizeRebalance(
     action.status === "ABORTED"
   ) {
     const newPositionId = getNewPositionIdFromPayload(action.resultPayload);
+    const oldPosition = await input.stateRepository.get(action.positionId);
+    await ensureOldLegLearning({
+      ...(input.lessonHook === undefined
+        ? {}
+        : { lessonHook: input.lessonHook }),
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      action,
+      position: oldPosition,
+      now,
+    });
     return {
       action,
-      oldPosition: await input.stateRepository.get(action.positionId),
+      oldPosition,
       newPosition:
         newPositionId === null
           ? null
@@ -681,9 +790,23 @@ export async function finalizeRebalance(
         const newPositionId = getNewPositionIdFromPayload(
           latestAction.resultPayload,
         );
+        const oldPosition = await input.stateRepository.get(
+          latestAction.positionId,
+        );
+        await ensureOldLegLearning({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          action: latestAction,
+          position: oldPosition,
+          now,
+        });
         return {
           action: latestAction,
-          oldPosition: await input.stateRepository.get(latestAction.positionId),
+          oldPosition,
           newPosition:
             newPositionId === null
               ? null
@@ -773,6 +896,18 @@ export async function finalizeRebalance(
           };
         }
 
+        const closeFinalizedPayload = RebalanceCloseSubmittedPayloadSchema.parse({
+          ...latestPayload,
+          closeAccounting: closeLeg.closeAccounting,
+          closedPositionId: closeLeg.closedPosition.positionId,
+          availableCapitalUsd: closeLeg.availableCapitalUsd,
+          performanceSnapshot: closeLeg.closeConfirmedPosition,
+        });
+        const actionAfterCloseFinalized = {
+          ...latestAction,
+          resultPayload: toJournalRecord(closeFinalizedPayload),
+        } satisfies Action;
+        await input.actionRepository.upsert(actionAfterCloseFinalized);
         await input.stateRepository.upsert(closeLeg.closedPosition);
         await appendJournalEvent(input.journalRepository, {
           timestamp: now,
@@ -794,9 +929,23 @@ export async function finalizeRebalance(
           error: null,
         });
 
+        await runLessonHookIdempotent({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          position: closeLeg.closedPosition,
+          performanceSnapshotPosition: closeLeg.closeConfirmedPosition,
+          closedAction: actionAfterCloseFinalized,
+          reason: requestPayload.reason,
+          now,
+        });
+
         const settlementValidationError =
           validatePostCloseRedeploySettlement(
-            latestPayload.closeResult,
+            closeFinalizedPayload.closeResult,
             requestPayload.redeploy,
           );
         let postCloseRedeployPayload: DeployActionRequestPayload | null = null;
@@ -804,7 +953,7 @@ export async function finalizeRebalance(
         if (validationError === null) {
           postCloseRedeployPayload = buildPostCloseRedeployPayload({
             requestedRedeploy: requestPayload.redeploy,
-            closeSubmitted: latestPayload,
+            closeSubmitted: closeFinalizedPayload,
             closeConfirmedPosition: closeLeg.closeConfirmedPosition,
           });
           validationError = validateRedeployTarget({
@@ -819,17 +968,21 @@ export async function finalizeRebalance(
 
         if (validationError !== null) {
           const abortedPayload = buildAbortedPayload({
-            closeSubmitted: latestPayload,
+            closeSubmitted: closeFinalizedPayload,
             closeAccounting: closeLeg.closeAccounting,
             closedPositionId: closeLeg.closedPosition.positionId,
             availableCapitalUsd: closeLeg.availableCapitalUsd,
+            performanceSnapshot: closeLeg.closeConfirmedPosition,
             failureReason: validationError,
           });
           const failedAction = {
-            ...latestAction,
-            status: transitionActionStatus(latestAction.status, "FAILED"),
+            ...actionAfterCloseFinalized,
+            status: transitionActionStatus(
+              actionAfterCloseFinalized.status,
+              "FAILED",
+            ),
             resultPayload: toJournalRecord(abortedPayload),
-            txIds: latestAction.txIds,
+            txIds: actionAfterCloseFinalized.txIds,
             error: validationError,
             completedAt: now,
           } satisfies Action;
@@ -873,17 +1026,21 @@ export async function finalizeRebalance(
           const failureReason =
             "manual circuit breaker is active; rebalance redeploy is blocked";
           const abortedPayload = buildAbortedPayload({
-            closeSubmitted: latestPayload,
+            closeSubmitted: closeFinalizedPayload,
             closeAccounting: closeLeg.closeAccounting,
             closedPositionId: closeLeg.closedPosition.positionId,
             availableCapitalUsd: closeLeg.availableCapitalUsd,
+            performanceSnapshot: closeLeg.closeConfirmedPosition,
             failureReason,
           });
           const failedAction = {
-            ...latestAction,
-            status: transitionActionStatus(latestAction.status, "FAILED"),
+            ...actionAfterCloseFinalized,
+            status: transitionActionStatus(
+              actionAfterCloseFinalized.status,
+              "FAILED",
+            ),
             resultPayload: toJournalRecord(abortedPayload),
-            txIds: latestAction.txIds,
+            txIds: actionAfterCloseFinalized.txIds,
             error: failureReason,
             completedAt: now,
           } satisfies Action;
@@ -944,17 +1101,21 @@ export async function finalizeRebalance(
             "unknown redeploy submission error",
           )}`;
           const abortedPayload = buildAbortedPayload({
-            closeSubmitted: latestPayload,
+            closeSubmitted: closeFinalizedPayload,
             closeAccounting: closeLeg.closeAccounting,
             closedPositionId: closeLeg.closedPosition.positionId,
             availableCapitalUsd: closeLeg.availableCapitalUsd,
+            performanceSnapshot: closeLeg.closeConfirmedPosition,
             failureReason,
           });
           const failedAction = {
-            ...latestAction,
-            status: transitionActionStatus(latestAction.status, "FAILED"),
+            ...actionAfterCloseFinalized,
+            status: transitionActionStatus(
+              actionAfterCloseFinalized.status,
+              "FAILED",
+            ),
             resultPayload: toJournalRecord(abortedPayload),
-            txIds: latestAction.txIds,
+            txIds: actionAfterCloseFinalized.txIds,
             error: failureReason,
             completedAt: now,
           } satisfies Action;
@@ -988,7 +1149,7 @@ export async function finalizeRebalance(
         }
 
         const pendingRedeployPosition = buildPendingRedeployPosition({
-          action: latestAction,
+          action: actionAfterCloseFinalized,
           closedPosition: closeLeg.closedPosition,
           redeployPayload: postCloseRedeployPayload,
           redeployResult,
@@ -1011,9 +1172,15 @@ export async function finalizeRebalance(
           }
 
           const timedOutAction = {
-            ...latestAction,
-            status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
-            txIds: [...latestAction.txIds, ...redeployResult.txIds],
+            ...actionAfterCloseFinalized,
+            status: transitionActionStatus(
+              actionAfterCloseFinalized.status,
+              "TIMED_OUT",
+            ),
+            txIds: [
+              ...actionAfterCloseFinalized.txIds,
+              ...redeployResult.txIds,
+            ],
             error: `Rebalance redeploy submitted but local persistence requires reconciliation: ${errorMessage(
               error,
               "unknown local persistence error",
@@ -1052,17 +1219,18 @@ export async function finalizeRebalance(
         }
 
         const redeploySubmittedPayload = buildRedeploySubmittedPayload({
-          closeSubmitted: latestPayload,
+          closeSubmitted: closeFinalizedPayload,
           closeAccounting: closeLeg.closeAccounting,
           closedPositionId: closeLeg.closedPosition.positionId,
           availableCapitalUsd: closeLeg.availableCapitalUsd,
+          performanceSnapshot: closeLeg.closeConfirmedPosition,
           redeployRequest: postCloseRedeployPayload,
           redeployResult,
         });
         const waitingAction = {
-          ...latestAction,
+          ...actionAfterCloseFinalized,
           resultPayload: toJournalRecord(redeploySubmittedPayload),
-          txIds: [...latestAction.txIds, ...redeployResult.txIds],
+          txIds: [...actionAfterCloseFinalized.txIds, ...redeployResult.txIds],
           error: null,
         } satisfies Action;
         await input.actionRepository.upsert(waitingAction);
@@ -1116,11 +1284,23 @@ export async function finalizeRebalance(
             latestActionAfterRedeployLock.status === "FAILED" ||
             latestActionAfterRedeployLock.status === "ABORTED"
           ) {
+            const oldPosition = await input.stateRepository.get(
+              latestActionAfterRedeployLock.positionId,
+            );
+            await ensureOldLegLearning({
+              ...(input.lessonHook === undefined
+                ? {}
+                : { lessonHook: input.lessonHook }),
+              ...(input.journalRepository === undefined
+                ? {}
+                : { journalRepository: input.journalRepository }),
+              action: latestActionAfterRedeployLock,
+              position: oldPosition,
+              now,
+            });
             return {
               action: latestActionAfterRedeployLock,
-              oldPosition: await input.stateRepository.get(
-                latestActionAfterRedeployLock.positionId,
-              ),
+              oldPosition,
               newPosition: await input.stateRepository.get(newPositionId),
               outcome: "UNCHANGED" as const,
             };

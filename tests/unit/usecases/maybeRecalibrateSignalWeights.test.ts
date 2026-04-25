@@ -138,5 +138,28 @@ describe("maybeRecalibrateSignalWeights", () => {
     expect(
       (await journalRepository.list()).map((event) => event.eventType),
     ).toContain("SIGNAL_WEIGHTS_RECALIBRATED");
+
+    const snapshot = await signalWeightsStore.snapshot();
+    expect(snapshot.metadata.positionsAtRecalibration).toBe(10);
+
+    const retry = await maybeRecalibrateSignalWeights({
+      performanceRepository,
+      signalWeightsStore,
+      lessonRepository,
+      journalRepository,
+      darwinEnabled: true,
+      now: () => "2026-04-22T12:01:00.000Z",
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FC9",
+    });
+
+    expect(retry).toEqual({
+      skipped: true,
+      reason: "already_recalibrated_for_position_count",
+    });
+    expect(
+      (await lessonRepository.list()).filter((lesson) =>
+        lesson.rule.includes("AUTO-DARWIN"),
+      ),
+    ).toHaveLength(1);
   });
 });

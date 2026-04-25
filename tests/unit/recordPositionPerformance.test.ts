@@ -113,7 +113,7 @@ describe("recordPositionPerformance", () => {
     expect(await lessonRepository.list()).toHaveLength(0);
   });
 
-  it("stores neutral performance without creating lesson or journal event", async () => {
+  it("stores neutral performance without creating a lesson but still records a journal event", async () => {
     const directory = await makeTempDir();
     const filePath = path.join(directory, "lessons.json");
     const lessonRepository = new FileLessonRepository({ filePath });
@@ -138,6 +138,41 @@ describe("recordPositionPerformance", () => {
     expect(result.lesson).toBeNull();
     expect(await performanceRepository.list()).toHaveLength(1);
     expect(await lessonRepository.list()).toHaveLength(0);
-    expect(await journalRepository.list()).toHaveLength(0);
+    const journal = await journalRepository.list();
+    expect(journal).toHaveLength(1);
+    expect(journal[0]?.eventType).toBe("PERFORMANCE_RECORDED");
+  });
+
+  it("reuses existing performance and continues lesson recording on retry", async () => {
+    const directory = await makeTempDir();
+    const filePath = path.join(directory, "lessons.json");
+    const lessonRepository = new FileLessonRepository({ filePath });
+    const performanceRepository = new FilePerformanceRepository({ filePath });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    await performanceRepository.append(buildPerformance());
+
+    const result = await recordPositionPerformance({
+      performance: buildPerformance({
+        finalValueUsd: 0,
+        pnlUsd: 0,
+        pnlPct: 0,
+      }),
+      lessonRepository,
+      performanceRepository,
+      journalRepository,
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+      now: () => "2026-04-22T02:00:00.000Z",
+    });
+
+    expect(result.performance?.finalValueUsd).toBe(120);
+    expect(result.lesson?.id).toBe("01ARZ3NDEKTSV4RRFFQ69G5FB2");
+    expect(await performanceRepository.list()).toHaveLength(1);
+    expect(await lessonRepository.list()).toHaveLength(1);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toEqual(["LESSON_RECORDED"]);
   });
 });

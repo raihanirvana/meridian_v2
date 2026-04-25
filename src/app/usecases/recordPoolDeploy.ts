@@ -31,7 +31,23 @@ export async function recordPoolDeploy(
   const updated = await input.poolMemoryRepository.upsert(
     input.poolAddress,
     (current) => {
-      const nextDeploys = [...(current?.deploys ?? []), deploy].slice(-50);
+      const currentDeploys = current?.deploys ?? [];
+      const alreadyRecorded = currentDeploys.some((currentDeploy) => {
+        if (
+          deploy.positionId !== undefined &&
+          currentDeploy.positionId === deploy.positionId
+        ) {
+          return true;
+        }
+
+        return (
+          deploy.sourceActionId !== undefined &&
+          currentDeploy.sourceActionId === deploy.sourceActionId
+        );
+      });
+      const nextDeploys = alreadyRecorded
+        ? currentDeploys
+        : [...currentDeploys, deploy].slice(-50);
       const aggregates = computePoolAggregates(nextDeploys);
       const cooldownUntil = shouldCooldown({
         closeReason: deploy.closeReason,

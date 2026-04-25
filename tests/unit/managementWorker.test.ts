@@ -941,6 +941,11 @@ describe("management worker", () => {
           };
         },
       },
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
       journalRepository,
       now: () => "2026-04-21T12:00:00.000Z",
     });
@@ -1119,6 +1124,11 @@ describe("management worker", () => {
           estimatedValueUsd: 120,
         },
       }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
       journalRepository,
       now: () => "2026-04-21T12:00:00.000Z",
     });

@@ -775,6 +775,8 @@ export async function runManagementCycle(
             input.managementPolicy.exitInsteadOfRebalanceWhenRiskHigh ?? true,
           minTvlUsd: input.managementPolicy.minRebalancePoolTvlUsd ?? 0,
         },
+        lessonPromptService:
+          input.lessonPromptService ?? missingLessonPromptService,
         journalRepository: input.journalRepository,
         actor: requestedBy,
         now,

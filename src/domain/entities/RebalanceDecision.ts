@@ -121,6 +121,7 @@ export const RebalanceReviewInputSchema = z
     pool: RebalancePoolSnapshotSchema,
     walletRisk: RebalanceWalletRiskSnapshotSchema,
     triggerReasons: z.array(z.string().min(1)),
+    lessonContext: z.string().min(1).optional(),
   })
   .strict();
 

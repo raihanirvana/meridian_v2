@@ -21,7 +21,7 @@ export interface MaybeEvolvePolicyInput {
 export type MaybeEvolvePolicyResult =
   | {
       skipped: true;
-      reason: "position_count_gate";
+      reason: "position_count_gate" | "already_evolved_for_position_count";
     }
   | ({
       skipped?: false;
@@ -60,6 +60,13 @@ export async function maybeEvolvePolicy(
   }
 
   const snapshot = await input.runtimePolicyStore.snapshot();
+  if (snapshot.positionsAtEvolution === positionsAtEvolution) {
+    return {
+      skipped: true,
+      reason: "already_evolved_for_position_count",
+    };
+  }
+
   const evolved = evolveThresholds({
     performance,
     currentPolicy: snapshot.policy,

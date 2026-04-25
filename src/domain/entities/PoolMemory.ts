@@ -5,6 +5,8 @@ import { TimestampSchema } from "../types/schemas.js";
 
 export const PoolDeploySchema = z
   .object({
+    positionId: z.string().min(1).optional(),
+    sourceActionId: z.string().min(1).optional(),
     deployedAt: TimestampSchema,
     closedAt: TimestampSchema,
     pnlPct: z.number(),

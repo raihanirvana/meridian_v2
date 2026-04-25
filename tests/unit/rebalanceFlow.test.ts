@@ -21,6 +21,7 @@ import { JournalRepository } from "../../src/adapters/storage/JournalRepository.
 import { FileRuntimeControlStore } from "../../src/adapters/storage/RuntimeControlStore.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { ActionQueue } from "../../src/app/services/ActionQueue.js";
+import { type LessonHook } from "../../src/app/usecases/finalizeClose.js";
 import { finalizeRebalance } from "../../src/app/usecases/finalizeRebalance.js";
 import { processRebalanceAction } from "../../src/app/usecases/processRebalanceAction.js";
 import {
@@ -235,6 +236,18 @@ class RebalanceTestGateway implements DlmmGateway {
   }
 }
 
+class FailingClosedStateRepository extends StateRepository {
+  public failClosedUpsert = false;
+
+  public override async upsert(position: Position): Promise<void> {
+    if (this.failClosedUpsert && position.status === "CLOSED") {
+      throw new Error("simulated crash before old-leg CLOSED state persisted");
+    }
+
+    await super.upsert(position);
+  }
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirs
@@ -393,6 +406,160 @@ describe("rebalance flow", () => {
     expect(finalized.newPosition?.deployAmountBase).toBe(1.37);
     expect(finalized.newPosition?.deployAmountQuote).toBe(22.5);
     expect(finalized.newPosition?.currentValueUsd).toBe(123);
+  });
+
+  it("continues old-leg learning and redeploy when rebalance close was already persisted closed", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const performanceSnapshot = buildCloseConfirmedPosition("pos_old");
+    await stateRepository.upsert({
+      ...performanceSnapshot,
+      status: "CLOSED",
+      currentValueBase: 0,
+      currentValueUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+    });
+    const waitingAction = await actionRepository.get(action.actionId);
+    if (waitingAction === null || waitingAction.resultPayload === null) {
+      throw new Error("expected waiting rebalance action");
+    }
+    await actionRepository.upsert({
+      ...waitingAction,
+      resultPayload: {
+        ...waitingAction.resultPayload,
+        closeAccounting: {},
+        closedPositionId: "pos_old",
+        availableCapitalUsd: 120,
+        performanceSnapshot,
+      },
+    });
+
+    let learnedSnapshotValueUsd: number | null = null;
+    const lessonHook: LessonHook = async (input) => {
+      learnedSnapshotValueUsd =
+        input.performanceSnapshotPosition?.currentValueUsd ??
+        input.position.currentValueUsd;
+    };
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      lessonHook,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("REDEPLOY_SUBMITTED");
+    expect(finalized.oldPosition?.status).toBe("CLOSED");
+    expect(gateway.deployRequests).toHaveLength(1);
+    expect(learnedSnapshotValueUsd).toBe(120);
+  });
+
+  it("persists old-leg performance snapshot before writing CLOSED state", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new FailingClosedStateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    gateway.positions.set("pos_old", buildCloseConfirmedPosition("pos_old"));
+    stateRepository.failClosedUpsert = true;
+
+    await expect(
+      finalizeRebalance({
+        actionId: action.actionId,
+        actionRepository,
+        stateRepository,
+        dlmmGateway: gateway,
+        journalRepository,
+        now: () => "2026-04-20T00:05:00.000Z",
+      }),
+    ).rejects.toThrow("simulated crash");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPayload = persistedAction?.resultPayload;
+    const persistedOldPosition = await stateRepository.get("pos_old");
+
+    expect(persistedPayload?.["performanceSnapshot"]).toMatchObject({
+      positionId: "pos_old",
+      currentValueUsd: 120,
+      status: "CLOSE_CONFIRMED",
+    });
+    expect(persistedPayload?.["closedPositionId"]).toBe("pos_old");
+    expect(persistedOldPosition?.status).toBe("CLOSING_FOR_REBALANCE");
   });
 
   it("uses close-confirmed USD when post-close USD estimate is zero", async () => {

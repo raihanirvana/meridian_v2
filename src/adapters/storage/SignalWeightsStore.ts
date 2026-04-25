@@ -5,11 +5,20 @@ import {
   SignalWeightsSchema,
   type SignalWeights,
 } from "../../domain/entities/SignalWeights.js";
+import { TimestampSchema } from "../../domain/types/schemas.js";
 import { FileStore, type FileStoreOptions } from "./FileStore.js";
+
+export const SignalWeightsMetadataSchema = z
+  .object({
+    lastRecalibratedAt: TimestampSchema.optional(),
+    positionsAtRecalibration: z.number().int().positive().optional(),
+  })
+  .strict();
 
 export const SignalWeightsStoreFileSchema = z
   .object({
     weights: SignalWeightsSchema,
+    metadata: SignalWeightsMetadataSchema.default({}),
   })
   .strict();
 
@@ -23,7 +32,10 @@ export interface SignalWeightsStoreOptions extends FileStoreOptions {
 
 export interface SignalWeightsStore {
   load(): Promise<SignalWeights>;
-  replace(weights: SignalWeights): Promise<SignalWeights>;
+  replace(
+    weights: SignalWeights,
+    metadata?: Partial<SignalWeightsStoreFile["metadata"]>,
+  ): Promise<SignalWeights>;
   snapshot(): Promise<SignalWeightsStoreFile>;
   reset(): Promise<void>;
 }
@@ -44,6 +56,7 @@ function formatZodError(error: z.ZodError): string {
 function emptyStore(): SignalWeightsStoreFile {
   return SignalWeightsStoreFileSchema.parse({
     weights: createDefaultSignalWeights(),
+    metadata: {},
   });
 }
 
@@ -93,18 +106,28 @@ export class FileSignalWeightsStore implements SignalWeightsStore {
     return parseStore(raw, this.filePath).weights;
   }
 
-  public async replace(weights: SignalWeights): Promise<SignalWeights> {
+  public async replace(
+    weights: SignalWeights,
+    metadata: Partial<SignalWeightsStoreFile["metadata"]> = {},
+  ): Promise<SignalWeights> {
     const validated = SignalWeightsSchema.parse(weights);
-    await this.fileStore.writeTextAtomic(
-      this.filePath,
-      JSON.stringify(
+    const validatedMetadata = SignalWeightsMetadataSchema.partial().parse(
+      metadata,
+    );
+    await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
+      const current = parseStore(raw, this.filePath);
+      return JSON.stringify(
         SignalWeightsStoreFileSchema.parse({
           weights: validated,
+          metadata: {
+            ...current.metadata,
+            ...validatedMetadata,
+          },
         }),
         null,
         2,
-      ),
-    );
+      );
+    });
     return this.load();
   }
 

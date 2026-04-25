@@ -17,6 +17,7 @@ import {
   type UserConfig,
 } from "../../infra/config/configSchema.js";
 import { logger } from "../../infra/logging/logger.js";
+import type { LessonPromptService } from "../services/LessonPromptService.js";
 
 const StrategyReviewSourceSchema = z.enum([
   "DISABLED",
@@ -56,6 +57,7 @@ export interface ReviewStrategyWithAiInput {
   aiMode: UserConfig["ai"]["mode"];
   reviewer?: AiStrategyReviewer;
   journalRepository?: JournalRepository;
+  lessonPromptService?: LessonPromptService;
   minConfidence?: number;
   timeoutMs?: number;
   defaults?: {
@@ -171,8 +173,8 @@ function enforceLowConfidencePolicy(input: {
   });
 }
 
-function buildSystemPrompt(): string {
-  return [
+function buildSystemPrompt(lessonsPrompt: string | null): string {
+  const lines = [
     "You are an AI strategy reviewer for Meteora DLMM candidates.",
     "Capital preservation is more important than APY.",
     "Hard rejects must never be ignored.",
@@ -188,7 +190,38 @@ function buildSystemPrompt(): string {
     "If confidence is below the requested minimum, decision must be watch or reject.",
     "If riskLevel is high, decision must be reject.",
     "You do not have write permission. You only produce recommendation JSON.",
-  ].join("\n");
+    "",
+    "### LESSONS LEARNED",
+    lessonsPrompt ?? "No historical lessons recorded yet.",
+  ];
+  return lines.join("\n");
+}
+
+async function appendLessonInjectionFailedJournal(input: {
+  journalRepository: JournalRepository | undefined;
+  timestamp: string;
+  wallet: string;
+  error: unknown;
+}): Promise<void> {
+  if (input.journalRepository === undefined) {
+    return;
+  }
+
+  await input.journalRepository.append({
+    timestamp: input.timestamp,
+    eventType: "AI_LESSON_INJECTION_FAILED",
+    actor: "system",
+    wallet: input.wallet,
+    positionId: null,
+    actionId: null,
+    before: null,
+    after: {
+      stage: "strategy_review",
+    },
+    txIds: [],
+    resultStatus: "FAILED",
+    error: errorMessage(input.error),
+  });
 }
 
 async function appendJournal(input: {
@@ -277,6 +310,70 @@ export async function reviewStrategyWithAi(
     (candidate) => candidate.hardFilterPassed,
   );
 
+  let lessonsPrompt: string | null = null;
+  let lessonInjectionFailed = false;
+  if (shouldUseAi && aiEligibleCandidates.length > 0) {
+    if (input.lessonPromptService === undefined) {
+      lessonInjectionFailed = true;
+      await appendLessonInjectionFailedJournal({
+        journalRepository: input.journalRepository,
+        timestamp: reviewedAt,
+        wallet: input.wallet,
+        error: new Error(
+          "LessonPromptService is required for AI strategy review",
+        ),
+      });
+    } else {
+      try {
+        lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
+          role: "SCREENER",
+          includePoolMemory: {
+            candidates: aiEligibleCandidates.map((candidate) => ({
+              poolAddress: candidate.poolAddress,
+            })),
+          },
+        });
+      } catch (error) {
+        lessonInjectionFailed = true;
+        logger.warn(
+          { err: error, eventType: "AI_LESSON_INJECTION_FAILED" },
+          "AI strategy review fallback to deterministic result because lesson injection failed",
+        );
+        await appendLessonInjectionFailedJournal({
+          journalRepository: input.journalRepository,
+          timestamp: reviewedAt,
+          wallet: input.wallet,
+          error,
+        });
+      }
+    }
+  }
+
+  if (lessonInjectionFailed) {
+    for (const candidate of aiEligibleCandidates) {
+      await appendItem(
+        StrategyReviewWithAiItemSchema.parse({
+          candidateId: candidate.candidateId,
+          poolAddress: candidate.poolAddress,
+          source: "FALLBACK",
+          review: deterministicReview(candidate, input),
+          aiError: "AI_LESSON_INJECTION_FAILED",
+        }),
+      );
+    }
+
+    return StrategyReviewWithAiResultSchema.parse({
+      reviewedAt,
+      reviews: candidates
+        .map((candidate) =>
+          reviews.find((review) => review.candidateId === candidate.candidateId),
+        )
+        .filter(
+          (review): review is StrategyReviewWithAiItem => review !== undefined,
+        ),
+    });
+  }
+
   if (
     shouldUseAi &&
     input.reviewer?.reviewCandidateStrategies !== undefined &&
@@ -286,7 +383,7 @@ export async function reviewStrategyWithAi(
       const aiReviews = await withTimeout(
         input.reviewer.reviewCandidateStrategies({
           candidates: aiEligibleCandidates,
-          systemPrompt: buildSystemPrompt(),
+          systemPrompt: buildSystemPrompt(lessonsPrompt),
           ...(input.botContext === undefined
             ? {}
             : { botContext: input.botContext }),
@@ -387,7 +484,7 @@ export async function reviewStrategyWithAi(
           input.reviewer.reviewCandidateStrategy(
             AiStrategyReviewInputSchema.parse({
               candidate,
-              systemPrompt: buildSystemPrompt(),
+              systemPrompt: buildSystemPrompt(lessonsPrompt),
               ...(input.botContext === undefined
                 ? {}
                 : { botContext: input.botContext }),

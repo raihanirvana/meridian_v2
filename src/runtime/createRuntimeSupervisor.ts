@@ -51,6 +51,8 @@ import { DefaultPolicyProvider } from "../app/services/PolicyProvider.js";
 import { DefaultSignalWeightsProvider } from "../app/services/SignalWeightsProvider.js";
 import { createPostClaimSwapHook } from "../app/usecases/executePostClaimSwap.js";
 import { reviewStrategyWithAi } from "../app/usecases/reviewStrategyWithAi.js";
+import { createPerformanceLessonHook } from "../app/services/createPerformanceLessonHook.js";
+import { createUlid } from "../infra/id/createUlid.js";
 
 export interface RuntimeSupervisorInput {
   wallet: string;
@@ -399,6 +401,19 @@ export function createRuntimeSupervisor(
     darwinEnabled: input.config.darwin.enabled,
     signalWeightsStore: input.stores.signalWeightsStore,
   });
+  const lessonHook = createPerformanceLessonHook({
+    performanceRepository: input.stores.performanceRepository,
+    lessonRepository: input.stores.lessonRepository,
+    poolMemoryRepository: input.stores.poolMemoryRepository,
+    journalRepository: input.stores.journalRepository,
+    runtimePolicyStore: input.stores.runtimePolicyStore,
+    signalWeightsStore: input.stores.signalWeightsStore,
+    config: {
+      darwin: input.config.darwin,
+    },
+    now: () => nowIso(input.now),
+    idGen: createUlid,
+  });
   const postClaimSwapHook =
     input.gateways.swapGateway === undefined
       ? undefined
@@ -647,6 +662,9 @@ export function createRuntimeSupervisor(
           ...(input.gateways.aiStrategyReviewer === undefined
             ? {}
             : { reviewer: input.gateways.aiStrategyReviewer }),
+          ...(input.lessonPromptService === undefined
+            ? {}
+            : { lessonPromptService: input.lessonPromptService }),
           journalRepository: input.stores.journalRepository,
           minConfidence: input.config.ai.minAiStrategyConfidence,
           timeoutMs: input.aiTimeoutMs ?? input.config.ai.timeoutMs ?? 500,
@@ -1075,6 +1093,7 @@ export function createRuntimeSupervisor(
         wallets: [input.wallet],
         dryRun: input.config.runtime.dryRun,
         ...(postClaimSwapHook === undefined ? {} : { postClaimSwapHook }),
+        lessonHook,
         claimCompoundRiskGuardProvider: buildCompoundDeployRiskGuard,
         ...(input.now === undefined ? {} : { now: input.now }),
       });

@@ -217,4 +217,81 @@ describe("operatorCommands lessons", () => {
 
     expect(summaryResult.text).toContain("closed: 0");
   });
+
+  it("appends a LESSON_MANUAL_ADDED journal event when an operator adds a lesson", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const lessonsFilePath = path.join(directory, "lessons.json");
+    const lessonRepository = new FileLessonRepository({
+      filePath: lessonsFilePath,
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: lessonsFilePath,
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await executeOperatorCommand({
+      command: parseOperatorCommand({
+        raw: "lessons add Avoid thin pools after collapse",
+      }),
+      wallet: "wallet_001",
+      requestedAt: "2026-04-22T12:00:00.000Z",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      lessonRepository,
+      performanceRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 1,
+            asOf: "2026-04-22T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-22T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: {
+        minReserveUsd: 10,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        maxCapitalUsagePct: 80,
+        maxPoolExposurePct: 45,
+        maxTokenExposurePct: 45,
+        maxConcurrentPositions: 3,
+        maxNewDeploysPerHour: 2,
+        maxRebalancesPerPosition: 2,
+      },
+    });
+
+    const journal = await journalRepository.list();
+    const event = journal.find(
+      (entry) => entry.eventType === "LESSON_MANUAL_ADDED",
+    );
+    expect(event).toBeDefined();
+    expect(event?.actor).toBe("operator");
+    expect(event?.resultStatus).toBe("ADDED");
+  });
 });

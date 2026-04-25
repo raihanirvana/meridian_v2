@@ -160,9 +160,17 @@ function logLessonInjectionFailure(error: unknown): void {
   logger.warn(
     {
       err: error,
+      eventType: "AI_LESSON_INJECTION_FAILED",
     },
-    "ai_lesson_injection_failed",
+    "AI_LESSON_INJECTION_FAILED",
   );
+}
+
+function buildLessonSystemPrompt(lessonsPrompt: string | null): string {
+  return [
+    "### LESSONS LEARNED",
+    lessonsPrompt ?? "No historical lessons recorded yet.",
+  ].join("\n");
 }
 
 export async function rankShortlistWithAi(
@@ -221,10 +229,7 @@ export async function rankShortlistWithAi(
         llmGateway.rankCandidates(
           CandidateRankingInputSchema.parse({
             candidates: shortlist,
-            systemPrompt:
-              lessonsPrompt === null
-                ? null
-                : `### LESSONS LEARNED\n${lessonsPrompt}`,
+            systemPrompt: buildLessonSystemPrompt(lessonsPrompt),
           }),
         ),
         normalizeTimeout(input.timeoutMs),
@@ -305,10 +310,7 @@ export async function adviseManagementDecision(
             proposedAction: evaluation.action,
             positionSnapshot: input.position,
             triggerReasons: input.triggerReasons,
-            systemPrompt:
-              lessonsPrompt === null
-                ? null
-                : `### LESSONS LEARNED\n${lessonsPrompt}`,
+            systemPrompt: buildLessonSystemPrompt(lessonsPrompt),
           }),
         ),
         normalizeTimeout(input.timeoutMs),

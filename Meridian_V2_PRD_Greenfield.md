@@ -2739,6 +2739,393 @@ Baru terakhir:
 
 ---
 
+## Batch 26 — Live auto-learning wiring, lesson enforcement, dan performance feedback loop
+
+### Tujuan
+
+Menutup gap antara lesson system yang sudah ada dengan runtime live yang benar-benar belajar otomatis.
+
+Batch ini memastikan setiap posisi yang selesai ditutup, baik karena manual close, stop loss, take profit, rebalance old leg, out-of-range, atau exit AI constrained, menghasilkan:
+
+`PerformanceRecord -> optional Lesson -> PoolMemory update -> optional Policy/Darwin feedback -> journal audit -> dipakai lagi oleh AI di screening/management berikutnya`
+
+Batch ini bukan menambah AI write privilege. AI tetap hanya membaca lesson dan pool memory sebagai konteks. Semua write trading tetap lewat queue, state machine, dan reconciliation sesuai prinsip V2.
+
+### Problem yang ditutup
+
+Lesson system bisa saja sudah ada, tetapi belum tentu:
+
+- `finalizeClose()` live benar-benar memanggil `lessonHook`.
+- Reconcile close/rebalance mengirim data PnL final ke performance repository.
+- `AiAdvisoryService` wajib inject lessons sebelum rank shortlist.
+- AI tidak dipanggil kalau lesson loading gagal.
+- PoolMemory otomatis update setelah close.
+- Operator bisa audit lesson/performance dari command.
+
+Tanpa Batch 26, robot terlihat punya "lesson", tetapi learning loop bisa pasif atau hanya manual.
+
+### Build
+
+#### 1. Wire lesson hook ke semua close finalizer path
+
+Pastikan `finalizeClose()` menerima dan menjalankan:
+
+```ts
+lessonHook?: LessonHook
+```
+
+Hook wajib dipanggil hanya setelah:
+
+- close confirmed
+- accounting finalized
+- position status aman untuk `CLOSED` / `CLOSE_CONFIRMED`
+- realized PnL sudah tersedia
+
+Jalur yang wajib memanggil hook:
+
+- normal close
+- manual close
+- stop loss close
+- take profit close
+- out-of-range close
+- rebalance old leg close
+- AI exit close
+
+Jalur yang tidak boleh record lesson:
+
+- close timeout
+- close failed
+- close submitted tapi belum reconciled
+- position hilang dari snapshot tapi belum confirmed closed
+
+#### 2. Buat createPerformanceLessonHook
+
+Tambahkan factory di application layer:
+
+`src/app/services/createPerformanceLessonHook.ts`
+
+Interface:
+
+```ts
+export function createPerformanceLessonHook(input: {
+  performanceRepository: PerformanceRepository;
+  lessonRepository: LessonRepository;
+  poolMemoryRepository?: PoolMemoryRepository;
+  journalRepository: JournalRepository;
+  runtimePolicyStore?: RuntimePolicyStore;
+  signalWeightsStore?: SignalWeightsStore;
+  config: AppConfig;
+  now: () => string;
+  idGen: () => string;
+}): LessonHook
+```
+
+Tugas hook:
+
+1. Build `PerformanceRecord` dari closed position + closed action.
+2. Guard suspicious unit mix.
+3. Append performance record.
+4. Derive lesson jika outcome meaningful.
+5. Append lesson jika non-null.
+6. Update pool memory jika repository tersedia.
+7. Panggil `maybeEvolvePolicy` jika enabled / eligible.
+8. Panggil `maybeRecalibrateSignalWeights` jika `darwin.enabled=true`.
+9. Emit journal events.
+
+Policy evolution dan Darwin boleh tetap optional, tetapi hook harus menyediakan composition point.
+
+#### 3. Standardisasi PerformanceRecord builder
+
+Tambahkan pure builder:
+
+`src/domain/rules/performanceRecordRules.ts`
+
+Fungsi:
+
+```ts
+buildPerformanceRecordFromClosedPosition(input: {
+  position: Position;
+  closedAction: Action;
+  closeReason: CloseReason;
+  finalValueUsd: number;
+  feesEarnedUsd: number;
+  pnlUsd: number;
+  pnlPct: number;
+  minutesHeld: number;
+  minutesInRange?: number;
+  recordedAt: string;
+}): PerformanceRecordBuildResult
+```
+
+`PerformanceRecordBuildResult` harus bisa mengembalikan record sukses atau structured skipped reason:
+
+```ts
+type PerformanceRecordBuildResult =
+  | { skipped: false; record: PerformanceRecord }
+  | {
+      skipped: true;
+      reason:
+        | "missing_final_accounting"
+        | "invalid_cost_basis"
+        | "suspicious_unit_mix";
+    };
+```
+
+Rule penting:
+
+- `initialValueUsd` tidak boleh 0 kalau deploy amount ada.
+- `finalValueUsd` harus berasal dari finalized accounting, bukan estimate mentah.
+- `pnlPct` harus dihitung dari cost basis final.
+- `rangeEfficiencyPct` clamp `0..100`.
+- `minutesHeld` minimal 0.
+- `strategy` wajib valid: `spot` / `curve` / `bid_ask`.
+- Kalau data tidak cukup, jangan bikin record palsu; return structured skipped reason.
+
+#### 4. Enforce lesson injection di AI entry
+
+Di `AiAdvisoryService.rankShortlistWithAi()`:
+
+- AI mode disabled -> tidak load lesson.
+- AI mode advisory/constrained -> wajib load lesson.
+- Lesson load sukses -> panggil LLM dengan `### LESSONS LEARNED`.
+- Lesson load gagal -> fallback deterministic, jangan panggil LLM.
+
+Event wajib:
+
+- `AI_LESSON_INJECTION_FAILED`
+- `AI_SHORTLIST_RANKING_SKIPPED_NO_LESSONS`
+
+Jika lesson list kosong tetapi repository sehat, boleh panggil LLM dengan header:
+
+```md
+### LESSONS LEARNED
+No historical lessons recorded yet.
+```
+
+Yang tidak boleh adalah repository error lalu LLM tetap dipanggil tanpa konteks lesson.
+
+#### 5. Enforce lesson injection di AI management/rebalance
+
+Untuk management advisory:
+
+```ts
+buildLessonsPrompt({ role: "MANAGER" })
+```
+
+Untuk rebalance planner:
+
+```ts
+buildLessonsPrompt({ role: "MANAGER" })
+```
+
+Kalau ada AI rebalance planner dari Batch 25, prompt wajib membawa:
+
+- `### LESSONS LEARNED`
+- `### POOL MEMORY`
+- `### POSITION PERFORMANCE CONTEXT`
+
+Kalau lesson load error dan `aiRebalanceMode` adalah `advisory`, `dry_run`, atau `constrained_action`:
+
+- fallback deterministic management
+- jangan panggil LLM tanpa lesson
+
+#### 6. Pool memory wajib update setelah performance record
+
+Setelah performance record sukses:
+
+```ts
+recordPoolDeploy(performance)
+```
+
+Update:
+
+- `totalDeploys`
+- `avgPnlPct`
+- `winRatePct`
+- `lastOutcome`
+- `lastDeployedAt`
+- `cooldownUntil` jika closeReason `low_yield`, repeated loss, atau severe OOR
+- recent deploy history max 50
+
+Screening harus membaca pool memory untuk:
+
+- cooldown hard filter
+- AI prompt recall
+- duplicate bad pool warning
+
+#### 7. Backfill tool untuk posisi lama
+
+Tambahkan script manual:
+
+`scripts/backfillPerformanceLessons.ts`
+
+Input:
+
+- `positions.json`
+- `actions.json`
+- `journal.jsonl`
+
+Output:
+
+- dry-run summary
+- records to create
+- lessons to create
+- pool memory updates
+- warnings
+
+Default harus dry-run:
+
+```bash
+npm run backfill:lessons -- --dry-run
+```
+
+Apply harus eksplisit:
+
+```bash
+npm run backfill:lessons -- --apply
+```
+
+Script tidak boleh membuat trading action.
+
+#### 8. Operator commands
+
+Tambahkan atau pastikan command:
+
+- `lessons list`
+- `lessons list --role SCREENER`
+- `lessons list --role MANAGER`
+- `lessons add`
+- `lessons pin`
+- `lessons unpin`
+- `lessons remove`
+- `lessons clear --confirm`
+- `performance summary`
+- `performance history`
+- `pool memory <poolAddress>`
+- `pool cooldown <poolAddress> <hours>`
+- `pool cooldown_clear <poolAddress>`
+
+Read command tidak perlu action queue karena tidak menyentuh chain/position lifecycle.
+
+Write command lesson/pool-memory boleh langsung repository, tetapi wajib journal:
+
+- `LESSON_MANUAL_ADDED`
+- `LESSON_PINNED`
+- `LESSON_UNPINNED`
+- `LESSON_REMOVED`
+- `POOL_MEMORY_NOTE_ADDED`
+- `POOL_MEMORY_COOLDOWN_SET`
+
+### Output
+
+Setelah Batch 26 selesai:
+
+1. Setiap finalized close menghasilkan `PerformanceRecord` atau skipped reason yang jelas.
+2. Lesson otomatis lahir untuk outcome good/poor/bad.
+3. PoolMemory otomatis update setelah posisi closed.
+4. AI shortlist ranking wajib membaca Lessons + PoolMemory.
+5. AI management/rebalance wajib membaca Lessons.
+6. Jika lesson repository error, AI tidak dipanggil dan sistem fallback deterministic.
+7. Operator bisa audit lesson/performance/pool memory.
+8. Backfill tersedia untuk data posisi lama.
+
+### Tests
+
+#### Unit tests
+
+`tests/unit/domain/performanceRecordRules.test.ts`
+
+Cover:
+
+- build record dari close profit
+- build record dari close loss
+- reject missing final accounting
+- reject `initialValueUsd = 0` dengan deploy amount > 0
+- rangeEfficiency clamp `0..100`
+- minutesHeld tidak negatif
+
+`tests/unit/app/createPerformanceLessonHook.test.ts`
+
+Cover:
+
+- profit close -> performance + good lesson + journal
+- neutral close -> performance only, no lesson
+- bad close -> performance + bad lesson
+- suspicious unit mix -> skipped, no performance, no lesson
+- pool memory called after performance success
+- policy evolution called only on eligible count
+- darwin skipped when config disabled
+
+#### Integration tests
+
+`tests/integration/finalizeCloseAutoLearning.test.ts`
+
+Cover:
+
+- normal close finalized -> `PerformanceRecord` created
+- manual close finalized -> `PerformanceRecord` created
+- rebalance old leg finalized -> `PerformanceRecord` created
+- close timeout -> no `PerformanceRecord`
+- missing snapshot reconcile -> no fake lesson before confirmed close
+
+`tests/integration/aiLessonEnforcement.test.ts`
+
+Cover:
+
+- `rankShortlistWithAi` includes `### LESSONS LEARNED`
+- `rankShortlistWithAi` includes `### POOL MEMORY`
+- lesson repo throws -> deterministic fallback, LLM not called
+- AI disabled -> lesson repo not called
+- management AI includes MANAGER lessons
+- rebalance AI includes MANAGER lessons
+
+`tests/integration/poolMemoryLearningLoop.test.ts`
+
+Cover:
+
+- closed bad pool -> cooldown set
+- screening excludes cooldown pool
+- AI prompt contains pool history
+- manual cooldown clear makes pool eligible again
+
+#### Regression tests wajib
+
+1. Close finalized creates exactly one performance record.
+2. Duplicate reconciliation does not duplicate lesson.
+3. Restart after close confirmation does not double-record performance.
+4. Lesson repository corrupt blocks LLM call but does not block deterministic screening.
+5. Rebalance old leg close records old leg outcome once.
+6. Failed redeploy does not rewrite old close performance.
+7. Operator lesson add/pin appears in next AI prompt.
+8. Backfill dry-run does not mutate files.
+
+### DoD
+
+- Tidak ada close finalized yang silent tanpa performance record atau skipped reason.
+- Tidak ada AI entry call tanpa `LessonPromptService` saat AI mode aktif.
+- Tidak ada LLM call jika lesson injection error.
+- `PerformanceRecord` tidak dibuat sebelum close accounting finalized.
+- Lesson dan PoolMemory tidak double-record saat reconciliation jalan ulang.
+- Operator bisa melihat lesson baru setelah close posisi.
+- Journal punya audit event untuk lesson/performance/pool memory.
+- Backfill script default dry-run dan aman.
+- Semua test batch hijau.
+
+### Jangan dikerjakan di Batch 26
+
+- Jangan tambah strategi AI baru.
+- Jangan ubah rules deploy/rebalance utama kecuali untuk membaca lessons.
+- Jangan beri AI write privilege tambahan.
+- Jangan auto-mutate `user-config.json`.
+- Jangan backfill otomatis saat startup.
+- Jangan reset `lessons.json` jika corrupt; buat error + alert.
+
+### Prompt vibecode
+
+Add Batch 26 live auto-learning wiring. Ensure every finalized close path creates a PerformanceRecord or a structured skipped reason, derives a Lesson when outcome is meaningful, updates PoolMemory, emits journal events, and never double-records during reconciliation retries or restart recovery. Wire LessonPromptService as mandatory context for AiAdvisoryService shortlist ranking, management advisory, and AI rebalance planning. If lesson loading fails, log AI_LESSON_INJECTION_FAILED and fallback deterministic without calling the LLM. Add operator commands for lessons/performance/pool memory and a dry-run-first backfill script for historical closed positions. Keep all trading writes behind the existing action queue; this batch must not add any AI direct write path.
+
+---
+
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:
@@ -2761,6 +3148,7 @@ Agar bug minimal, aktifkan fitur dalam urutan ini:
 16. Real adapters
 17. Dry-run simulator
 18. Supervised live
+19. Live auto-learning wiring + lesson enforcement
 
 ### Jangan dibalik
 

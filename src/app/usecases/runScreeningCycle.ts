@@ -385,6 +385,21 @@ export async function runScreeningCycle(
       (candidate) => [candidate.candidateId, candidate] as const,
     ),
   );
+  const aiMode = input.aiMode ?? "disabled";
+  const lessonPromptService: LessonPromptService =
+    aiMode === "disabled"
+      ? {
+          async buildLessonsPrompt() {
+            return null;
+          },
+        }
+      : input.lessonPromptService ?? {
+          async buildLessonsPrompt(): Promise<string | null> {
+            throw new Error(
+              "LessonPromptService is required for AI shortlist ranking",
+            );
+          },
+        };
   const aiShortlist = await rankShortlistWithAi({
     shortlist: deterministic.shortlist.map(
       (candidate) =>
@@ -392,12 +407,8 @@ export async function runScreeningCycle(
           (item) => item.candidateId === candidate.candidateId,
         ) ?? candidate,
     ),
-    aiMode: input.aiMode ?? "disabled",
-    lessonPromptService: input.lessonPromptService ?? {
-      async buildLessonsPrompt() {
-        return null;
-      },
-    },
+    aiMode,
+    lessonPromptService,
     ...(input.llmGateway === undefined ? {} : { llmGateway: input.llmGateway }),
     ...(input.aiTimeoutMs === undefined
       ? {}

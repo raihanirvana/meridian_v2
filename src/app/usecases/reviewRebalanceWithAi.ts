@@ -17,6 +17,7 @@ import {
 import { type Actor } from "../../domain/types/enums.js";
 import { logger } from "../../infra/logging/logger.js";
 import type { AiRebalancePlanner } from "../services/AiRebalancePlanner.js";
+import type { LessonPromptService } from "../services/LessonPromptService.js";
 
 const RebalanceReviewSourceSchema = z.enum([
   "DISABLED",
@@ -46,6 +47,7 @@ export interface ReviewRebalanceWithAiInput {
   review: RebalanceReviewInput;
   planner?: AiRebalancePlanner;
   validationPolicy?: Partial<RebalanceDecisionValidationPolicy>;
+  lessonPromptService?: LessonPromptService;
   journalRepository?: JournalRepository;
   actor?: Actor;
   now?: string;
@@ -142,12 +144,44 @@ export async function reviewRebalanceWithAi(
     source = "DETERMINISTIC";
   } else {
     try {
+      const lessonsPrompt =
+        await input.lessonPromptService?.buildLessonsPrompt({
+          role: "MANAGER",
+          includePoolMemory: {
+            candidates: [
+              {
+                poolAddress: review.position.poolAddress,
+              },
+            ],
+          },
+        });
+      if (input.lessonPromptService === undefined) {
+        throw new Error("LessonPromptService is required for AI rebalance");
+      }
+      const poolMemoryPrompt =
+        lessonsPrompt?.includes("### POOL MEMORY") === true
+          ? []
+          : ["### POOL MEMORY", "No pool memory recorded for this pool yet."];
       decision = AiRebalanceDecisionSchema.parse(
-        await input.planner.reviewRebalanceDecision(review),
+        await input.planner.reviewRebalanceDecision({
+          ...review,
+          lessonContext: [
+            "### LESSONS LEARNED",
+            lessonsPrompt ?? "No historical lessons recorded yet.",
+            ...poolMemoryPrompt,
+            "### POSITION PERFORMANCE CONTEXT",
+            `position_pnl_pct=${review.position.pnlPct}`,
+            `range=${review.position.lowerBin}-${review.position.upperBin}`,
+            `out_of_range_minutes=${review.position.outOfRangeMinutes}`,
+          ].join("\n"),
+        }),
       );
       source = "AI";
     } catch (error) {
-      logger.warn({ err: error }, "AI rebalance review fallback to hold");
+      logger.warn(
+        { err: error, eventType: "AI_LESSON_INJECTION_FAILED" },
+        "AI rebalance review fallback to hold",
+      );
       source = "FALLBACK";
       aiError = errorMessage(error);
       decision = deterministicHoldDecision();

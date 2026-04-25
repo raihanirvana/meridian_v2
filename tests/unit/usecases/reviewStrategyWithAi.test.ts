@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiStrategyReviewer } from "../../../src/adapters/llm/AiStrategyReviewer.js";
 import { MockAiStrategyReviewer } from "../../../src/adapters/llm/AiStrategyReviewer.js";
 import { JournalRepository } from "../../../src/adapters/storage/JournalRepository.js";
+import type { LessonPromptService } from "../../../src/app/services/LessonPromptService.js";
 import { reviewStrategyWithAi } from "../../../src/app/usecases/reviewStrategyWithAi.js";
 import type { Candidate } from "../../../src/domain/entities/Candidate.js";
 import {
@@ -15,6 +16,12 @@ import {
   buildMarketFeatureSnapshot,
 } from "../../../src/domain/rules/poolFeatureRules.js";
 import { scoreStrategySuitability } from "../../../src/domain/scoring/strategySuitabilityScore.js";
+
+const stubLessonPromptService: LessonPromptService = {
+  async buildLessonsPrompt() {
+    return null;
+  },
+};
 
 const tempDirs: string[] = [];
 const now = "2026-04-22T12:00:00.000Z";
@@ -152,6 +159,7 @@ describe("reviewStrategyWithAi", () => {
       wallet: "wallet_001",
       candidates: [buildCandidate()],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       reviewer: new MockAiStrategyReviewer({
         reviewCandidateStrategy: {
           type: "success",
@@ -225,6 +233,7 @@ describe("reviewStrategyWithAi", () => {
       wallet: "wallet_001",
       candidates: [candidateA, candidateB],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       reviewer,
       botContext: {
         walletRiskMode: "small",
@@ -249,6 +258,7 @@ describe("reviewStrategyWithAi", () => {
       wallet: "wallet_001",
       candidates: [buildCandidate()],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       reviewer: new MockAiStrategyReviewer({
         reviewCandidateStrategy: {
           type: "success",
@@ -270,6 +280,7 @@ describe("reviewStrategyWithAi", () => {
       wallet: "wallet_001",
       candidates: [buildCandidate()],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       minConfidence: 0.7,
       reviewer: new MockAiStrategyReviewer({
         reviewCandidateStrategy: {
@@ -301,6 +312,7 @@ describe("reviewStrategyWithAi", () => {
       wallet: "wallet_001",
       candidates: [buildCandidate()],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       reviewer: slowReviewer,
       timeoutMs: 1,
       now: () => now,
@@ -330,6 +342,7 @@ describe("reviewStrategyWithAi", () => {
       wallet: "wallet_001",
       candidates: [candidate],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       reviewer: {
         reviewCandidateStrategy,
       },
@@ -341,11 +354,96 @@ describe("reviewStrategyWithAi", () => {
     expect(result.reviews[0]?.review.decision).toBe("reject");
   });
 
+  it("injects lessons and pool memory into the system prompt", async () => {
+    const seenPrompts: string[] = [];
+    const reviewer: AiStrategyReviewer = {
+      async reviewCandidateStrategy(input) {
+        seenPrompts.push(input.systemPrompt);
+        return buildAiReview();
+      },
+    };
+    const lessonAware: LessonPromptService = {
+      async buildLessonsPrompt(promptInput) {
+        expect(promptInput.role).toBe("SCREENER");
+        expect(promptInput.includePoolMemory?.candidates[0]?.poolAddress).toBe(
+          "pool_001",
+        );
+        return [
+          "- avoid pool_001 when volume drops",
+          "### POOL MEMORY",
+          "- pool_001: previous win rate 60%",
+        ].join("\n");
+      },
+    };
+
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      lessonPromptService: lessonAware,
+      reviewer,
+      now: () => now,
+    });
+
+    expect(result.reviews[0]?.source).toBe("AI");
+    expect(seenPrompts[0]).toContain("### LESSONS LEARNED");
+    expect(seenPrompts[0]).toContain("avoid pool_001 when volume drops");
+    expect(seenPrompts[0]).toContain("pool_001: previous win rate 60%");
+  });
+
+  it("falls back deterministically and journals AI_LESSON_INJECTION_FAILED when lesson loading throws", async () => {
+    const directory = await makeTempDir();
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const reviewCandidateStrategy = vi.fn(async () => buildAiReview());
+
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      lessonPromptService: {
+        async buildLessonsPrompt(): Promise<string | null> {
+          throw new Error("lesson repo corrupt");
+        },
+      },
+      reviewer: { reviewCandidateStrategy },
+      journalRepository,
+      now: () => now,
+    });
+
+    expect(reviewCandidateStrategy).not.toHaveBeenCalled();
+    expect(result.reviews[0]?.source).toBe("FALLBACK");
+    expect(result.reviews[0]?.aiError).toBe("AI_LESSON_INJECTION_FAILED");
+    const journal = await journalRepository.list();
+    expect(
+      journal.some(
+        (event) => event.eventType === "AI_LESSON_INJECTION_FAILED",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not call AI and falls back when lessonPromptService is missing in advisory mode", async () => {
+    const reviewCandidateStrategy = vi.fn(async () => buildAiReview());
+
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      reviewer: { reviewCandidateStrategy },
+      now: () => now,
+    });
+
+    expect(reviewCandidateStrategy).not.toHaveBeenCalled();
+    expect(result.reviews[0]?.source).toBe("FALLBACK");
+  });
+
   it("survives non-JSON or vendor parsing failures without crashing", async () => {
     const result = await reviewStrategyWithAi({
       wallet: "wallet_001",
       candidates: [buildCandidate()],
       aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
       reviewer: {
         async reviewCandidateStrategy() {
           throw new Error("LLM response is not valid JSON");

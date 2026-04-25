@@ -10,6 +10,10 @@ import {
   type PositionEntryMetadata,
 } from "../../domain/entities/Position.js";
 import { createUlid } from "../../infra/id/createUlid.js";
+import {
+  buildPerformanceRecordFromClosedPosition,
+} from "../../domain/rules/performanceRecordRules.js";
+import type { Action } from "../../domain/entities/Action.js";
 
 import { recordPositionPerformance } from "../usecases/recordPositionPerformance.js";
 import { recordPoolDeploy } from "../usecases/recordPoolDeploy.js";
@@ -78,6 +82,7 @@ function resolveEntryMetadata(position: Position): PositionEntryMetadata {
 export function buildPerformanceRecordFromClose(input: {
   position: Position;
   performanceSnapshotPosition?: Position;
+  closedAction?: Action;
   reason: string;
   now: string;
 }): PerformanceRecord {
@@ -95,10 +100,6 @@ export function buildPerformanceRecordFromClose(input: {
     input.position.closedAt ?? input.now,
   );
   const minutesInRange = Math.max(minutesHeld - minutesOutOfRange, 0);
-  const rangeEfficiencyPct =
-    minutesHeld === 0
-      ? 100
-      : Math.min((minutesInRange / minutesHeld) * 100, 100);
   const recoveredFinalValueUsd = Math.max(
     snapshotPosition.currentValueUsd +
       snapshotPosition.realizedPnlUsd +
@@ -110,24 +111,35 @@ export function buildPerformanceRecordFromClose(input: {
     0,
   );
 
-  return {
-    positionId: input.position.positionId,
-    wallet: input.position.wallet,
-    pool: input.position.poolAddress,
-    poolName: entryMetadata.poolName ?? input.position.poolAddress,
-    baseMint: input.position.baseMint,
-    strategy:
-      input.position.strategy === "spot" || input.position.strategy === "curve"
-        ? input.position.strategy
-        : "bid_ask",
-    binStep: entryMetadata.binStep ?? 0,
-    binRangeLower: input.position.rangeLowerBin,
-    binRangeUpper: input.position.rangeUpperBin,
-    volatility: entryMetadata.volatility ?? 0,
-    feeTvlRatio: entryMetadata.feeTvlRatio ?? 0,
-    organicScore: entryMetadata.organicScore ?? 0,
-    amountSol: entryMetadata.amountSol ?? 0,
-    initialValueUsd: recoveredInitialValueUsd,
+  const result = buildPerformanceRecordFromClosedPosition({
+    position: {
+      ...input.position,
+      entryMetadata,
+      openedAt: snapshotPosition.openedAt ?? input.position.openedAt,
+      currentValueUsd: snapshotPosition.currentValueUsd,
+      feesClaimedUsd: snapshotPosition.feesClaimedUsd,
+      realizedPnlUsd: snapshotPosition.realizedPnlUsd,
+      outOfRangeSince: snapshotPosition.outOfRangeSince,
+    },
+    closedAction:
+      input.closedAction ??
+      ({
+        actionId: "unknown_close_action",
+        type: "CLOSE",
+        status: "DONE",
+        wallet: input.position.wallet,
+        positionId: input.position.positionId,
+        idempotencyKey: "unknown_close_action",
+        requestPayload: {},
+        resultPayload: null,
+        txIds: [],
+        error: null,
+        requestedAt: snapshotPosition.openedAt ?? input.now,
+        startedAt: input.now,
+        completedAt: input.position.closedAt ?? input.now,
+        requestedBy: "system",
+      } satisfies Action),
+    closeReason: mapCloseReason(input.reason),
     finalValueUsd: recoveredFinalValueUsd,
     feesEarnedUsd: snapshotPosition.feesClaimedUsd,
     pnlUsd: snapshotPosition.realizedPnlUsd,
@@ -135,14 +147,18 @@ export function buildPerformanceRecordFromClose(input: {
       recoveredInitialValueUsd <= 0
         ? 0
         : (snapshotPosition.realizedPnlUsd / recoveredInitialValueUsd) * 100,
-    rangeEfficiencyPct,
     minutesHeld,
     minutesInRange,
-    closeReason: mapCloseReason(input.reason),
-    deployedAt: snapshotPosition.openedAt ?? input.now,
-    closedAt: input.position.closedAt ?? input.now,
     recordedAt: input.now,
-  };
+  });
+
+  if (result.skipped) {
+    throw new Error(
+      `Performance record build skipped: ${result.reason}`,
+    );
+  }
+
+  return result.record;
 }
 
 export function createRecordPositionPerformanceLessonHook(
@@ -154,18 +170,76 @@ export function createRecordPositionPerformanceLessonHook(
     position: Position;
     performanceSnapshotPosition?: Position;
     reason: string;
+    closedAction: Action;
     now: string;
   }): Promise<PerformanceRecord | void> => {
-    const performance = buildPerformanceRecordFromClose({
-      position: hookInput.position,
-      ...(hookInput.performanceSnapshotPosition === undefined
-        ? {}
-        : {
-            performanceSnapshotPosition: hookInput.performanceSnapshotPosition,
-          }),
-      reason: hookInput.reason,
-      now: hookInput.now,
+    const snapshotPosition =
+      hookInput.performanceSnapshotPosition ?? hookInput.position;
+    const buildResult = buildPerformanceRecordFromClosedPosition({
+      position: snapshotPosition,
+      closedAction: hookInput.closedAction,
+      closeReason: mapCloseReason(hookInput.reason),
+      finalValueUsd: Math.max(
+        snapshotPosition.currentValueUsd +
+          snapshotPosition.realizedPnlUsd +
+          snapshotPosition.feesClaimedUsd,
+        0,
+      ),
+      feesEarnedUsd: snapshotPosition.feesClaimedUsd,
+      pnlUsd: snapshotPosition.realizedPnlUsd,
+      pnlPct:
+        snapshotPosition.currentValueUsd <= 0
+          ? 0
+          : (snapshotPosition.realizedPnlUsd / snapshotPosition.currentValueUsd) *
+            100,
+      minutesHeld: diffMinutes(
+        snapshotPosition.openedAt,
+        hookInput.position.closedAt ?? hookInput.now,
+      ),
+      minutesInRange: Math.max(
+        diffMinutes(snapshotPosition.openedAt, hookInput.position.closedAt ?? hookInput.now) -
+          diffMinutes(
+            snapshotPosition.outOfRangeSince,
+            hookInput.position.closedAt ?? hookInput.now,
+          ),
+        0,
+      ),
+      recordedAt: hookInput.now,
     });
+
+    let performance: PerformanceRecord | null = buildResult.skipped
+      ? null
+      : buildResult.record;
+
+    if (buildResult.skipped) {
+      performance =
+        (await input.performanceRepository.list()).find(
+          (record) => record.positionId === hookInput.position.positionId,
+        ) ?? null;
+    }
+
+    if (buildResult.skipped && performance === null) {
+      await input.journalRepository?.append({
+        timestamp: hookInput.now,
+        eventType: "PERFORMANCE_RECORD_SKIPPED",
+        actor: "system",
+        wallet: hookInput.position.wallet,
+        positionId: hookInput.position.positionId,
+        actionId: hookInput.closedAction.actionId,
+        before: null,
+        after: {
+          reason: buildResult.reason,
+          pool: hookInput.position.poolAddress,
+        },
+        txIds: [],
+        resultStatus: "SKIPPED",
+        error: buildResult.reason,
+      });
+      return;
+    }
+    if (performance === null) {
+      return;
+    }
 
     const result = await recordPositionPerformance({
       performance,
@@ -201,6 +275,8 @@ export function createRecordPositionPerformanceLessonHook(
           closeReason: result.performance.closeReason,
           strategy: result.performance.strategy,
           volatilityAtDeploy: result.performance.volatility,
+          positionId: result.performance.positionId,
+          sourceActionId: hookInput.closedAction.actionId,
         },
         now: hookInput.now,
       });

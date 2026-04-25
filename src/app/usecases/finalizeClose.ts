@@ -93,6 +93,17 @@ function toJournalRecord(value: unknown): Record<string, unknown> {
     .parse(JSON.parse(JSON.stringify(value)));
 }
 
+function readPerformanceSnapshot(action: Action): Position | undefined {
+  if (action.resultPayload === null) {
+    return undefined;
+  }
+
+  const snapshot = PositionSchema.safeParse(
+    action.resultPayload["performanceSnapshot"],
+  );
+  return snapshot.success ? snapshot.data : undefined;
+}
+
 async function appendJournalEvent(
   journalRepository: JournalRepository | undefined,
   event: JournalEvent,
@@ -102,6 +113,58 @@ async function appendJournalEvent(
   }
 
   await journalRepository.append(event);
+}
+
+export async function runLessonHookIdempotent(input: {
+  lessonHook?: LessonHook;
+  journalRepository?: JournalRepository;
+  position: Position;
+  performanceSnapshotPosition?: Position;
+  closedAction: Action;
+  reason: string;
+  now: string;
+}): Promise<void> {
+  if (input.lessonHook === undefined) {
+    return;
+  }
+
+  try {
+    await input.lessonHook({
+      position: input.position,
+      ...(input.performanceSnapshotPosition === undefined
+        ? {}
+        : { performanceSnapshotPosition: input.performanceSnapshotPosition }),
+      closedAction: input.closedAction,
+      reason: input.reason,
+      now: input.now,
+    });
+  } catch (error) {
+    const failureMessage = errorMessage(error, "lesson hook failed");
+    logger.warn(
+      {
+        err: error,
+        actionId: input.closedAction.actionId,
+        positionId: input.position.positionId,
+      },
+      "lesson hook failed after close finalization",
+    );
+    await appendJournalEvent(input.journalRepository, {
+      timestamp: input.now,
+      eventType: "LESSON_HOOK_FAILED",
+      actor: "system",
+      wallet: input.position.wallet,
+      positionId: input.position.positionId,
+      actionId: input.closedAction.actionId,
+      before: null,
+      after: {
+        reason: input.reason,
+        pool: input.position.poolAddress,
+      },
+      txIds: [],
+      resultStatus: "FAILED",
+      error: failureMessage,
+    });
+  }
 }
 
 function assertCloseAction(action: Action): asserts action is Action & {
@@ -263,9 +326,37 @@ export async function finalizeClose(
     action.status === "FAILED" ||
     action.status === "ABORTED"
   ) {
+    const existingPosition = await input.stateRepository.get(action.positionId);
+    if (
+      existingPosition !== null &&
+      existingPosition.status === "CLOSED" &&
+      action.status === "DONE"
+    ) {
+      const closeRequest = CloseActionRequestPayloadSchema.safeParse(
+        action.requestPayload,
+      );
+      if (closeRequest.success) {
+        const performanceSnapshot = readPerformanceSnapshot(action);
+        await runLessonHookIdempotent({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          position: existingPosition,
+          ...(performanceSnapshot === undefined
+            ? {}
+            : { performanceSnapshotPosition: performanceSnapshot }),
+          closedAction: action,
+          reason: closeRequest.data.reason,
+          now,
+        });
+      }
+    }
     return {
       action,
-      position: await input.stateRepository.get(action.positionId),
+      position: existingPosition,
       outcome: "UNCHANGED",
     };
   }
@@ -298,9 +389,39 @@ export async function finalizeClose(
         latestAction.status === "FAILED" ||
         latestAction.status === "ABORTED"
       ) {
+        const existingPosition = await input.stateRepository.get(
+          latestAction.positionId,
+        );
+        if (
+          existingPosition !== null &&
+          existingPosition.status === "CLOSED" &&
+          latestAction.status === "DONE"
+        ) {
+          const closeRequest = CloseActionRequestPayloadSchema.safeParse(
+            latestAction.requestPayload,
+          );
+          if (closeRequest.success) {
+            const performanceSnapshot = readPerformanceSnapshot(latestAction);
+            await runLessonHookIdempotent({
+              ...(input.lessonHook === undefined
+                ? {}
+                : { lessonHook: input.lessonHook }),
+              ...(input.journalRepository === undefined
+                ? {}
+                : { journalRepository: input.journalRepository }),
+              position: existingPosition,
+              ...(performanceSnapshot === undefined
+                ? {}
+                : { performanceSnapshotPosition: performanceSnapshot }),
+              closedAction: latestAction,
+              reason: closeRequest.data.reason,
+              now,
+            });
+          }
+        }
         return {
           action: latestAction,
-          position: await input.stateRepository.get(latestAction.positionId),
+          position: existingPosition,
           outcome: "UNCHANGED" as const,
         };
       }
@@ -346,6 +467,7 @@ export async function finalizeClose(
           resultPayload: toJournalRecord({
             ...closeResult,
             accounting,
+            performanceSnapshot: closeConfirmedPositionLike,
           }),
           completedAt: now,
           error: null,
@@ -370,6 +492,20 @@ export async function finalizeClose(
           txIds: doneAction.txIds,
           resultStatus: doneAction.status,
           error: null,
+        });
+
+        await runLessonHookIdempotent({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          position: closingPosition,
+          performanceSnapshotPosition: closeConfirmedPositionLike,
+          closedAction: doneAction,
+          reason: payload.reason,
+          now,
         });
 
         return {
@@ -464,9 +600,21 @@ export async function finalizeClose(
           latestAction.actionId,
           now,
         );
+      const performanceSnapshotPosition =
+        closeConfirmedPosition.entryMetadata === undefined &&
+        closingPosition.entryMetadata !== undefined
+          ? PositionSchema.parse({
+              ...closeConfirmedPosition,
+              entryMetadata: closingPosition.entryMetadata,
+            })
+          : closeConfirmedPosition;
       const reconcilingAction = {
         ...latestAction,
         status: transitionActionStatus(latestAction.status, "RECONCILING"),
+        resultPayload: toJournalRecord({
+          ...closeResult,
+          performanceSnapshot: performanceSnapshotPosition,
+        }),
       } satisfies Action;
 
       try {
@@ -500,6 +648,7 @@ export async function finalizeClose(
           resultPayload: toJournalRecord({
             ...closeResult,
             accounting,
+            performanceSnapshot: performanceSnapshotPosition,
           }),
           completedAt: now,
           error: null,
@@ -526,34 +675,19 @@ export async function finalizeClose(
           error: null,
         });
 
-        if (input.lessonHook !== undefined) {
-          const performanceSnapshotPosition =
-            closeConfirmedPosition.entryMetadata === undefined &&
-            closingPosition.entryMetadata !== undefined
-              ? PositionSchema.parse({
-                  ...closeConfirmedPosition,
-                  entryMetadata: closingPosition.entryMetadata,
-                })
-              : closeConfirmedPosition;
-          try {
-            await input.lessonHook({
-              position: closedPosition,
-              performanceSnapshotPosition,
-              closedAction: doneAction,
-              reason: payload.reason,
-              now,
-            });
-          } catch (error) {
-            logger.warn(
-              {
-                err: error,
-                actionId: doneAction.actionId,
-                positionId: closedPosition.positionId,
-              },
-              "close lesson hook failed after finalization",
-            );
-          }
-        }
+        await runLessonHookIdempotent({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          position: closedPosition,
+          performanceSnapshotPosition,
+          closedAction: doneAction,
+          reason: payload.reason,
+          now,
+        });
 
         return {
           action: doneAction,

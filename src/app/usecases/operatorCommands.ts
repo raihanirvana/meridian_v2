@@ -300,7 +300,7 @@ export function parseOperatorCommand(
   }
 
   const performanceHistoryMatch = normalized.match(
-    /^performance-history(?:\s+(\d+))?(?:\s+(\d+))?$/,
+    /^performance(?:-|\s+)history(?:\s+(\d+))?(?:\s+(\d+))?$/,
   );
   if (performanceHistoryMatch !== null) {
     const [, hoursRaw, limitRaw] = performanceHistoryMatch;
@@ -769,6 +769,19 @@ export async function executeOperatorCommand(
     case "LESSONS_PIN": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       await lessonRepository.update(input.command.id, { pinned: true });
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "LESSON_PINNED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: { lessonId: input.command.id },
+        txIds: [],
+        resultStatus: "PINNED",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: `lesson pinned: ${input.command.id}`,
@@ -778,6 +791,19 @@ export async function executeOperatorCommand(
     case "LESSONS_UNPIN": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       await lessonRepository.update(input.command.id, { pinned: false });
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "LESSON_UNPINNED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: { lessonId: input.command.id },
+        txIds: [],
+        resultStatus: "UNPINNED",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: `lesson unpinned: ${input.command.id}`,
@@ -786,14 +812,34 @@ export async function executeOperatorCommand(
     }
     case "LESSONS_ADD": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
+      const lessonId = createUlid(Date.parse(requestedAt));
       await lessonRepository.append({
-        id: createUlid(Date.parse(requestedAt)),
+        id: lessonId,
         rule: input.command.rule,
         tags: input.command.tags,
         outcome: "manual",
         role: input.command.role,
         pinned: input.command.pinned,
         createdAt: requestedAt,
+      });
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "LESSON_MANUAL_ADDED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          lessonId,
+          rule: input.command.rule,
+          tags: input.command.tags,
+          role: input.command.role,
+          pinned: input.command.pinned,
+        },
+        txIds: [],
+        resultStatus: "ADDED",
+        error: null,
       });
       return {
         command: input.command.kind,
@@ -804,6 +850,22 @@ export async function executeOperatorCommand(
     case "LESSONS_REMOVE": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       const removed = await lessonRepository.remove(input.command.id);
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "LESSON_REMOVED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          lessonId: input.command.id,
+          removedCount: removed,
+        },
+        txIds: [],
+        resultStatus: removed > 0 ? "REMOVED" : "NOT_FOUND",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text:
@@ -826,6 +888,22 @@ export async function executeOperatorCommand(
           removed += await lessonRepository.remove(lesson.id);
         }
       }
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "LESSON_REMOVED_BY_KEYWORD",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          keyword: input.command.keyword,
+          removedCount: removed,
+        },
+        txIds: [],
+        resultStatus: "REMOVED",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: `lessons removed: ${removed}`,
@@ -835,6 +913,19 @@ export async function executeOperatorCommand(
     case "LESSONS_CLEAR": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       const cleared = await lessonRepository.clear();
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "LESSON_CLEARED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: { clearedCount: cleared },
+        txIds: [],
+        resultStatus: "CLEARED",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: `lessons cleared: ${cleared}`,
@@ -1017,6 +1108,22 @@ export async function executeOperatorCommand(
         input.command.note,
         requestedAt,
       );
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "POOL_MEMORY_NOTE_ADDED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          poolAddress: input.command.poolAddress,
+          note: input.command.note,
+        },
+        txIds: [],
+        resultStatus: "ADDED",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: "pool note added",
@@ -1034,6 +1141,23 @@ export async function executeOperatorCommand(
         input.command.poolAddress,
         untilIso,
       );
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "POOL_MEMORY_COOLDOWN_SET",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          poolAddress: input.command.poolAddress,
+          hours: input.command.hours,
+          cooldownUntil: untilIso,
+        },
+        txIds: [],
+        resultStatus: "SET",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: `pool cooldown set until ${untilIso}`,
@@ -1045,6 +1169,21 @@ export async function executeOperatorCommand(
         input.poolMemoryRepository,
       );
       await poolMemoryRepository.setCooldown(input.command.poolAddress, null);
+      await input.journalRepository.append({
+        timestamp: requestedAt,
+        eventType: "POOL_MEMORY_COOLDOWN_CLEARED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          poolAddress: input.command.poolAddress,
+        },
+        txIds: [],
+        resultStatus: "CLEARED",
+        error: null,
+      });
       return {
         command: input.command.kind,
         text: "pool cooldown cleared",

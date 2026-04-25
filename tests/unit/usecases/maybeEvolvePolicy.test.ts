@@ -206,6 +206,21 @@ describe("maybeEvolvePolicy", () => {
         }),
       ]),
     );
+
+    const retry = await maybeEvolvePolicy({
+      performanceRepository,
+      runtimePolicyStore,
+      lessonRepository,
+      journalRepository,
+      now: () => "2026-04-22T12:01:00.000Z",
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FB9",
+    });
+
+    expect(retry).toEqual({
+      skipped: true,
+      reason: "already_evolved_for_position_count",
+    });
+    expect(await lessonRepository.list()).toHaveLength(1);
   });
 
   it("returns empty changes without writing when there is no usable winner/loser signal", async () => {

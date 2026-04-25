@@ -89,8 +89,22 @@ describe("reviewRebalanceWithAi", () => {
       mode: "constrained_action",
       review: buildReview(),
       planner: {
-        async reviewRebalanceDecision() {
+        async reviewRebalanceDecision(input) {
+          expect(input.lessonContext).toContain("### LESSONS LEARNED");
+          expect(input.lessonContext).toContain("### POOL MEMORY");
           return buildDecision();
+        },
+      },
+      lessonPromptService: {
+        async buildLessonsPrompt(promptInput) {
+          expect(promptInput.includePoolMemory?.candidates).toEqual([
+            { poolAddress: "pool_001" },
+          ]);
+          return [
+            "Prefer stable manager lessons.",
+            "### POOL MEMORY",
+            "- pool_001: 2 deploy(s), avg PnL 4.20%",
+          ].join("\n");
         },
       },
       validationPolicy: {
@@ -114,6 +128,11 @@ describe("reviewRebalanceWithAi", () => {
       planner: {
         async reviewRebalanceDecision() {
           throw new Error("llm unavailable");
+        },
+      },
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return "Prefer stable manager lessons.";
         },
       },
       now,

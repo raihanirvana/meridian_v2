@@ -22,9 +22,17 @@ import { WalletLock } from "../../infra/locks/walletLock.js";
 
 import {
   finalizeRebalance,
+  RebalanceActionResultPayloadSchema,
   type FinalizeRebalanceResult,
 } from "./finalizeRebalance.js";
-import { finalizeClose, type PostCloseSwapHook } from "./finalizeClose.js";
+import {
+  finalizeClose,
+  runLessonHookIdempotent,
+  type LessonHook,
+  type PostCloseSwapHook,
+} from "./finalizeClose.js";
+import { CloseActionRequestPayloadSchema } from "./requestClose.js";
+import { RebalanceActionRequestPayloadSchema } from "./requestRebalance.js";
 import {
   finalizeClaimFees,
   type CompoundDeployRiskGuard,
@@ -55,6 +63,13 @@ const TRACKED_SNAPSHOT_STATUSES = new Set<Position["status"]>([
   "RECONCILING",
 ]);
 
+const LEARNING_RECOVERY_STATUSES = new Set<Action["status"]>([
+  "DONE",
+  "FAILED",
+  "TIMED_OUT",
+  "ABORTED",
+]);
+
 export interface ReconciliationRecord {
   scope: "ACTION" | "POSITION";
   entityId: string;
@@ -77,6 +92,7 @@ export interface ReconcilePortfolioInput {
   now?: () => string;
   wallets?: string[];
   postCloseSwapHook?: PostCloseSwapHook;
+  lessonHook?: LessonHook;
   postClaimSwapHook?: PostClaimSwapHook;
   claimCompoundRiskGuardProvider?: (input: {
     wallet: string;
@@ -98,6 +114,7 @@ interface RecoverReconcilingActionInput {
   journalRepository?: JournalRepository;
   runtimeControlStore?: RuntimeControlStore;
   postClaimSwapHook?: PostClaimSwapHook;
+  lessonHook?: LessonHook;
   claimCompoundRiskGuardProvider?: ReconcilePortfolioInput["claimCompoundRiskGuardProvider"];
   walletLock: WalletLock;
   positionLock: PositionLock;
@@ -211,6 +228,127 @@ function getActionPositionId(action: Action): string | null {
   }
 
   return action.positionId;
+}
+
+function readPerformanceSnapshot(action: Action): Position | undefined {
+  if (action.resultPayload === null) {
+    return undefined;
+  }
+
+  const parsed = PositionSchema.safeParse(
+    action.resultPayload["performanceSnapshot"],
+  );
+  return parsed.success ? parsed.data : undefined;
+}
+
+async function ensureTerminalClosedPositionLearning(input: {
+  action: Action;
+  stateRepository: StateRepository;
+  lessonHook?: LessonHook;
+  journalRepository?: JournalRepository;
+  now: string;
+}): Promise<ReconciliationRecord | null> {
+  if (
+    input.lessonHook === undefined ||
+    !LEARNING_RECOVERY_STATUSES.has(input.action.status)
+  ) {
+    return null;
+  }
+
+  if (input.action.type === "CLOSE") {
+    const positionId = input.action.positionId;
+    const performanceSnapshot = readPerformanceSnapshot(input.action);
+    const closeRequest = CloseActionRequestPayloadSchema.safeParse(
+      input.action.requestPayload,
+    );
+    if (
+      positionId === null ||
+      performanceSnapshot === undefined ||
+      !closeRequest.success
+    ) {
+      return null;
+    }
+
+    const position = await input.stateRepository.get(positionId);
+    if (position === null || position.status !== "CLOSED") {
+      return null;
+    }
+
+    await runLessonHookIdempotent({
+      lessonHook: input.lessonHook,
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      position,
+      performanceSnapshotPosition: performanceSnapshot,
+      closedAction: input.action,
+      reason: closeRequest.data.reason,
+      now: input.now,
+    });
+
+    return createRecord({
+      scope: "ACTION",
+      entityId: input.action.actionId,
+      wallet: input.action.wallet,
+      positionId,
+      actionId: input.action.actionId,
+      outcome: "RECONCILED_OK",
+      detail:
+        "Terminal close action learning was re-ensured from durable performance snapshot",
+    });
+  }
+
+  if (input.action.type === "REBALANCE") {
+    const request = RebalanceActionRequestPayloadSchema.safeParse(
+      input.action.requestPayload,
+    );
+    const payload = RebalanceActionResultPayloadSchema.safeParse(
+      input.action.resultPayload,
+    );
+    if (!request.success || !payload.success) {
+      return null;
+    }
+
+    const performanceSnapshot = payload.data.performanceSnapshot;
+    const oldPositionId =
+      "closedPositionId" in payload.data &&
+      payload.data.closedPositionId !== undefined
+        ? payload.data.closedPositionId
+        : input.action.positionId;
+    if (performanceSnapshot === undefined || oldPositionId === null) {
+      return null;
+    }
+
+    const position = await input.stateRepository.get(oldPositionId);
+    if (position === null || position.status !== "CLOSED") {
+      return null;
+    }
+
+    await runLessonHookIdempotent({
+      lessonHook: input.lessonHook,
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      position,
+      performanceSnapshotPosition: performanceSnapshot,
+      closedAction: input.action,
+      reason: request.data.reason,
+      now: input.now,
+    });
+
+    return createRecord({
+      scope: "ACTION",
+      entityId: input.action.actionId,
+      wallet: input.action.wallet,
+      positionId: oldPositionId,
+      actionId: input.action.actionId,
+      outcome: "RECONCILED_OK",
+      detail:
+        "Terminal rebalance old-leg learning was re-ensured from durable performance snapshot",
+    });
+  }
+
+  return null;
 }
 
 function mapRebalanceReconciliationOutcome(
@@ -359,6 +497,34 @@ async function recoverReconcilingAction(
       await input.stateRepository.upsert(reconciliationPosition);
     }
 
+    if (
+      latestAction.type === "CLOSE" &&
+      position !== null &&
+      position.status === "CLOSED"
+    ) {
+      const closeRequest = CloseActionRequestPayloadSchema.safeParse(
+        latestAction.requestPayload,
+      );
+      if (closeRequest.success) {
+        const performanceSnapshot = readPerformanceSnapshot(latestAction);
+        await runLessonHookIdempotent({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          position,
+          ...(performanceSnapshot === undefined
+            ? {}
+            : { performanceSnapshotPosition: performanceSnapshot }),
+          closedAction: latestAction,
+          reason: closeRequest.data.reason,
+          now: input.now,
+        });
+      }
+    }
+
     const failedAction = {
       ...latestAction,
       status: transitionActionStatus(latestAction.status, "FAILED"),
@@ -483,6 +649,9 @@ export async function reconcilePortfolio(
             ...(input.postCloseSwapHook === undefined
               ? {}
               : { postCloseSwapHook: input.postCloseSwapHook }),
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
           });
 
           records.push(
@@ -515,6 +684,9 @@ export async function reconcilePortfolio(
             ...(input.runtimeControlStore === undefined
               ? {}
               : { runtimeControlStore: input.runtimeControlStore }),
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
           });
 
           records.push(
@@ -654,6 +826,9 @@ export async function reconcilePortfolio(
             ...(input.postClaimSwapHook === undefined
               ? {}
               : { postClaimSwapHook: input.postClaimSwapHook }),
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
             ...(input.claimCompoundRiskGuardProvider === undefined
               ? {}
               : {
@@ -683,6 +858,26 @@ export async function reconcilePortfolio(
 
   const allPositions = await input.stateRepository.list();
   const allActions = await input.actionRepository.list();
+
+  if (input.dryRun !== true) {
+    for (const action of allActions) {
+      const learningRecord = await ensureTerminalClosedPositionLearning({
+        action,
+        stateRepository: input.stateRepository,
+        ...(input.lessonHook === undefined
+          ? {}
+          : { lessonHook: input.lessonHook }),
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        now,
+      });
+      if (learningRecord !== null) {
+        records.push(learningRecord);
+      }
+    }
+  }
+
   const wallets = getWalletsToInspect(allPositions, allActions, input.wallets);
 
   for (const wallet of wallets) {

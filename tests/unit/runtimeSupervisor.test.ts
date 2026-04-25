@@ -1200,6 +1200,11 @@ describe("runtime supervisor", () => {
         dataIncomplete: false,
         circuitBreakerState: "OFF",
       }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
       now: () => "2026-04-22T10:00:00.000Z",
     });
 
