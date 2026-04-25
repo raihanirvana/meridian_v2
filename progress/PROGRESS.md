@@ -634,9 +634,9 @@ Status: Complete
 
 ## Next Recommended Step
 
-- Batch 24 — StrategyDecisionValidator + deploy integration dry-run-first
+- Audit Batch 24 sebelum menaikkan mode AI strategy di luar `recommendation_only`.
 - Prioritas implementasi berikutnya:
-  - strategy decision validator dry-run-first di Batch 24 sebelum AI strategy boleh menyentuh deploy payload live
+  - supervised dry-run dengan `ai.strategyReviewEnabled=true` dan `ai.strategyReviewMode=dry_run_payload`
   - partial-close pipeline resmi agar `N34` bisa ditutup
   - observability/hardening debt yang masih deferred
   - parity knob/UX tambahan yang sudah masuk roadmap setelah Batch 21
@@ -705,4 +705,10 @@ Status: Complete
   - `HttpAiStrategyReviewer` bisa memanggil chat-completions compatible endpoint dan menolak non-JSON / schema invalid sebagai adapter validation error
   - `reviewStrategyWithAi()` menjalankan review recommendation-only, skip AI untuk kandidat hard-filter failed, fallback deterministic saat timeout/invalid/non-JSON, dan downgrade `deploy` ber-confidence rendah menjadi `watch`
   - setiap review menulis journal `AI_STRATEGY_REVIEWED`; tidak ada path yang membuat action queue entry atau deploy payload live
-- `npm test` terakhir hijau dengan total `263` tests passed
+- Batch 24 sekarang sudah masuk:
+  - `StrategyDecisionValidator` (`strategyDecisionRules.ts`) memvalidasi rekomendasi AI terhadap score kandidat, freshness, active-bin drift, slippage, confidence, risk level, allowlist strategy, batas bins, dan simulation gate
+  - config menambah gate aman: `ai.strategyReviewEnabled`, `ai.strategyReviewMode`, `ai.allowAiStrategyForDeploy`, `ai.minAiStrategyConfidence`, serta `deploy.maxBinsBelow`, `deploy.maxBinsAbove`, `deploy.maxSlippageBps`, `deploy.requireFreshSnapshot`, dan `deploy.strategyFallbackMode`
+  - auto-deploy dari shortlist sekarang membangun payload dari `finalStrategyDecision`, bukan output AI mentah; mode default tetap `recommendation_only` dan `strategyReviewEnabled=false`
+  - mode `dry_run_payload` diblokir bila `runtime.dryRun=false`, sedangkan `guarded_auto` live tidak memakai AI payload kecuali `allowAiStrategyForDeploy=true`
+  - journal `STRATEGY_DECISION_VALIDATED` membandingkan config static, deterministic strategy, AI recommendation, dan final validated strategy; risk engine full deploy juga dijalankan sebelum dry-run/queue
+- `npm test` terakhir hijau dengan total `276` tests passed

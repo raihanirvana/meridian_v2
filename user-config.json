@@ -58,7 +58,11 @@
     "generalModel": "gpt-4.1-mini",
     "managementModel": "gpt-4.1-mini",
     "screeningModel": "gpt-4.1-mini",
-    "timeoutMs": 3000
+    "timeoutMs": 3000,
+    "strategyReviewEnabled": false,
+    "strategyReviewMode": "recommendation_only",
+    "allowAiStrategyForDeploy": false,
+    "minAiStrategyConfidence": 0.7
   },
   "deploy": {
     "defaultAmountSol": 0.25,
@@ -69,7 +73,12 @@
     "binsBelow": 69,
     "binsAbove": 0,
     "slippageBps": 300,
-    "maxActiveBinDrift": 3
+    "maxActiveBinDrift": 3,
+    "maxBinsBelow": 120,
+    "maxBinsAbove": 120,
+    "maxSlippageBps": 300,
+    "requireFreshSnapshot": true,
+    "strategyFallbackMode": "config_static"
   },
   "notifications": {
     "telegramEnabled": false,

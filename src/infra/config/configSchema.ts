@@ -11,6 +11,17 @@ export const AiModeSchema = z.enum([
   "advisory",
   "constrained_action",
 ]);
+export const AiStrategyReviewModeSchema = z.enum([
+  "recommendation_only",
+  "dry_run_payload",
+  "manual_live",
+  "guarded_auto",
+]);
+export const StrategyFallbackModeSchema = z.enum([
+  "config_static",
+  "deterministic_best",
+  "reject",
+]);
 
 export const EnvSecretsSchema = z.object({
   WALLET_PRIVATE_KEY: z.string().min(1),
@@ -92,6 +103,12 @@ export const UserConfigSchema = z
         managementModel: z.string().min(1).optional(),
         screeningModel: z.string().min(1).optional(),
         timeoutMs: z.number().int().positive().optional(),
+        strategyReviewEnabled: z.boolean().default(false),
+        strategyReviewMode: AiStrategyReviewModeSchema.default(
+          "recommendation_only",
+        ),
+        allowAiStrategyForDeploy: z.boolean().default(false),
+        minAiStrategyConfidence: z.number().min(0).max(1).default(0.7),
       })
       .strict(),
     deploy: z
@@ -105,6 +122,12 @@ export const UserConfigSchema = z
         binsAbove: z.number().int().nonnegative().default(0),
         slippageBps: z.number().int().positive().max(10_000).default(300),
         maxActiveBinDrift: z.number().int().nonnegative().default(3),
+        maxBinsBelow: z.number().int().nonnegative().default(120),
+        maxBinsAbove: z.number().int().nonnegative().default(120),
+        maxSlippageBps: z.number().int().positive().max(10_000).default(300),
+        requireFreshSnapshot: z.boolean().default(true),
+        strategyFallbackMode:
+          StrategyFallbackModeSchema.default("config_static"),
       })
       .strict(),
     notifications: z
@@ -169,6 +192,30 @@ export const UserConfigSchema = z
         code: z.ZodIssueCode.custom,
         path: ["deploy", "defaultAmountSol"],
         message: "must be greater than or equal to minAmountSol",
+      });
+    }
+
+    if (config.deploy.binsBelow > config.deploy.maxBinsBelow) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["deploy", "binsBelow"],
+        message: "must be less than or equal to maxBinsBelow",
+      });
+    }
+
+    if (config.deploy.binsAbove > config.deploy.maxBinsAbove) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["deploy", "binsAbove"],
+        message: "must be less than or equal to maxBinsAbove",
+      });
+    }
+
+    if (config.deploy.slippageBps > config.deploy.maxSlippageBps) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["deploy", "slippageBps"],
+        message: "must be less than or equal to maxSlippageBps",
       });
     }
 

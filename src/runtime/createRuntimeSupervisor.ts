@@ -1,4 +1,5 @@
 import type { DlmmGateway } from "../adapters/dlmm/DlmmGateway.js";
+import type { AiStrategyReviewer } from "../adapters/llm/AiStrategyReviewer.js";
 import type { LlmGateway } from "../adapters/llm/LlmGateway.js";
 import type { PriceGateway } from "../adapters/pricing/PriceGateway.js";
 import type { ScreeningGateway } from "../adapters/screening/ScreeningGateway.js";
@@ -15,7 +16,14 @@ import type {
   ManagementSignals,
 } from "../domain/rules/managementRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
-import type { PortfolioRiskPolicy } from "../domain/rules/riskRules.js";
+import {
+  evaluatePortfolioRisk,
+  type PortfolioRiskPolicy,
+} from "../domain/rules/riskRules.js";
+import {
+  type FinalStrategyDecision,
+  validateStrategyDecision,
+} from "../domain/rules/strategyDecisionRules.js";
 import type { UserConfig } from "../infra/config/configSchema.js";
 import { createLogger } from "../infra/logging/logger.js";
 import type { Position } from "../domain/entities/Position.js";
@@ -41,6 +49,7 @@ import type { LessonPromptService } from "../app/services/LessonPromptService.js
 import { DefaultPolicyProvider } from "../app/services/PolicyProvider.js";
 import { DefaultSignalWeightsProvider } from "../app/services/SignalWeightsProvider.js";
 import { createPostClaimSwapHook } from "../app/usecases/executePostClaimSwap.js";
+import { reviewStrategyWithAi } from "../app/usecases/reviewStrategyWithAi.js";
 
 export interface RuntimeSupervisorInput {
   wallet: string;
@@ -67,6 +76,7 @@ export interface RuntimeSupervisorInput {
     priceGateway: PriceGateway;
     swapGateway?: SwapGateway;
     llmGateway?: LlmGateway;
+    aiStrategyReviewer?: AiStrategyReviewer;
     notifierGateway?: NotifierGateway;
   };
   signalProvider: (input: {
@@ -163,6 +173,7 @@ function buildAutoDeployPayload(input: {
   poolInfo: Awaited<ReturnType<DlmmGateway["getPoolInfo"]>>;
   deployConfig: UserConfig["deploy"];
   solPriceUsd: number;
+  finalStrategyDecision?: FinalStrategyDecision;
 }): DeployActionRequestPayload {
   const tokenXMint = asOptionalStringFromRecord(
     input.candidate.tokenRiskSnapshot,
@@ -185,8 +196,16 @@ function buildAutoDeployPayload(input: {
   }
 
   const activeBin = input.poolInfo.activeBin;
-  const rangeLowerBin = activeBin - input.deployConfig.binsBelow;
-  const rangeUpperBin = activeBin + input.deployConfig.binsAbove;
+  const binsBelow =
+    input.finalStrategyDecision?.binsBelow ?? input.deployConfig.binsBelow;
+  const binsAbove =
+    input.finalStrategyDecision?.binsAbove ?? input.deployConfig.binsAbove;
+  const slippageBps =
+    input.finalStrategyDecision?.slippageBps ?? input.deployConfig.slippageBps;
+  const strategy =
+    input.finalStrategyDecision?.strategy ?? input.deployConfig.strategy;
+  const rangeLowerBin = activeBin - binsBelow;
+  const rangeUpperBin = activeBin + binsAbove;
   const feeTvlRatio = asOptionalNumberFromRecord(
     input.candidate.screeningSnapshot,
     "feeToTvlRatio",
@@ -204,8 +223,8 @@ function buildAutoDeployPayload(input: {
     quoteMint: tokenYMint,
     amountBase,
     amountQuote,
-    slippageBps: input.deployConfig.slippageBps,
-    strategy: input.deployConfig.strategy,
+    slippageBps,
+    strategy,
     rangeLowerBin,
     rangeUpperBin,
     initialActiveBin: activeBin,
@@ -309,6 +328,71 @@ export function createRuntimeSupervisor(
     });
   }
 
+  async function appendStrategyDecisionJournal(inputEvent: {
+    timestamp: string;
+    candidate: Candidate;
+    finalStrategyDecision: FinalStrategyDecision;
+    aiSource: string | null;
+    aiError?: string | null;
+    riskDecision?: {
+      allowed: boolean;
+      decision: string;
+      reason: string;
+      blockingRules: string[];
+    };
+  }): Promise<void> {
+    await input.stores.journalRepository.append({
+      timestamp: inputEvent.timestamp,
+      eventType: "STRATEGY_DECISION_VALIDATED",
+      actor: inputEvent.finalStrategyDecision.source === "AI" ? "ai" : "system",
+      wallet: input.wallet,
+      positionId: null,
+      actionId: null,
+      before: null,
+      after: {
+        candidateId: inputEvent.candidate.candidateId,
+        poolAddress: inputEvent.candidate.poolAddress,
+        symbolPair: inputEvent.candidate.symbolPair,
+        configStaticStrategy: {
+          strategy: input.config.deploy.strategy,
+          binsBelow: input.config.deploy.binsBelow,
+          binsAbove: input.config.deploy.binsAbove,
+          slippageBps: input.config.deploy.slippageBps,
+        },
+        deterministicStrategy: {
+          recommendedByRules:
+            inputEvent.candidate.strategySuitability.recommendedByRules,
+          curveScore: inputEvent.candidate.strategySuitability.curveScore,
+          spotScore: inputEvent.candidate.strategySuitability.spotScore,
+          bidAskScore: inputEvent.candidate.strategySuitability.bidAskScore,
+          riskFlags: inputEvent.candidate.strategySuitability.strategyRiskFlags,
+        },
+        aiStrategy: {
+          source: inputEvent.aiSource,
+          error: inputEvent.aiError ?? null,
+          recommendedStrategy:
+            inputEvent.finalStrategyDecision.aiRecommendedStrategy,
+        },
+        finalStrategyDecision: inputEvent.finalStrategyDecision,
+        ...(inputEvent.riskDecision === undefined
+          ? {}
+          : { riskDecision: inputEvent.riskDecision }),
+      },
+      txIds: [],
+      resultStatus: inputEvent.finalStrategyDecision.rejected
+        ? "REJECTED"
+        : "VALIDATED",
+      error:
+        inputEvent.finalStrategyDecision.rejected ||
+        inputEvent.riskDecision?.allowed === false
+          ? [
+              ...inputEvent.finalStrategyDecision.riskFlags,
+              ...(inputEvent.riskDecision?.blockingRules ?? []),
+            ].join("; ")
+          : null,
+    });
+  }
+
   async function maybeAutoDeployFromShortlist(
     screening: RunScreeningCycleResult,
   ): Promise<void> {
@@ -324,6 +408,22 @@ export function createRuntimeSupervisor(
         actionId: null,
         resultStatus: "SKIPPED",
         detail: "auto deploy skipped because shortlist is empty",
+      });
+      return;
+    }
+
+    if (
+      input.config.ai.strategyReviewMode === "dry_run_payload" &&
+      !input.config.runtime.dryRun
+    ) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "BLOCKED",
+        detail:
+          "auto deploy blocked because ai.strategyReviewMode=dry_run_payload cannot submit live",
+        error: "dry_run_payload mode requires runtime.dryRun=true",
       });
       return;
     }
@@ -423,6 +523,31 @@ export function createRuntimeSupervisor(
     }
 
     const solPrice = await input.gateways.priceGateway.getSolPriceUsd();
+    const strategyReviews = input.config.ai.strategyReviewEnabled
+      ? await reviewStrategyWithAi({
+          wallet: input.wallet,
+          candidates: screening.shortlist,
+          aiMode: input.config.ai.mode,
+          ...(input.gateways.aiStrategyReviewer === undefined
+            ? {}
+            : { reviewer: input.gateways.aiStrategyReviewer }),
+          journalRepository: input.stores.journalRepository,
+          minConfidence: input.config.ai.minAiStrategyConfidence,
+          timeoutMs: input.aiTimeoutMs ?? input.config.ai.timeoutMs ?? 500,
+          defaults: {
+            binsBelow: input.config.deploy.binsBelow,
+            binsAbove: input.config.deploy.binsAbove,
+            slippageBps: input.config.deploy.slippageBps,
+          },
+          ...(input.now === undefined ? {} : { now: input.now }),
+        })
+      : null;
+    const strategyReviewByCandidateId = new Map(
+      (strategyReviews?.reviews ?? []).map((review) => [
+        review.candidateId,
+        review,
+      ]),
+    );
     let deployedThisCycle = 0;
     for (const candidate of screening.shortlist) {
       if (deployedThisCycle >= input.config.deploy.maxAutoDeploysPerCycle) {
@@ -433,12 +558,126 @@ export function createRuntimeSupervisor(
         const poolInfo = await input.gateways.dlmmGateway.getPoolInfo(
           candidate.poolAddress,
         );
+        const reviewItem = strategyReviewByCandidateId.get(
+          candidate.candidateId,
+        );
+        const requestedStrategyMode = input.config.ai.strategyReviewEnabled
+          ? input.config.ai.strategyReviewMode
+          : "recommendation_only";
+        const strategyMode =
+          requestedStrategyMode === "manual_live" ||
+          (requestedStrategyMode === "guarded_auto" &&
+            !input.config.runtime.dryRun &&
+            !input.config.ai.allowAiStrategyForDeploy)
+            ? "recommendation_only"
+            : requestedStrategyMode;
+        const finalStrategyDecision = validateStrategyDecision({
+          candidate,
+          mode: strategyMode,
+          aiReview: reviewItem?.review ?? null,
+          configStrategy: {
+            strategy: input.config.deploy.strategy,
+            binsBelow: input.config.deploy.binsBelow,
+            binsAbove: input.config.deploy.binsAbove,
+            slippageBps: input.config.deploy.slippageBps,
+          },
+          policy: {
+            minCandidateScore: 55,
+            minAiStrategyConfidence: input.config.ai.minAiStrategyConfidence,
+            allowedStrategies: ["spot", "curve", "bid_ask"],
+            maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
+            maxBinsBelow: input.config.deploy.maxBinsBelow,
+            maxBinsAbove: input.config.deploy.maxBinsAbove,
+            maxSlippageBps: input.config.deploy.maxSlippageBps,
+            requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
+            strategyFallbackMode: input.config.deploy.strategyFallbackMode,
+          },
+          simulationPassed: true,
+        });
+        await appendStrategyDecisionJournal({
+          timestamp,
+          candidate,
+          finalStrategyDecision,
+          aiSource: reviewItem?.source ?? null,
+          aiError: reviewItem?.aiError ?? null,
+        });
+        if (finalStrategyDecision.rejected) {
+          await appendAutoDeployJournal({
+            timestamp,
+            candidate,
+            actionId: null,
+            resultStatus: "BLOCKED",
+            detail: "auto deploy blocked by strategy decision validator",
+            error: finalStrategyDecision.riskFlags.join("; "),
+          });
+          continue;
+        }
+
         const payload = buildAutoDeployPayload({
           candidate,
           poolInfo,
           deployConfig: input.config.deploy,
           solPriceUsd: solPrice.priceUsd,
+          finalStrategyDecision,
         });
+
+        const riskResult = evaluatePortfolioRisk({
+          action: "DEPLOY",
+          portfolio,
+          policy: input.config.risk,
+          proposedAllocationUsd: payload.estimatedValueUsd,
+          proposedPoolAddress: payload.poolAddress,
+          proposedTokenMints: [
+            ...new Set([payload.tokenXMint, payload.tokenYMint]),
+          ],
+          recentNewDeploys: recentDeploys.length + deployedThisCycle,
+          position: null,
+          solPriceUsd: solPrice.priceUsd,
+        });
+        if (!riskResult.allowed) {
+          await input.stores.journalRepository.append({
+            timestamp,
+            eventType: "DEPLOY_REQUEST_BLOCKED_BY_RISK",
+            actor: "system",
+            wallet: input.wallet,
+            positionId: null,
+            actionId: null,
+            before: null,
+            after: {
+              requestPayload: payload,
+              riskDecision: riskResult.decision,
+              blockingRules: riskResult.blockingRules,
+              projectedExposureByPool: riskResult.projectedExposureByPool,
+              projectedExposureByToken: riskResult.projectedExposureByToken,
+            },
+            txIds: [],
+            resultStatus: "BLOCKED",
+            error: riskResult.reason,
+          });
+          await appendStrategyDecisionJournal({
+            timestamp,
+            candidate,
+            finalStrategyDecision,
+            aiSource: reviewItem?.source ?? null,
+            aiError: reviewItem?.aiError ?? null,
+            riskDecision: {
+              allowed: riskResult.allowed,
+              decision: riskResult.decision,
+              reason: riskResult.reason,
+              blockingRules: riskResult.blockingRules,
+            },
+          });
+          await appendAutoDeployJournal({
+            timestamp,
+            candidate,
+            actionId: null,
+            resultStatus: "BLOCKED",
+            detail: "auto deploy blocked by full portfolio risk engine",
+            payload,
+            error: riskResult.reason,
+          });
+          continue;
+        }
 
         if (payload.estimatedValueUsd > portfolio.availableBalance) {
           await appendAutoDeployJournal({

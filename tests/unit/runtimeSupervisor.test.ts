@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
+import { MockAiStrategyReviewer } from "../../src/adapters/llm/AiStrategyReviewer.js";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { MockScreeningGateway } from "../../src/adapters/screening/ScreeningGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
@@ -1040,5 +1041,203 @@ describe("runtime supervisor", () => {
         }),
       ]),
     );
+  });
+
+  it("writes a dry-run report comparing config, deterministic, AI, and final strategy decisions", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    const userConfig = buildUserConfig({
+      ai: {
+        mode: "advisory",
+        strategyReviewEnabled: true,
+        strategyReviewMode: "dry_run_payload",
+        allowAiStrategyForDeploy: false,
+        minAiStrategyConfidence: 0.7,
+      },
+      deploy: {
+        defaultAmountSol: 0.25,
+        minAmountSol: 0.1,
+        autoDeployFromShortlist: true,
+        maxAutoDeploysPerCycle: 1,
+        strategy: "bid_ask",
+        binsBelow: 69,
+        binsAbove: 0,
+        slippageBps: 300,
+        maxActiveBinDrift: 3,
+        maxBinsBelow: 120,
+        maxBinsAbove: 120,
+        maxSlippageBps: 300,
+        requireFreshSnapshot: true,
+        strategyFallbackMode: "config_static",
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig,
+      stores,
+      gateways: {
+        aiStrategyReviewer: new MockAiStrategyReviewer({
+          reviewCandidateStrategy: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              decision: "deploy",
+              recommendedStrategy: "spot",
+              confidence: 0.92,
+              riskLevel: "low",
+              binsBelow: 12,
+              binsAbove: 8,
+              slippageBps: 150,
+              maxPositionAgeMinutes: 240,
+              stopLossPct: 5,
+              takeProfitPct: 10,
+              trailingStopPct: 2,
+              reasons: ["ai_prefers_tighter_spot_range"],
+              rejectIf: [],
+            },
+          },
+        }),
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [buildCandidate()],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "error",
+            error: new Error("deploy should not run during dry-run"),
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              binStep: 80,
+              activeBin: 100,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    const journal = await stores.journalRepository.list();
+    const strategyDecision = journal.find(
+      (event) => event.eventType === "STRATEGY_DECISION_VALIDATED",
+    );
+    const autoDeploy = journal.find(
+      (event) =>
+        event.eventType === "AUTO_DEPLOY_FROM_SHORTLIST" &&
+        event.resultStatus === "DRY_RUN",
+    );
+
+    expect(strategyDecision?.after).toMatchObject({
+      configStaticStrategy: {
+        strategy: "bid_ask",
+        binsBelow: 69,
+      },
+      aiStrategy: {
+        source: "AI",
+        recommendedStrategy: "spot",
+      },
+      finalStrategyDecision: {
+        source: "AI",
+        strategy: "spot",
+        binsBelow: 12,
+        binsAbove: 8,
+      },
+    });
+    expect(autoDeploy?.after).toMatchObject({
+      requestPayload: {
+        strategy: "spot",
+        rangeLowerBin: 88,
+        rangeUpperBin: 108,
+        slippageBps: 150,
+      },
+    });
   });
 });

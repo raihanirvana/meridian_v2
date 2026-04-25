@@ -150,6 +150,21 @@ export {
   type ScreeningPolicy,
 } from "./domain/rules/screeningRules.js";
 export {
+  DeployStrategySchema,
+  FinalStrategyDecisionSchema,
+  StrategyDecisionDefaultsSchema,
+  StrategyDecisionModeSchema,
+  StrategyDecisionValidationPolicySchema,
+  StrategyFallbackModeSchema,
+  validateStrategyDecision,
+  type DeployStrategy,
+  type FinalStrategyDecision,
+  type StrategyDecisionDefaults,
+  type StrategyDecisionMode,
+  type StrategyDecisionValidationPolicy,
+  type StrategyFallbackMode,
+} from "./domain/rules/strategyDecisionRules.js";
+export {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
   buildMarketFeatureSnapshot,
@@ -680,8 +695,10 @@ export {
 } from "./app/workers/reportingWorker.js";
 export {
   AiModeSchema,
+  AiStrategyReviewModeSchema,
   EnvSecretsSchema,
   ResolvedConfigSchema,
+  StrategyFallbackModeSchema as ConfigStrategyFallbackModeSchema,
   UserConfigSchema,
   type EnvSecrets,
   type ResolvedConfig,

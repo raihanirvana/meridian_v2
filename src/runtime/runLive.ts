@@ -8,6 +8,7 @@ import { HttpTokenIntelGateway } from "../adapters/analytics/HttpTokenIntelGatew
 import { HttpDlmmGateway } from "../adapters/dlmm/HttpDlmmGateway.js";
 import { MeteoraSdkDlmmGateway } from "../adapters/dlmm/MeteoraSdkDlmmGateway.js";
 import { JupiterApiSwapGateway } from "../adapters/jupiter/JupiterApiSwapGateway.js";
+import { HttpAiStrategyReviewer } from "../adapters/llm/HttpAiStrategyReviewer.js";
 import { HttpLlmGateway } from "../adapters/llm/HttpLlmGateway.js";
 import { JupiterSolPriceGateway } from "../adapters/pricing/JupiterSolPriceGateway.js";
 import { HttpTelegramNotifierGateway } from "../adapters/telegram/HttpTelegramNotifierGateway.js";
@@ -514,6 +515,26 @@ async function main() {
             : { timeoutMs: config.user.ai.timeoutMs }),
         })
       : undefined;
+  const liveAiStrategyReviewer =
+    config.user.ai.strategyReviewEnabled &&
+    config.user.ai.mode !== "disabled" &&
+    config.secrets.LLM_BASE_URL !== undefined &&
+    (config.user.ai.screeningModel !== undefined ||
+      config.user.ai.generalModel !== undefined)
+      ? new HttpAiStrategyReviewer({
+          baseUrl: config.secrets.LLM_BASE_URL,
+          ...(config.secrets.LLM_API_KEY === undefined
+            ? {}
+            : { apiKey: config.secrets.LLM_API_KEY }),
+          model:
+            config.user.ai.screeningModel ??
+            config.user.ai.generalModel ??
+            "gpt-4.1-mini",
+          ...(config.user.ai.timeoutMs === undefined
+            ? {}
+            : { timeoutMs: config.user.ai.timeoutMs }),
+        })
+      : undefined;
   const liveTelegramNotifier =
     config.secrets.TELEGRAM_BOT_TOKEN === undefined
       ? undefined
@@ -562,6 +583,9 @@ async function main() {
       priceGateway,
       ...(swapGateway === undefined ? {} : { swapGateway }),
       ...(liveLlmGateway === undefined ? {} : { llmGateway: liveLlmGateway }),
+      ...(liveAiStrategyReviewer === undefined
+        ? {}
+        : { aiStrategyReviewer: liveAiStrategyReviewer }),
       ...(config.user.notifications.telegramEnabled &&
       liveTelegramNotifier !== undefined &&
       config.user.notifications.alertChatId !== undefined
@@ -697,6 +721,24 @@ async function main() {
             null,
         },
         "live LLM gateway configured",
+      );
+    }
+  }
+
+  if (config.user.ai.strategyReviewEnabled) {
+    if (liveAiStrategyReviewer === undefined) {
+      logger.warn(
+        "AI strategy review is enabled but live AiStrategyReviewer is not fully configured; strategy validation will use deterministic fallback",
+      );
+    } else {
+      logger.info(
+        {
+          strategyReviewMode: config.user.ai.strategyReviewMode,
+          allowAiStrategyForDeploy: config.user.ai.allowAiStrategyForDeploy,
+          minAiStrategyConfidence: config.user.ai.minAiStrategyConfidence,
+          model: config.user.ai.screeningModel ?? config.user.ai.generalModel,
+        },
+        "live AI strategy reviewer configured",
       );
     }
   }
