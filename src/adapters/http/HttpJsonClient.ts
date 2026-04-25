@@ -75,7 +75,11 @@ function buildUrl(input: {
   path: string;
   query?: Record<string, string | number | boolean | null | undefined>;
 }): string {
-  const url = new URL(input.path, input.baseUrl);
+  const baseUrl = input.baseUrl.endsWith("/")
+    ? input.baseUrl
+    : `${input.baseUrl}/`;
+  const relativePath = input.path.replace(/^\/+/, "");
+  const url = new URL(relativePath, baseUrl);
 
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value === null || value === undefined) {

@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-24 (pre-dry-run safety audit)
+Last updated: 2026-04-25 (Batch 25 AI rebalance planner)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -15,6 +15,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - Tidak ada item aktif saat ini.
 
 ## Deferred
+
+- `N71` Batch 25 AI rebalance pool snapshot sudah memakai metadata entry + fresh pool active-bin, tetapi belum enrichment market pool live penuh
+  Status: deferred
+  Kenapa ditunda: planner/validator/queue boundary sudah tersedia, dan snapshot AI sekarang tidak lagi memakai value posisi sebagai TVL pool serta memakai `getPoolInfo()` untuk fresh active bin. Namun `runManagementCycle()` masih belum punya feed live penuh untuk fee velocity, trend direction/mean reversion real-time, dan depth rich snapshot setelah posisi berjalan.
+  Revisit: saat TokenIntel/PoolDiscovery atau pool-memory snapshot feed siap dipakai oleh management worker; sebelum menaikkan AI rebalance dari `advisory` ke `dry_run` atau `constrained_action`.
 
 - `N4` orphan temp artifact cleanup di [FileStore.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/storage/FileStore.ts:1)
   Status: deferred
@@ -475,6 +480,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Files: [LessonPromptService.ts](c:/Users/PC/Desktop/meridian_v2/src/app/services/LessonPromptService.ts:32), [AiAdvisoryService.ts](c:/Users/PC/Desktop/meridian_v2/src/app/services/AiAdvisoryService.ts:192)
 
 ## Closed
+
+- `N70` Batch 25 explicit pre-close redeploy simulation gateway contract
+  Status: closed
+  Kenapa ditutup: `DlmmGateway` sekarang memiliki `simulateClosePosition()` dan `simulateDeployLiquidity()`. Native Meteora SDK gateway membangun transaksi close/remove dan redeploy lalu menjalankan simulation tanpa submit; `runManagementCycle()` menjalankan kedua simulasi sebelum action `REBALANCE` masuk queue saat `requireRebalanceSimulation=true`.
 
 - `F1` transition ke `OPEN` tidak lagi hardcoded dari literal `DEPLOYING`; sekarang memakai `pendingPosition.status`.
 - `F2` gateway position hanya dianggap confirmed jika status benar-benar `OPEN`.

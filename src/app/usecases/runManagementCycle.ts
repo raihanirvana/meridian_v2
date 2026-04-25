@@ -6,8 +6,10 @@ import type { StateRepository } from "../../adapters/storage/StateRepository.js"
 import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { LlmGateway } from "../../adapters/llm/LlmGateway.js";
+import type { DlmmGateway, PoolInfo } from "../../adapters/dlmm/DlmmGateway.js";
 import type { Position } from "../../domain/entities/Position.js";
 import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
+import type { RebalanceReviewInput } from "../../domain/entities/RebalanceDecision.js";
 import {
   evaluateManagementAction,
   type ManagementEvaluationResult,
@@ -19,10 +21,15 @@ import {
   type PortfolioRiskEvaluationResult,
   type PortfolioRiskPolicy,
 } from "../../domain/rules/riskRules.js";
+import {
+  validateRebalanceDecision,
+  type RebalanceDecisionValidationResult,
+} from "../../domain/rules/rebalanceDecisionRules.js";
 import type { Actor, ManagementAction } from "../../domain/types/enums.js";
 import type { UserConfig } from "../../infra/config/configSchema.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { adviseManagementDecision } from "../services/AiAdvisoryService.js";
+import type { AiRebalancePlanner } from "../services/AiRebalancePlanner.js";
 import { type LessonPromptService } from "../services/LessonPromptService.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
@@ -30,6 +37,7 @@ import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 import { recordPoolSnapshot } from "./recordPoolSnapshot.js";
 import { requestClose } from "./requestClose.js";
 import { requestClaimFees } from "./requestClaimFees.js";
+import { reviewRebalanceWithAi } from "./reviewRebalanceWithAi.js";
 import {
   deriveRebalanceCapitalRequirement,
   requestRebalance,
@@ -73,6 +81,105 @@ function deriveSnapshotPnlPct(position: Position): number {
   }
 
   return (position.unrealizedPnlUsd / estimatedInitialValueUsd) * 100;
+}
+
+function deriveDailyLossRemainingSol(input: {
+  portfolio: PortfolioState;
+  riskPolicy: PortfolioRiskPolicy;
+}): number | null {
+  if (
+    input.riskPolicy.maxDailyLossSol === undefined ||
+    input.portfolio.solPriceUsd === undefined ||
+    input.portfolio.solPriceUsd <= 0
+  ) {
+    return null;
+  }
+
+  const dailyLossSol = Math.max(
+    0,
+    -input.portfolio.dailyRealizedPnl / input.portfolio.solPriceUsd,
+  );
+  return Math.max(0, input.riskPolicy.maxDailyLossSol - dailyLossSol);
+}
+
+function buildRebalanceReviewInput(input: {
+  position: Position;
+  portfolio: PortfolioState;
+  signals: ManagementSignals;
+  evaluation: ManagementEvaluationResult;
+  riskPolicy: PortfolioRiskPolicy;
+  managementPolicy: ManagementPolicy;
+  poolInfo?: PoolInfo;
+  now: string;
+}): RebalanceReviewInput {
+  const ageMinutes = diffMinutes(input.position.openedAt, input.now);
+  const outOfRangeMinutes = diffMinutes(
+    input.position.outOfRangeSince,
+    input.now,
+  );
+  const pnlPct = deriveSnapshotPnlPct(input.position);
+  const metadata = input.position.entryMetadata;
+  const binStep = input.poolInfo?.binStep ?? metadata?.binStep ?? null;
+  const liveActiveBin = input.poolInfo?.activeBin ?? null;
+  const activeBinAtEntry = metadata?.activeBinAtEntry ?? null;
+  const lastRebalanceAgeMinutes =
+    input.position.lastRebalanceAt == null
+      ? null
+      : diffMinutes(input.position.lastRebalanceAt, input.now);
+
+  return {
+    position: {
+      positionId: input.position.positionId,
+      poolAddress: input.position.poolAddress,
+      strategy: input.position.strategy,
+      lowerBin: input.position.rangeLowerBin,
+      upperBin: input.position.rangeUpperBin,
+      activeBinAtEntry,
+      currentActiveBin: input.position.activeBin,
+      binStep,
+      ageMinutes,
+      outOfRangeMinutes,
+      positionValueUsd: input.position.currentValueUsd,
+      unclaimedFeesUsd: input.signals.claimableFeesUsd,
+      pnlPct,
+      rebalanceCount: input.position.rebalanceCount,
+      lastRebalanceAgeMinutes,
+      partialCloseCount: input.position.partialCloseCount,
+    },
+    pool: {
+      poolAddress: input.position.poolAddress,
+      tvlUsd: metadata?.poolTvlUsd ?? 0,
+      volume5mUsd: metadata?.volume5mUsd ?? 0,
+      volume15mUsd: metadata?.volume15mUsd ?? 0,
+      volume1hUsd: metadata?.volume1hUsd ?? 0,
+      volume24hUsd: metadata?.volume24hUsd ?? 0,
+      fees15mUsd: metadata?.fees15mUsd ?? 0,
+      fees1hUsd: metadata?.fees1hUsd ?? 0,
+      feeTvlRatio24h: metadata?.feeTvlRatio24h ?? metadata?.feeTvlRatio ?? 0,
+      liquidityDepthNearActive: input.signals.liquidityCollapse
+        ? "shallow"
+        : (metadata?.liquidityDepthNearActive ?? "unknown"),
+      priceChange5mPct: metadata?.priceChange5mPct ?? 0,
+      priceChange15mPct: metadata?.priceChange15mPct ?? 0,
+      priceChange1hPct: metadata?.priceChange1hPct ?? 0,
+      volatility15m: metadata?.volatility15mPct ?? metadata?.volatility ?? 0,
+      trendDirection: metadata?.trendDirection ?? "unknown",
+      trendStrength: metadata?.trendStrength ?? "unknown",
+      meanReversionSignal: metadata?.meanReversionSignal ?? "unknown",
+      currentActiveBin: liveActiveBin,
+    },
+    walletRisk: {
+      dailyLossRemainingSol: deriveDailyLossRemainingSol({
+        portfolio: input.portfolio,
+        riskPolicy: input.riskPolicy,
+      }),
+      openPositions: input.portfolio.openPositions,
+      maxOpenPositions: input.riskPolicy.maxConcurrentPositions,
+      maxRebalancesPerPosition: input.managementPolicy.maxRebalancesPerPosition,
+      maxPositionSol: input.position.entryMetadata?.amountSol ?? null,
+    },
+    triggerReasons: input.evaluation.triggerReasons,
+  };
 }
 
 const MAX_TRAILING_SNAPSHOT_AGE_MINUTES = 15;
@@ -196,6 +303,7 @@ export interface RunManagementCycleInput {
   riskPolicy: PortfolioRiskPolicy;
   managementPolicy: ManagementPolicy;
   aiMode?: UserConfig["ai"]["mode"];
+  dlmmGateway?: DlmmGateway;
   llmGateway?: LlmGateway;
   lessonPromptService?: LessonPromptService;
   aiTimeoutMs?: number;
@@ -213,10 +321,12 @@ export interface RunManagementCycleInput {
     now: string;
     evaluation: ManagementEvaluationResult;
     signals: ManagementSignals;
+    aiRebalanceDecision?: RebalanceDecisionValidationResult | undefined;
   }) =>
     | Promise<RebalanceActionRequestPayload | null>
     | RebalanceActionRequestPayload
     | null;
+  aiRebalancePlanner?: AiRebalancePlanner;
   requestedBy?: Actor;
   dryRun?: boolean;
   claimConfig?: {
@@ -590,6 +700,242 @@ export async function runManagementCycle(
       continue;
     }
 
+    let aiRebalanceReview: Awaited<
+      ReturnType<typeof reviewRebalanceWithAi>
+    > | null = null;
+    let aiRebalanceReviewInput: RebalanceReviewInput | null = null;
+    if (
+      evaluation.action === "REBALANCE" &&
+      input.managementPolicy.aiRebalanceEnabled === true
+    ) {
+      const aiRebalanceMode =
+        input.managementPolicy.aiRebalanceMode ?? "advisory";
+      const llmRebalancePlanner =
+        input.llmGateway?.reviewRebalanceDecision === undefined
+          ? undefined
+          : ({
+              reviewRebalanceDecision:
+                input.llmGateway.reviewRebalanceDecision.bind(input.llmGateway),
+            } satisfies AiRebalancePlanner);
+      const plannerForReview = input.aiRebalancePlanner ?? llmRebalancePlanner;
+      let rebalancePoolInfo: PoolInfo | undefined;
+      if (input.dlmmGateway !== undefined) {
+        try {
+          rebalancePoolInfo = await input.dlmmGateway.getPoolInfo(
+            managedPosition.poolAddress,
+          );
+        } catch {
+          rebalancePoolInfo = undefined;
+        }
+      }
+      const rebalanceReviewInput = buildRebalanceReviewInput({
+        position: managedPosition,
+        portfolio,
+        signals,
+        evaluation,
+        riskPolicy: input.riskPolicy,
+        managementPolicy: input.managementPolicy,
+        ...(rebalancePoolInfo === undefined
+          ? {}
+          : { poolInfo: rebalancePoolInfo }),
+        now,
+      });
+      aiRebalanceReviewInput = rebalanceReviewInput;
+      aiRebalanceReview = await reviewRebalanceWithAi({
+        wallet: input.wallet,
+        positionId: managedPosition.positionId,
+        mode: aiRebalanceMode,
+        review: rebalanceReviewInput,
+        ...(plannerForReview === undefined
+          ? {}
+          : { planner: plannerForReview }),
+        validationPolicy: {
+          minAiRebalanceConfidence:
+            input.managementPolicy.minAiRebalanceConfidence ?? 0.78,
+          maxRebalancesPerPosition:
+            input.managementPolicy.maxRebalancesPerPosition,
+          minPositionAgeMinutesBeforeRebalance:
+            input.managementPolicy.minPositionAgeMinutesBeforeRebalance ?? 8,
+          rebalanceCooldownMinutes:
+            input.managementPolicy.rebalanceCooldownMinutes ?? 20,
+          maxOutOfRangeMinutes: input.managementPolicy.maxOutOfRangeMinutes,
+          rebalanceEdgeThresholdPct:
+            input.managementPolicy.rebalanceEdgeThresholdPct ?? 0.1,
+          maxRebalanceBinsBelow:
+            input.managementPolicy.maxRebalanceBinsBelow ?? 90,
+          maxRebalanceBinsAbove:
+            input.managementPolicy.maxRebalanceBinsAbove ?? 90,
+          maxRebalanceSlippageBps:
+            input.managementPolicy.maxRebalanceSlippageBps ?? 150,
+          requireFreshActiveBin:
+            input.managementPolicy.requireFreshActiveBin ?? true,
+          maxActiveBinDrift: input.managementPolicy.maxActiveBinDrift ?? 3,
+          requireRebalanceSimulation: false,
+          exitInsteadOfRebalanceWhenRiskHigh:
+            input.managementPolicy.exitInsteadOfRebalanceWhenRiskHigh ?? true,
+          minTvlUsd: input.managementPolicy.minRebalancePoolTvlUsd ?? 0,
+        },
+        journalRepository: input.journalRepository,
+        actor: requestedBy,
+        now,
+      });
+
+      if (aiRebalanceMode === "dry_run") {
+        positionResults.push({
+          positionId: managedPosition.positionId,
+          managementAction: evaluation.action,
+          status: "DRY_RUN",
+          reason: `AI rebalance dry-run action: ${aiRebalanceReview.validation.action}`,
+          triggerReasons: [
+            ...evaluation.triggerReasons,
+            ...aiRebalanceReview.validation.reasonCodes,
+          ],
+          actionId: null,
+          riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
+        });
+        continue;
+      }
+
+      if (aiRebalanceMode === "constrained_action") {
+        if (!aiRebalanceReview.validation.allowed) {
+          positionResults.push({
+            positionId: managedPosition.positionId,
+            managementAction: evaluation.action,
+            status: "BLOCKED_BY_RISK",
+            reason: "AI rebalance decision blocked by validator",
+            triggerReasons: [
+              ...evaluation.triggerReasons,
+              ...aiRebalanceReview.validation.reasonCodes,
+            ],
+            actionId: null,
+            riskResult: null,
+            aiMode,
+            aiSource: aiAdvisory.source,
+            aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+            aiReasoning: aiAdvisory.aiReasoning,
+          });
+          continue;
+        }
+
+        if (aiRebalanceReview.validation.action === "hold") {
+          positionResults.push({
+            positionId: managedPosition.positionId,
+            managementAction: "HOLD",
+            status: "NO_ACTION",
+            reason: "AI rebalance planner selected hold",
+            triggerReasons: aiRebalanceReview.validation.reasonCodes,
+            actionId: null,
+            riskResult: null,
+            aiMode,
+            aiSource: aiAdvisory.source,
+            aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+            aiReasoning: aiAdvisory.aiReasoning,
+          });
+          continue;
+        }
+
+        if (aiRebalanceReview.validation.action === "claim_only") {
+          if (input.dryRun) {
+            positionResults.push({
+              positionId: managedPosition.positionId,
+              managementAction: "CLAIM_FEES",
+              status: "DRY_RUN",
+              reason: "AI rebalance planner selected claim only",
+              triggerReasons: aiRebalanceReview.validation.reasonCodes,
+              actionId: null,
+              riskResult: null,
+              aiMode,
+              aiSource: aiAdvisory.source,
+              aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+              aiReasoning: aiAdvisory.aiReasoning,
+            });
+            continue;
+          }
+
+          const action = await requestClaimFees({
+            actionQueue: input.actionQueue,
+            stateRepository: input.stateRepository,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+            payload: {
+              reason: "AI rebalance planner selected claim only",
+            },
+            requestedBy,
+            requestedAt: now,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+          });
+          positionResults.push({
+            positionId: managedPosition.positionId,
+            managementAction: "CLAIM_FEES",
+            status: "DISPATCHED",
+            reason: "AI rebalance planner selected claim only",
+            triggerReasons: aiRebalanceReview.validation.reasonCodes,
+            actionId: action.actionId,
+            riskResult: null,
+            aiMode,
+            aiSource: aiAdvisory.source,
+            aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+            aiReasoning: aiAdvisory.aiReasoning,
+          });
+          continue;
+        }
+
+        if (aiRebalanceReview.validation.action === "exit") {
+          if (input.dryRun) {
+            positionResults.push({
+              positionId: managedPosition.positionId,
+              managementAction: "CLOSE",
+              status: "DRY_RUN",
+              reason: "AI rebalance planner selected exit",
+              triggerReasons: aiRebalanceReview.validation.reasonCodes,
+              actionId: null,
+              riskResult: null,
+              aiMode,
+              aiSource: aiAdvisory.source,
+              aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+              aiReasoning: aiAdvisory.aiReasoning,
+            });
+            continue;
+          }
+
+          const action = await requestClose({
+            actionQueue: input.actionQueue,
+            stateRepository: input.stateRepository,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+            payload: {
+              reason: "AI rebalance planner selected exit",
+            },
+            requestedBy,
+            requestedAt: now,
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+          });
+          positionResults.push({
+            positionId: managedPosition.positionId,
+            managementAction: "CLOSE",
+            status: "DISPATCHED",
+            reason: "AI rebalance planner selected exit",
+            triggerReasons: aiRebalanceReview.validation.reasonCodes,
+            actionId: action.actionId,
+            riskResult: null,
+            aiMode,
+            aiSource: aiAdvisory.source,
+            aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+            aiReasoning: aiAdvisory.aiReasoning,
+          });
+          continue;
+        }
+      }
+    }
+
     const rebalancePayload =
       input.rebalancePlanner === undefined
         ? null
@@ -599,6 +945,11 @@ export async function runManagementCycle(
             now,
             evaluation,
             signals,
+            ...(aiRebalanceReview === null ||
+            (input.managementPolicy.aiRebalanceMode ?? "advisory") !==
+              "constrained_action"
+              ? {}
+              : { aiRebalanceDecision: aiRebalanceReview.validation }),
           });
 
     if (rebalancePayload === null) {
@@ -634,6 +985,121 @@ export async function runManagementCycle(
         aiReasoning: aiAdvisory.aiReasoning,
       });
       continue;
+    }
+
+    if (
+      aiRebalanceReview !== null &&
+      aiRebalanceReviewInput !== null &&
+      aiRebalanceReview.validation.action === "rebalance_same_pool" &&
+      (input.managementPolicy.requireRebalanceSimulation ?? true)
+    ) {
+      const closeSimulation =
+        input.dlmmGateway === undefined
+          ? { ok: false, reason: "DLMM gateway simulation is not wired" }
+          : await input.dlmmGateway.simulateClosePosition({
+              wallet: input.wallet,
+              positionId: managedPosition.positionId,
+              reason: rebalancePayload.reason,
+            });
+      const redeploySimulation =
+        input.dlmmGateway === undefined
+          ? { ok: false, reason: "DLMM gateway simulation is not wired" }
+          : await input.dlmmGateway.simulateDeployLiquidity({
+              wallet: input.wallet,
+              poolAddress: rebalancePayload.redeploy.poolAddress,
+              tokenXMint: rebalancePayload.redeploy.tokenXMint,
+              tokenYMint: rebalancePayload.redeploy.tokenYMint,
+              baseMint: rebalancePayload.redeploy.baseMint,
+              quoteMint: rebalancePayload.redeploy.quoteMint,
+              amountBase: rebalancePayload.redeploy.amountBase,
+              amountQuote: rebalancePayload.redeploy.amountQuote,
+              slippageBps: rebalancePayload.redeploy.slippageBps,
+              strategy: rebalancePayload.redeploy.strategy,
+              rangeLowerBin: rebalancePayload.redeploy.rangeLowerBin,
+              rangeUpperBin: rebalancePayload.redeploy.rangeUpperBin,
+              initialActiveBin: rebalancePayload.redeploy.initialActiveBin,
+            });
+      const simulationValidation = validateRebalanceDecision({
+        decision: aiRebalanceReview.decision,
+        review: aiRebalanceReviewInput,
+        policy: {
+          minAiRebalanceConfidence:
+            input.managementPolicy.minAiRebalanceConfidence ?? 0.78,
+          maxRebalancesPerPosition:
+            input.managementPolicy.maxRebalancesPerPosition,
+          minPositionAgeMinutesBeforeRebalance:
+            input.managementPolicy.minPositionAgeMinutesBeforeRebalance ?? 8,
+          rebalanceCooldownMinutes:
+            input.managementPolicy.rebalanceCooldownMinutes ?? 20,
+          maxOutOfRangeMinutes: input.managementPolicy.maxOutOfRangeMinutes,
+          rebalanceEdgeThresholdPct:
+            input.managementPolicy.rebalanceEdgeThresholdPct ?? 0.1,
+          maxRebalanceBinsBelow:
+            input.managementPolicy.maxRebalanceBinsBelow ?? 90,
+          maxRebalanceBinsAbove:
+            input.managementPolicy.maxRebalanceBinsAbove ?? 90,
+          maxRebalanceSlippageBps:
+            input.managementPolicy.maxRebalanceSlippageBps ?? 150,
+          requireFreshActiveBin:
+            input.managementPolicy.requireFreshActiveBin ?? true,
+          maxActiveBinDrift: input.managementPolicy.maxActiveBinDrift ?? 3,
+          requireRebalanceSimulation: true,
+          exitInsteadOfRebalanceWhenRiskHigh:
+            input.managementPolicy.exitInsteadOfRebalanceWhenRiskHigh ?? true,
+          minTvlUsd: input.managementPolicy.minRebalancePoolTvlUsd ?? 0,
+          closeSimulationPassed: closeSimulation.ok,
+          redeploySimulationPassed: redeploySimulation.ok,
+        },
+      });
+      aiRebalanceReview = {
+        ...aiRebalanceReview,
+        validation: simulationValidation,
+      };
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "REBALANCE_PREFLIGHT_SIMULATED",
+        actor: requestedBy,
+        wallet: input.wallet,
+        positionId: managedPosition.positionId,
+        actionId: null,
+        before: null,
+        after: {
+          closeSimulation,
+          redeploySimulation,
+          validation: simulationValidation,
+        },
+        txIds: [],
+        resultStatus: simulationValidation.allowed ? "PASSED" : "BLOCKED",
+        error: simulationValidation.allowed
+          ? null
+          : [
+              closeSimulation.ok ? null : closeSimulation.reason,
+              redeploySimulation.ok ? null : redeploySimulation.reason,
+            ]
+              .filter((reason): reason is string => reason !== null)
+              .join("; "),
+      });
+
+      if (!simulationValidation.allowed) {
+        positionResults.push({
+          positionId: managedPosition.positionId,
+          managementAction: evaluation.action,
+          status: "BLOCKED_BY_RISK",
+          reason: "AI rebalance preflight simulation failed",
+          triggerReasons: [
+            ...evaluation.triggerReasons,
+            ...simulationValidation.reasonCodes,
+          ],
+          actionId: null,
+          riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
+        });
+        continue;
+      }
     }
 
     if (

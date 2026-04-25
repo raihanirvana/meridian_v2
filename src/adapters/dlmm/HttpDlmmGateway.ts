@@ -17,6 +17,7 @@ import {
   ClosePositionResultSchema,
   DeployLiquidityRequestSchema,
   DeployLiquidityResultSchema,
+  DlmmSimulationResultSchema,
   PartialClosePositionRequestSchema,
   PartialClosePositionResultSchema,
   PoolInfoSchema,
@@ -28,6 +29,7 @@ import {
   type DeployLiquidityRequest,
   type DeployLiquidityResult,
   type DlmmGateway,
+  type DlmmSimulationResult,
   type PartialClosePositionRequest,
   type PartialClosePositionResult,
   type PoolInfo,
@@ -88,6 +90,16 @@ export class HttpDlmmGateway implements DlmmGateway {
     });
   }
 
+  public async simulateDeployLiquidity(
+    request: DeployLiquidityRequest,
+  ): Promise<DlmmSimulationResult> {
+    DeployLiquidityRequestSchema.parse(request);
+    return DlmmSimulationResultSchema.parse({
+      ok: false,
+      reason: "HTTP DLMM gateway does not expose deploy simulation",
+    });
+  }
+
   public async closePosition(
     request: ClosePositionRequest,
   ): Promise<ClosePositionResult> {
@@ -96,6 +108,16 @@ export class HttpDlmmGateway implements DlmmGateway {
       path: "/positions/close",
       body: ClosePositionRequestSchema.parse(request),
       responseSchema: ClosePositionResultSchema,
+    });
+  }
+
+  public async simulateClosePosition(
+    request: ClosePositionRequest,
+  ): Promise<DlmmSimulationResult> {
+    ClosePositionRequestSchema.parse(request);
+    return DlmmSimulationResultSchema.parse({
+      ok: false,
+      reason: "HTTP DLMM gateway does not expose close simulation",
     });
   }
 

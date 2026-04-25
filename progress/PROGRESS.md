@@ -1,10 +1,34 @@
 # Meridian V2 Progress
 
-Last updated: 2026-04-24
-Current batch: Batch 21 - Advanced exits and compounding automation
-Status: Complete
+Last updated: 2026-04-25
+Current batch: Batch 25 - AI Rebalance Planner
+Status: Implemented with deferred enrichment gap (`N71`)
 
-## Scope Batch 21
+## Scope Batch 25
+
+- Add AI rebalance planner that only runs after deterministic triggers
+- Split maintenance actions into `HOLD`, `CLAIM_ONLY`, `REBALANCE_SAME_POOL`, and `EXIT`
+- Add strict JSON rebalance decision schema + deterministic validator
+- Require fresh active-bin rebuild, drift check, risk guard, cooldown/max-count guard, and simulation before execute
+- Keep all writes inside existing queue/rebalance lifecycle; no direct AI write path
+
+## Batch 25 Completed
+
+- Added `RebalanceDecision` domain entity with strict AI output schema for `hold`, `claim_only`, `rebalance_same_pool`, and `exit`.
+- Added `rebalanceDecisionRules.ts` with validator gates for confidence, high-risk action, max rebalance count, cooldown, min age, bins, slippage, TVL/depth, active-bin drift, simulation flags, and expected improvement cost coverage.
+- Added `reviewRebalanceWithAi()` use case with journal events `AI_REBALANCE_REVIEWED` and `REBALANCE_DECISION_VALIDATED`.
+- Extended `LlmGateway` / `HttpLlmGateway` with `reviewRebalanceDecision()` using the management model and strict JSON parsing.
+- Integrated optional AI rebalance review into `runManagementCycle()`:
+  - `advisory` journals only and leaves deterministic rebalance behavior unchanged.
+  - `dry_run` validates/reports without queueing.
+  - `constrained_action` can choose hold, claim-only, exit, or continue same-pool rebalance, but only after validator success.
+- Added config surface in `management` for AI rebalance mode, confidence, min age, cooldown, min rebalance pool TVL, edge threshold, bins/slippage caps, active-bin drift, simulation requirement, and high-risk exit behavior.
+- Rebalance AI snapshot now uses stored entry pool metrics plus fresh `dlmmGateway.getPoolInfo()` active bin instead of treating position value as pool TVL.
+- Closed `N70`: `DlmmGateway` now exposes close/deploy simulation, Meteora SDK implements no-submit preflight simulation, and management cycle blocks same-pool rebalance when simulation fails.
+- Added regression tests for validator rules and AI rebalance review fallback/success.
+- Deferred rich live pool analytics feed for management AI as `N71`.
+
+## Previous Scope Batch 21
 
 - Add trailing take profit with persisted peak-PnL state on positions
 - Add queue-safe auto-compound on claim finalization (`CLAIM_FEES -> swap -> enqueue DEPLOY same pool`)
@@ -725,4 +749,4 @@ Status: Complete
   - rekomendasi AI `watch` / `reject`, high risk, low confidence, bins/slippage di luar policy, atau deploy dengan slippage tidak positif sekarang menjadi reject deterministic, bukan fallback deploy
   - deploy-mode AI juga sekarang wajib memberi `maxPositionAgeMinutes`, `stopLossPct`, dan `takeProfitPct` positif; `walletRiskMode` dipindahkan ke config AI agar prompt risk profile tidak hardcoded
   - enrichment screening sekarang punya `screening.enrichmentConcurrency` default `10`, jadi top-30 AI review tidak lagi memicu enrichment request paralel tak terbatas ke screening/token-intel API
-- `npm test` terakhir hijau dengan total `282` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- `npm test` terakhir hijau dengan total `293` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

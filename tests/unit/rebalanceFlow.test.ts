@@ -178,10 +178,18 @@ class RebalanceTestGateway implements DlmmGateway {
     return this.deployResult;
   }
 
+  public async simulateDeployLiquidity() {
+    return { ok: true, reason: null };
+  }
+
   public async closePosition(
     _request: ClosePositionRequest,
   ): Promise<ClosePositionResult> {
     return this.closeResult;
+  }
+
+  public async simulateClosePosition() {
+    return { ok: true, reason: null };
   }
 
   public async claimFees(): Promise<ClaimFeesResult> {

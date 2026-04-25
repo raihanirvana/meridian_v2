@@ -57,6 +57,23 @@ export {
   type PerformanceRecord,
 } from "./domain/entities/PerformanceRecord.js";
 export {
+  AiRebalanceDecisionSchema,
+  RebalancePlanSchema,
+  RebalancePlannerActionSchema,
+  RebalancePoolSnapshotSchema,
+  RebalancePositionSnapshotSchema,
+  RebalanceReviewInputSchema,
+  RebalanceRiskLevelSchema,
+  RebalanceWalletRiskSnapshotSchema,
+  type AiRebalanceDecision,
+  type RebalancePlan,
+  type RebalancePlannerAction,
+  type RebalancePoolSnapshot,
+  type RebalancePositionSnapshot,
+  type RebalanceReviewInput,
+  type RebalanceWalletRiskSnapshot,
+} from "./domain/entities/RebalanceDecision.js";
+export {
   createDefaultSchedulerMetadata,
   createDefaultSchedulerWorkerState,
   SchedulerMetadataSchema,
@@ -165,6 +182,16 @@ export {
   type StrategyFallbackMode,
 } from "./domain/rules/strategyDecisionRules.js";
 export {
+  AiRebalanceModeSchema,
+  deriveRebalanceTriggerSnapshot,
+  RebalanceDecisionValidationPolicySchema,
+  RebalanceDecisionValidationResultSchema,
+  validateRebalanceDecision,
+  type AiRebalanceMode,
+  type RebalanceDecisionValidationPolicy,
+  type RebalanceDecisionValidationResult,
+} from "./domain/rules/rebalanceDecisionRules.js";
+export {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
   buildMarketFeatureSnapshot,
@@ -260,6 +287,7 @@ export {
   type ClosePositionResult,
   DeployLiquidityRequestSchema,
   DeployLiquidityResultSchema,
+  DlmmSimulationResultSchema,
   PartialClosePositionRequestSchema,
   PartialClosePositionResultSchema,
   PoolInfoSchema,
@@ -267,6 +295,7 @@ export {
   type DeployLiquidityRequest,
   type DeployLiquidityResult,
   type DlmmGateway,
+  type DlmmSimulationResult,
   type MockDlmmGatewayBehaviors,
   type PartialClosePositionRequest,
   type PartialClosePositionResult,
@@ -653,6 +682,13 @@ export {
   sendOperatorAlert,
   type SendOperatorAlertInput,
 } from "./app/usecases/sendOperatorAlert.js";
+export {
+  reviewRebalanceWithAi,
+  RebalanceReviewWithAiResultSchema,
+  type RebalanceReviewSource,
+  type RebalanceReviewWithAiResult,
+  type ReviewRebalanceWithAiInput,
+} from "./app/usecases/reviewRebalanceWithAi.js";
 export {
   generateRuntimeReport,
   type GenerateRuntimeReportInput,

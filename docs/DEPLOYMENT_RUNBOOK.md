@@ -168,13 +168,14 @@ On successful boot, logs should show:
 - startup cycle completed
 - runtime supervisor is running
 
-Expected warnings that are currently non-fatal:
+Expected warnings that are currently non-fatal only when the related feature is enabled without its required env/config:
 
 - `telegramEnabled=true but Telegram notifier is not fully configured`
 - `telegramOperatorCommandsEnabled=true but inbound Telegram operator polling is not fully configured`
 - `AI mode is enabled but live LlmGateway is not fully configured`
+- `AI strategy review is enabled but live AiStrategyReviewer is not fully configured`
 
-Those warnings are intentional signals about incomplete runtime wiring, not immediate boot failures.
+Telegram and LLM gateways are wired in `runLive.ts`; these warnings mean the feature is enabled but missing token/chat/model/base-url configuration.
 
 ## Runtime Data Directory
 
@@ -241,6 +242,29 @@ Example `pm2` command:
 ```bash
 pm2 start npm --name meridian-v2 -- run live
 ```
+
+Recommended first VPS boot:
+
+```bash
+git clone <repo-url> meridian_v2
+cd meridian_v2
+npm ci
+npm run build
+npm run lint
+npm test
+mkdir -p runtime-data logs
+npm run live
+```
+
+After the dry-run boot is healthy, run under a process manager:
+
+```bash
+pm2 start npm --name meridian-v2 -- run live
+pm2 logs meridian-v2
+pm2 save
+```
+
+For the first VPS run, prefer `runtime.dryRun=true`, `deploy.autoDeployFromShortlist=false`, and Telegram enabled only after you have confirmed `TELEGRAM_BOT_TOKEN` + `notifications.alertChatId`.
 
 ## Stop Procedure
 

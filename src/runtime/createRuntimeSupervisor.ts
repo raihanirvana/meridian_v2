@@ -15,6 +15,7 @@ import type {
   ManagementPolicy,
   ManagementSignals,
 } from "../domain/rules/managementRules.js";
+import type { RebalanceDecisionValidationResult } from "../domain/rules/rebalanceDecisionRules.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
 import {
   evaluatePortfolioRisk,
@@ -90,6 +91,7 @@ export interface RuntimeSupervisorInput {
     now: string;
     evaluation: ManagementEvaluationResult;
     signals: ManagementSignals;
+    aiRebalanceDecision?: RebalanceDecisionValidationResult | undefined;
   }) =>
     | Promise<RebalanceActionRequestPayload | null>
     | RebalanceActionRequestPayload
@@ -184,6 +186,69 @@ function deriveDailyLossRemainingSol(input: {
   return Math.max(0, input.maxDailyLossSol - dailyLossSol);
 }
 
+function classifyLiquidityDepth(input: {
+  depthNearActiveUsd: number;
+  tvlUsd: number;
+}): "shallow" | "medium" | "deep" | "unknown" {
+  if (input.depthNearActiveUsd <= 0 || input.tvlUsd <= 0) {
+    return "unknown";
+  }
+
+  const depthPct = input.depthNearActiveUsd / input.tvlUsd;
+  if (depthPct >= 0.2) {
+    return "deep";
+  }
+  if (depthPct >= 0.05) {
+    return "medium";
+  }
+  return "shallow";
+}
+
+function classifyTrendDirection(
+  priceChange15mPct: number,
+): "up" | "down" | "sideways" | "unknown" {
+  if (!Number.isFinite(priceChange15mPct)) {
+    return "unknown";
+  }
+  if (priceChange15mPct >= 1) {
+    return "up";
+  }
+  if (priceChange15mPct <= -1) {
+    return "down";
+  }
+  return "sideways";
+}
+
+function classifyTrendStrength(
+  trendStrength15m: number,
+): "weak" | "medium" | "strong" | "unknown" {
+  if (!Number.isFinite(trendStrength15m)) {
+    return "unknown";
+  }
+  if (trendStrength15m >= 70) {
+    return "strong";
+  }
+  if (trendStrength15m >= 35) {
+    return "medium";
+  }
+  return "weak";
+}
+
+function classifyMeanReversionSignal(
+  meanReversionScore: number,
+): "weak" | "medium" | "strong" | "unknown" {
+  if (!Number.isFinite(meanReversionScore)) {
+    return "unknown";
+  }
+  if (meanReversionScore >= 70) {
+    return "strong";
+  }
+  if (meanReversionScore >= 35) {
+    return "medium";
+  }
+  return "weak";
+}
+
 function buildAutoDeployPayload(input: {
   candidate: Candidate;
   poolInfo: Awaited<ReturnType<DlmmGateway["getPoolInfo"]>>;
@@ -248,6 +313,34 @@ function buildAutoDeployPayload(input: {
     entryMetadata: {
       poolName: input.candidate.symbolPair,
       binStep: input.poolInfo.binStep,
+      activeBinAtEntry: activeBin,
+      poolTvlUsd: input.candidate.marketFeatureSnapshot.tvlUsd,
+      volume5mUsd: input.candidate.marketFeatureSnapshot.volume5mUsd,
+      volume15mUsd: input.candidate.marketFeatureSnapshot.volume15mUsd,
+      volume1hUsd: input.candidate.marketFeatureSnapshot.volume1hUsd,
+      volume24hUsd: input.candidate.marketFeatureSnapshot.volume24hUsd,
+      fees15mUsd: input.candidate.marketFeatureSnapshot.fees15mUsd,
+      fees1hUsd: input.candidate.marketFeatureSnapshot.fees1hUsd,
+      feeTvlRatio24h: input.candidate.marketFeatureSnapshot.feeTvlRatio24h,
+      priceChange5mPct: input.candidate.marketFeatureSnapshot.priceChange5mPct,
+      priceChange15mPct:
+        input.candidate.marketFeatureSnapshot.priceChange15mPct,
+      priceChange1hPct: input.candidate.marketFeatureSnapshot.priceChange1hPct,
+      volatility15mPct: input.candidate.marketFeatureSnapshot.volatility15mPct,
+      liquidityDepthNearActive: classifyLiquidityDepth({
+        depthNearActiveUsd:
+          input.candidate.dlmmMicrostructureSnapshot.depthNearActiveUsd,
+        tvlUsd: input.candidate.marketFeatureSnapshot.tvlUsd,
+      }),
+      trendDirection: classifyTrendDirection(
+        input.candidate.marketFeatureSnapshot.priceChange15mPct,
+      ),
+      trendStrength: classifyTrendStrength(
+        input.candidate.marketFeatureSnapshot.trendStrength15m,
+      ),
+      meanReversionSignal: classifyMeanReversionSignal(
+        input.candidate.marketFeatureSnapshot.meanReversionScore,
+      ),
       ...(feeTvlRatio === undefined ? {} : { feeTvlRatio }),
       ...(organicScore === undefined ? {} : { organicScore }),
       amountSol: input.deployConfig.defaultAmountSol,
@@ -996,6 +1089,7 @@ export function createRuntimeSupervisor(
         journalRepository: input.stores.journalRepository,
         walletGateway: input.gateways.walletGateway,
         priceGateway: input.gateways.priceGateway,
+        dlmmGateway: input.gateways.dlmmGateway,
         riskPolicy: input.config.risk,
         managementPolicy: input.config.managementPolicy,
         claimConfig: input.config.claim,

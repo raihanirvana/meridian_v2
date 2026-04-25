@@ -16,6 +16,12 @@ import {
   type ManagementExplanationInput,
   type ManagementExplanationResult,
 } from "./LlmGateway.js";
+import {
+  AiRebalanceDecisionSchema,
+  RebalanceReviewInputSchema,
+  type AiRebalanceDecision,
+  type RebalanceReviewInput,
+} from "../../domain/entities/RebalanceDecision.js";
 
 const ChatMessageSchema = z
   .object({
@@ -258,6 +264,39 @@ export class HttpLlmGateway implements LlmGateway {
     });
 
     const parsed = ManagementExplanationResultSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new AdapterResponseValidationError("HttpLlmGateway", [
+        ...parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`,
+        ),
+      ]);
+    }
+
+    return parsed.data;
+  }
+
+  public async reviewRebalanceDecision(
+    input: RebalanceReviewInput,
+  ): Promise<AiRebalanceDecision> {
+    const parsedInput = RebalanceReviewInputSchema.parse(input);
+    const payload = await this.complete({
+      model: this.resolveModel("management"),
+      systemPrompt: [
+        "You are a Meteora DLMM rebalance risk analyst.",
+        "Prioritize capital preservation over fee chasing.",
+        "Allowed actions: hold, claim_only, rebalance_same_pool, exit.",
+        "Do not recommend rebalance if pool risk is high; recommend exit instead.",
+        "Do not recommend bid_ask unless volume is strong, depth is sufficient, and volatility is mean-reverting.",
+        "Use curve only when volatility is low and price is likely to remain near active bin.",
+        "Use spot for moderate volatility or uncertain but still healthy conditions.",
+        "If confidence is below 0.75, action must be hold or exit.",
+        "If action is not rebalance_same_pool, rebalancePlan must be null.",
+        jsonInstruction("AiRebalanceDecision"),
+      ].join("\n"),
+      userPrompt: JSON.stringify(parsedInput),
+    });
+
+    const parsed = AiRebalanceDecisionSchema.safeParse(payload);
     if (!parsed.success) {
       throw new AdapterResponseValidationError("HttpLlmGateway", [
         ...parsed.error.issues.map(

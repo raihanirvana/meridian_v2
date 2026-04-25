@@ -36,6 +36,26 @@ export const BaseManagementPolicySchema = z
     partialCloseProfitTargetUsd: z.number().nonnegative(),
     rebalanceEnabled: z.boolean(),
     maxRebalancesPerPosition: z.number().int().nonnegative(),
+    aiRebalanceEnabled: z.boolean().optional(),
+    aiRebalanceMode: z
+      .enum(["advisory", "dry_run", "constrained_action"])
+      .optional(),
+    minAiRebalanceConfidence: z.number().min(0).max(1).optional(),
+    minPositionAgeMinutesBeforeRebalance: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional(),
+    rebalanceCooldownMinutes: z.number().int().nonnegative().optional(),
+    minRebalancePoolTvlUsd: z.number().nonnegative().optional(),
+    rebalanceEdgeThresholdPct: z.number().min(0).max(1).optional(),
+    maxRebalanceBinsBelow: z.number().int().nonnegative().optional(),
+    maxRebalanceBinsAbove: z.number().int().nonnegative().optional(),
+    maxRebalanceSlippageBps: z.number().int().positive().optional(),
+    requireFreshActiveBin: z.boolean().optional(),
+    maxActiveBinDrift: z.number().int().nonnegative().optional(),
+    requireRebalanceSimulation: z.boolean().optional(),
+    exitInsteadOfRebalanceWhenRiskHigh: z.boolean().optional(),
   })
   .strict();
 
@@ -129,6 +149,36 @@ function isRangeInvalid(input: ManagementEvaluationInput): boolean {
   }
 
   return activeBin < rangeLowerBin || activeBin > rangeUpperBin;
+}
+
+function isNearRangeEdge(input: ManagementEvaluationInput): boolean {
+  const activeBin = input.position.activeBin;
+  if (activeBin === null) {
+    return false;
+  }
+
+  const threshold = input.policy.rebalanceEdgeThresholdPct ?? 0;
+  if (threshold <= 0) {
+    return false;
+  }
+
+  const minAge = input.policy.minPositionAgeMinutesBeforeRebalance ?? 0;
+  const heldMinutes = elapsedMinutes(input.position.openedAt, input.now);
+  if (heldMinutes === null || heldMinutes < minAge) {
+    return false;
+  }
+
+  const rangeWidth =
+    input.position.rangeUpperBin - input.position.rangeLowerBin;
+  if (rangeWidth <= 0) {
+    return false;
+  }
+
+  const distanceToLower = activeBin - input.position.rangeLowerBin;
+  const distanceToUpper = input.position.rangeUpperBin - activeBin;
+  const edgeDistancePct =
+    Math.min(distanceToLower, distanceToUpper) / rangeWidth;
+  return edgeDistancePct >= 0 && edgeDistancePct < threshold;
 }
 
 function buildResult(input: {
@@ -316,18 +366,18 @@ export function evaluateManagementAction(
 
   if (
     input.policy.rebalanceEnabled &&
-    isRangeInvalid(input) &&
+    (isRangeInvalid(input) || isNearRangeEdge(input)) &&
     input.position.rebalanceCount < input.policy.maxRebalancesPerPosition &&
     input.signals.expectedRebalanceImprovement
   ) {
+    const triggerReason = isRangeInvalid(input)
+      ? "position range is invalid"
+      : "position is near range edge";
     return buildResult({
       action: "REBALANCE",
       priority: "MAINTENANCE_REBALANCE",
-      reason: "Range invalid and rebalance is expected to improve outcome",
-      triggerReasons: [
-        "position range is invalid",
-        "rebalance improvement expected",
-      ],
+      reason: "Rebalance trigger detected and improvement is expected",
+      triggerReasons: [triggerReason, "rebalance improvement expected"],
     });
   }
 

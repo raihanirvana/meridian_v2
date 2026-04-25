@@ -26,6 +26,7 @@ import {
   ClosePositionResultSchema,
   DeployLiquidityRequestSchema,
   DeployLiquidityResultSchema,
+  DlmmSimulationResultSchema,
   PartialClosePositionRequestSchema,
   PartialClosePositionResultSchema,
   PoolInfoSchema,
@@ -37,6 +38,7 @@ import {
   type DeployLiquidityRequest,
   type DeployLiquidityResult,
   type DlmmGateway,
+  type DlmmSimulationResult,
   type PartialClosePositionRequest,
   type PartialClosePositionResult,
   type PoolInfo,
@@ -552,6 +554,94 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     });
   }
 
+  public async simulateDeployLiquidity(
+    request: DeployLiquidityRequest,
+  ): Promise<DlmmSimulationResult> {
+    try {
+      this.pruneEphemeralCaches();
+      const parsedRequest = DeployLiquidityRequestSchema.parse(request);
+      const parsed = parsedRequest.poolAddress;
+      const lowerBin = inferRangeLowerBin(parsedRequest);
+      const upperBin = inferRangeUpperBin(parsedRequest);
+      const { amountX, amountY } = resolveTokenAmounts(parsedRequest);
+      const { StrategyType } = await this.sdk();
+      const pool = await this.getPool(parsed);
+      await this.assertDeployRangeMatchesLiveActiveBin({
+        pool,
+        lowerBin,
+        upperBin,
+        initialActiveBin: parsedRequest.initialActiveBin ?? null,
+      });
+      const strategyType = toStrategyType(parsedRequest.strategy, StrategyType);
+      const tokenXLamports = await this.toTokenAmountLamports(
+        pool.lbPair.tokenXMint,
+        amountX,
+      );
+      const tokenYLamports = await this.toTokenAmountLamports(
+        pool.lbPair.tokenYMint,
+        amountY,
+      );
+      const positionKeypair = Keypair.generate();
+      const totalBins = upperBin - lowerBin + 1;
+      const slippageBps = parsedRequest.slippageBps ?? this.defaultSlippageBps;
+
+      if (totalBins > WideRangeBinThreshold) {
+        const createTxs = await pool.createExtendedEmptyPosition(
+          lowerBin,
+          upperBin,
+          positionKeypair.publicKey,
+          this.wallet.publicKey,
+        );
+        const createTxArray = Array.isArray(createTxs)
+          ? createTxs
+          : [createTxs];
+        for (const [index, tx] of createTxArray.entries()) {
+          const signers =
+            index === 0 ? [this.wallet, positionKeypair] : [this.wallet];
+          await this.simulateOrThrow(tx, signers);
+        }
+
+        const addTxs = await pool.addLiquidityByStrategyChunkable({
+          positionPubKey: positionKeypair.publicKey,
+          user: this.wallet.publicKey,
+          totalXAmount: tokenXLamports,
+          totalYAmount: tokenYLamports,
+          strategy: {
+            minBinId: lowerBin,
+            maxBinId: upperBin,
+            strategyType,
+          },
+          slippage: slippageBps,
+        });
+        const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
+        for (const tx of addTxArray) {
+          await this.simulateOrThrow(tx, [this.wallet]);
+        }
+      } else {
+        const tx = await pool.initializePositionAndAddLiquidityByStrategy({
+          positionPubKey: positionKeypair.publicKey,
+          user: this.wallet.publicKey,
+          totalXAmount: tokenXLamports,
+          totalYAmount: tokenYLamports,
+          strategy: {
+            minBinId: lowerBin,
+            maxBinId: upperBin,
+            strategyType,
+          },
+          slippage: slippageBps,
+        });
+        await this.simulateOrThrow(tx, [this.wallet, positionKeypair]);
+      }
+
+      return DlmmSimulationResultSchema.parse({ ok: true, reason: null });
+    } catch (error) {
+      return DlmmSimulationResultSchema.parse({
+        ok: false,
+        reason: errorMessage(error, "deploy simulation failed"),
+      });
+    }
+  }
+
   public async closePosition(
     request: ClosePositionRequest,
   ): Promise<ClosePositionResult> {
@@ -628,6 +718,68 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       preCloseFeesClaimed,
       preCloseFeesClaimError,
     });
+  }
+
+  public async simulateClosePosition(
+    request: ClosePositionRequest,
+  ): Promise<DlmmSimulationResult> {
+    try {
+      this.pruneEphemeralCaches();
+      const parsed = ClosePositionRequestSchema.parse(request);
+      const poolAddress = await this.lookupPoolAddressForPosition(
+        parsed.positionId,
+        parsed.wallet,
+      );
+      const pool = await this.getPool(poolAddress);
+      const positionPubkey = new PublicKey(parsed.positionId);
+      let preCloseFeesClaimed = false;
+
+      try {
+        const claimTxs = await pool.claimSwapFee({
+          owner: this.wallet.publicKey,
+          position: await pool.getPosition(positionPubkey),
+        });
+        for (const tx of claimTxs) {
+          await this.simulateOrThrow(tx, [this.wallet]);
+        }
+        preCloseFeesClaimed = true;
+      } catch {
+        preCloseFeesClaimed = false;
+      }
+
+      const writeState = await this.loadWritablePositionState(
+        pool,
+        positionPubkey,
+        "close simulation",
+      );
+
+      if (writeState.hasLiquidity) {
+        const closeTx = await pool.removeLiquidity({
+          user: this.wallet.publicKey,
+          position: positionPubkey,
+          fromBinId: writeState.lowerBin,
+          toBinId: writeState.upperBin,
+          bps: new BN(FullCloseBps),
+          shouldClaimAndClose: !preCloseFeesClaimed,
+        });
+        for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
+          await this.simulateOrThrow(tx, [this.wallet]);
+        }
+      } else {
+        const closeTx = await pool.closePosition({
+          owner: this.wallet.publicKey,
+          position: { publicKey: positionPubkey },
+        });
+        await this.simulateOrThrow(closeTx, [this.wallet]);
+      }
+
+      return DlmmSimulationResultSchema.parse({ ok: true, reason: null });
+    } catch (error) {
+      return DlmmSimulationResultSchema.parse({
+        ok: false,
+        reason: errorMessage(error, "close simulation failed"),
+      });
+    }
   }
 
   public async claimFees(request: ClaimFeesRequest): Promise<ClaimFeesResult> {

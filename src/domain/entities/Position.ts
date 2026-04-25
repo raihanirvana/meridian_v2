@@ -8,6 +8,27 @@ export const PositionEntryMetadataSchema = z
   .object({
     poolName: z.string().min(1).optional(),
     binStep: z.number().int().positive().optional(),
+    activeBinAtEntry: z.number().int().optional(),
+    poolTvlUsd: z.number().nonnegative().optional(),
+    volume5mUsd: z.number().nonnegative().optional(),
+    volume15mUsd: z.number().nonnegative().optional(),
+    volume1hUsd: z.number().nonnegative().optional(),
+    volume24hUsd: z.number().nonnegative().optional(),
+    fees15mUsd: z.number().nonnegative().optional(),
+    fees1hUsd: z.number().nonnegative().optional(),
+    feeTvlRatio24h: z.number().nonnegative().optional(),
+    priceChange5mPct: z.number().optional(),
+    priceChange15mPct: z.number().optional(),
+    priceChange1hPct: z.number().optional(),
+    volatility15mPct: z.number().nonnegative().optional(),
+    liquidityDepthNearActive: z
+      .enum(["shallow", "medium", "deep", "unknown"])
+      .optional(),
+    trendDirection: z.enum(["up", "down", "sideways", "unknown"]).optional(),
+    trendStrength: z.enum(["weak", "medium", "strong", "unknown"]).optional(),
+    meanReversionSignal: z
+      .enum(["weak", "medium", "strong", "unknown"])
+      .optional(),
     volatility: z.number().nonnegative().optional(),
     feeTvlRatio: z.number().nonnegative().optional(),
     organicScore: z.number().nonnegative().optional(),
@@ -40,6 +61,7 @@ export const PositionSchema = z
     unrealizedPnlUsd: z.number(),
     peakPnlPct: z.number().nullable().optional(),
     peakPnlRecordedAt: TimestampSchema.nullable().optional(),
+    lastRebalanceAt: TimestampSchema.nullable().optional(),
     rebalanceCount: z.number().int().nonnegative(),
     partialCloseCount: z.number().int().nonnegative(),
     strategy: z.string().min(1),

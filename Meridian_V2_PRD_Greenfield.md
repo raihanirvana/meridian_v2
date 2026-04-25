@@ -2456,6 +2456,289 @@ Tolak strategy decision jika:
 
 ---
 
+## Batch 25 — AI Rebalance Planner dan guarded same-pool reposition
+
+### Tujuan
+
+Meningkatkan rebalance dari rule sederhana menjadi flow terkontrol:
+
+`rules detect trigger -> AI memilih action/range -> deterministic validator -> simulation -> queue execute`
+
+AI tidak boleh bebas melakukan rebalance kapan saja. AI hanya dipanggil ketika rule deterministic mendeteksi trigger yang layak dievaluasi, dan hasil AI tetap bisa ditolak oleh validator, risk engine, active-bin drift check, dan simulation.
+
+### Action taxonomy
+
+Bedakan empat hasil keputusan maintenance:
+
+- `HOLD`: tetap posisi sekarang.
+- `CLAIM_ONLY`: claim fee saja, tidak mengubah range.
+- `REBALANCE_SAME_POOL`: close/remove liquidity lalu redeploy di pool yang sama dengan strategy/range baru.
+- `EXIT`: close posisi dan tidak redeploy karena pool/token tidak lagi sehat.
+
+Rule penting:
+
+- Jika pool masih sehat tetapi posisi out-of-range/near-edge, boleh evaluasi `REBALANCE_SAME_POOL`.
+- Jika pool/token memburuk, jangan rebalance; pilih `EXIT`.
+- Jika fee cukup tetapi range masih sehat, pilih `CLAIM_ONLY`.
+
+### Trigger deterministic sebelum AI
+
+AI rebalance planner hanya dipanggil jika minimal satu trigger aktif:
+
+1. **Out-of-range duration**
+   - `activeBin < lowerBin` atau `activeBin > upperBin`
+   - tidak langsung pada 1 tick; tunggu `maxOutOfRangeMinutes`.
+
+2. **Near-edge**
+   - `rangeWidth = upperBin - lowerBin`
+   - `edgeDistancePct = min(activeBin - lowerBin, upperBin - activeBin) / rangeWidth`
+   - trigger jika `edgeDistancePct < rebalanceEdgeThresholdPct` dan posisi lebih tua dari `minPositionAgeMinutesBeforeRebalance`.
+
+3. **Fee decay**
+   - `feeVelocity15m = feesEarned15m / positionValue`
+   - `feeVelocity60m = feesEarned60m / positionValue`
+   - trigger jika velocity 15m jatuh drastis, misalnya `< 30%` dari 60m, dan pool masih cukup sehat.
+
+4. **Risk change**
+   - TVL drop besar
+   - volume collapse
+   - token risk berubah
+   - price dump satu arah
+   - holder concentration naik
+   - depth dekat active bin menipis
+   - active bin bergerak terlalu cepat
+
+Jika trigger risk high aktif, planner harus cenderung `EXIT`, bukan `REBALANCE_SAME_POOL`.
+
+### Snapshot yang dikirim ke AI
+
+AI harus menerima snapshot terstruktur, bukan hanya pool address:
+
+- `position`:
+  - `positionId`
+  - `poolAddress`
+  - `strategy`
+  - `lowerBin`
+  - `upperBin`
+  - `activeBinAtEntry`
+  - `currentActiveBin`
+  - `binStep`
+  - `ageMinutes`
+  - `outOfRangeMinutes`
+  - `positionValueUsd`
+  - `unclaimedFeesUsd`
+  - `pnlPct`
+  - `rebalanceCount`
+  - `partialCloseCount`
+- `pool`:
+  - `tvlUsd`
+  - `volume5mUsd`
+  - `volume15mUsd`
+  - `volume1hUsd`
+  - `volume24hUsd`
+  - `fees15mUsd`
+  - `fees1hUsd`
+  - `feeTvlRatio24h`
+  - `liquidityDepthNearActive`
+  - `priceChange5mPct`
+  - `priceChange15mPct`
+  - `priceChange1hPct`
+  - `volatility15m`
+  - `trendDirection`
+  - `trendStrength`
+  - `meanReversionSignal`
+- `walletRisk`:
+  - `dailyLossRemainingSol`
+  - `openPositions`
+  - `maxOpenPositions`
+  - `maxRebalancesPerPosition`
+  - `maxPositionSol`
+
+### Strict AI output schema
+
+AI output harus strict JSON:
+
+```json
+{
+  "action": "hold|claim_only|rebalance_same_pool|exit",
+  "confidence": 0.82,
+  "riskLevel": "low|medium|high",
+  "reason": ["..."],
+  "rebalancePlan": {
+    "strategy": "spot|curve|bid_ask",
+    "binsBelow": 25,
+    "binsAbove": 35,
+    "slippageBps": 100,
+    "maxPositionAgeMinutes": 30,
+    "stopLossPct": 1.0,
+    "takeProfitPct": 1.8,
+    "trailingStopPct": 0.5
+  },
+  "rejectIf": ["activeBinDrift > 3 before submit", "simulation fails"]
+}
+```
+
+Jika `action !== "rebalance_same_pool"`, `rebalancePlan` harus `null`.
+
+### AI rebalance policy
+
+Prompt AI harus mengandung aturan:
+
+- Prioritaskan capital preservation daripada fee chasing.
+- Jangan rekomendasikan rebalance jika pool risk high; pilih exit.
+- Jangan rekomendasikan `bid_ask` kecuali volume tinggi, depth cukup, dan volatility mean-reverting.
+- Gunakan `curve` hanya untuk volatility rendah dan harga kemungkinan tetap dekat active bin.
+- Gunakan `spot` untuk volatility sedang atau kondisi sehat tetapi arah belum pasti.
+- Jika confidence `< minAiRebalanceConfidence`, action harus `hold` atau `exit`.
+- Jika posisi out-of-range tetapi pool metric tidak sehat, action harus `exit`.
+- Jika near-edge tetapi belum out-of-range, prefer conservative rebalance atau hold.
+- Tidak boleh output teks di luar JSON.
+
+### Validator rules
+
+Tambah `rebalanceDecisionValidator` yang menolak output AI jika:
+
+- confidence < `minAiRebalanceConfidence`
+- `riskLevel = high` dan action bukan `exit`
+- `rebalanceCount >= maxRebalancesPerPosition`
+- posisi terlalu muda (`minPositionAgeMinutesBeforeRebalance`)
+- masih dalam `rebalanceCooldownMinutes`
+- expected improvement tidak menutup estimated close cost + redeploy cost + safety margin
+- action `rebalance_same_pool` tetapi:
+  - `rebalancePlan` null
+  - strategy tidak allowlisted
+  - binsBelow > `maxRebalanceBinsBelow`
+  - binsAbove > `maxRebalanceBinsAbove`
+  - slippageBps > `maxRebalanceSlippageBps`
+  - pool TVL < minimum policy
+  - depth dekat active bin shallow
+  - fresh active bin tidak tersedia
+  - active-bin drift > `maxActiveBinDrift`
+  - simulation close/redeploy gagal
+
+Validator wajib menghasilkan structured reason/risk flags dan journal event.
+
+### Fresh active-bin rebuild
+
+Jika action final `REBALANCE_SAME_POOL`, bot tidak boleh memakai active bin lama dari prompt AI sebagai range final.
+
+Flow wajib:
+
+1. Ambil fresh active bin tepat sebelum submit.
+2. `newLowerBin = freshActiveBin - aiPlan.binsBelow`
+3. `newUpperBin = freshActiveBin + aiPlan.binsAbove`
+4. Tolak jika `abs(freshActiveBin - aiSnapshotActiveBin) > maxActiveBinDrift`.
+
+### Simulation before execute
+
+Untuk safety:
+
+1. simulate close/remove liquidity
+2. simulate redeploy
+3. jika redeploy simulation gagal, jangan close posisi lama kecuali action final adalah `EXIT`
+4. jika kedua simulation lolos, baru queue/execute close old leg lalu redeploy leg resmi lewat flow rebalance yang sudah ada
+
+Semua write tetap lewat action queue dan lifecycle `REBALANCE` resmi; tidak boleh ada direct write dari AI planner.
+
+### Config baru
+
+Tambahkan ke `management`:
+
+```json
+{
+  "rebalanceEnabled": true,
+  "aiRebalanceEnabled": true,
+  "aiRebalanceMode": "advisory",
+  "minAiRebalanceConfidence": 0.78,
+  "minPositionAgeMinutesBeforeRebalance": 8,
+  "rebalanceCooldownMinutes": 20,
+  "maxOutOfRangeMinutes": 5,
+  "rebalanceEdgeThresholdPct": 0.1,
+  "maxRebalanceBinsBelow": 90,
+  "maxRebalanceBinsAbove": 90,
+  "maxRebalanceSlippageBps": 150,
+  "requireFreshActiveBin": true,
+  "maxActiveBinDrift": 3,
+  "requireRebalanceSimulation": true,
+  "exitInsteadOfRebalanceWhenRiskHigh": true
+}
+```
+
+Mode aktivasi:
+
+1. `aiRebalanceMode = "advisory"`: AI decision hanya journal, execution tetap deterministic.
+2. `aiRebalanceMode = "dry_run"`: payload rebalance AI dibangun dan divalidasi, tetapi tidak submit.
+3. `aiRebalanceMode = "constrained_action"`: AI boleh memilih `claim_only`, `rebalance_same_pool`, atau `exit`, tetapi hanya setelah validator dan simulation lolos.
+
+Untuk awal live disarankan:
+
+```json
+{
+  "rebalanceEnabled": false,
+  "aiRebalanceMode": "advisory"
+}
+```
+
+Setelah deploy/claim/close/reconcile terbukti aman:
+
+```json
+{
+  "rebalanceEnabled": true,
+  "aiRebalanceMode": "dry_run"
+}
+```
+
+Baru terakhir:
+
+```json
+{
+  "rebalanceEnabled": true,
+  "aiRebalanceMode": "constrained_action"
+}
+```
+
+### Build
+
+- `src/domain/entities/RebalanceDecision.ts`
+- `src/domain/rules/rebalanceDecisionRules.ts`
+- `src/app/services/AiRebalancePlanner.ts`
+- `src/app/usecases/reviewRebalanceWithAi.ts`
+- integration ke `runManagementCycle()`
+- journal event:
+  - `AI_REBALANCE_REVIEWED`
+  - `REBALANCE_DECISION_VALIDATED`
+  - `REBALANCE_SIMULATION_FAILED`
+- config schema + examples
+
+### Tests
+
+- out-of-range duration memicu review, 1 tick belum memicu.
+- near-edge memicu review hanya setelah min age.
+- risk high menghasilkan `EXIT`, bukan rebalance.
+- low confidence menghasilkan hold/exit dan tidak queue rebalance.
+- invalid strategy/bins/slippage ditolak validator.
+- max rebalance count dan cooldown memblok.
+- fresh active-bin drift memblok.
+- redeploy simulation gagal tidak menutup posisi lama.
+- claim-only menghasilkan `CLAIM_FEES`, bukan rebalance.
+- constrained_action tetap lewat queue dan tidak direct write.
+
+### DoD
+
+- AI tidak punya path direct write.
+- AI hanya dipanggil setelah trigger deterministic.
+- `REBALANCE_SAME_POOL` selalu memakai fresh active bin.
+- Simulation close dan redeploy wajib sebelum live execute.
+- Risk high tidak boleh menjadi rebalance.
+- Churn dicegah oleh max count, cooldown, min age, dan expected improvement guard.
+- Mode default aman (`aiRebalanceMode="advisory"` atau `rebalanceEnabled=false`).
+
+### Prompt vibecode
+
+“Add an AI Rebalance Planner that only runs after deterministic rebalance triggers. It must return strict JSON with action hold/claim_only/rebalance_same_pool/exit and an optional rebalance plan. Add a deterministic validator with confidence, risk, bins, slippage, max rebalance count, cooldown, active-bin drift, and simulation gates. Integrate with existing REBALANCE queue flow without any direct AI write path.”
+
+---
+
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:

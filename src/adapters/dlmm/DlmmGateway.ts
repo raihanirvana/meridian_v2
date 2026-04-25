@@ -71,6 +71,13 @@ export const PartialClosePositionResultSchema = z.object({
   txIds: z.array(z.string().min(1)),
 });
 
+export const DlmmSimulationResultSchema = z
+  .object({
+    ok: z.boolean(),
+    reason: z.string().min(1).nullable(),
+  })
+  .strict();
+
 export const WalletPositionsSnapshotSchema = z.object({
   wallet: z.string().min(1),
   positions: z.array(PositionSchema),
@@ -97,6 +104,7 @@ export type PartialClosePositionRequest = z.infer<
 export type PartialClosePositionResult = z.infer<
   typeof PartialClosePositionResultSchema
 >;
+export type DlmmSimulationResult = z.infer<typeof DlmmSimulationResultSchema>;
 export type WalletPositionsSnapshot = z.infer<
   typeof WalletPositionsSnapshotSchema
 >;
@@ -108,7 +116,13 @@ export interface DlmmGateway {
   deployLiquidity(
     request: DeployLiquidityRequest,
   ): Promise<DeployLiquidityResult>;
+  simulateDeployLiquidity(
+    request: DeployLiquidityRequest,
+  ): Promise<DlmmSimulationResult>;
   closePosition(request: ClosePositionRequest): Promise<ClosePositionResult>;
+  simulateClosePosition(
+    request: ClosePositionRequest,
+  ): Promise<DlmmSimulationResult>;
   claimFees(request: ClaimFeesRequest): Promise<ClaimFeesResult>;
   partialClosePosition(
     request: PartialClosePositionRequest,
@@ -120,7 +134,9 @@ export interface DlmmGateway {
 export interface MockDlmmGatewayBehaviors {
   getPosition: MockBehavior<Position | null>;
   deployLiquidity: MockBehavior<DeployLiquidityResult>;
+  simulateDeployLiquidity?: MockBehavior<DlmmSimulationResult>;
   closePosition: MockBehavior<ClosePositionResult>;
+  simulateClosePosition?: MockBehavior<DlmmSimulationResult>;
   claimFees: MockBehavior<ClaimFeesResult>;
   partialClosePosition: MockBehavior<PartialClosePositionResult>;
   listPositionsForWallet: MockBehavior<WalletPositionsSnapshot>;
@@ -143,12 +159,36 @@ export class MockDlmmGateway implements DlmmGateway {
     );
   }
 
+  public async simulateDeployLiquidity(
+    request: DeployLiquidityRequest,
+  ): Promise<DlmmSimulationResult> {
+    DeployLiquidityRequestSchema.parse(request);
+    if (this.behaviors.simulateDeployLiquidity === undefined) {
+      return DlmmSimulationResultSchema.parse({ ok: true, reason: null });
+    }
+    return DlmmSimulationResultSchema.parse(
+      await resolveMockBehavior(this.behaviors.simulateDeployLiquidity),
+    );
+  }
+
   public async closePosition(
     request: ClosePositionRequest,
   ): Promise<ClosePositionResult> {
     ClosePositionRequestSchema.parse(request);
     return ClosePositionResultSchema.parse(
       await resolveMockBehavior(this.behaviors.closePosition),
+    );
+  }
+
+  public async simulateClosePosition(
+    request: ClosePositionRequest,
+  ): Promise<DlmmSimulationResult> {
+    ClosePositionRequestSchema.parse(request);
+    if (this.behaviors.simulateClosePosition === undefined) {
+      return DlmmSimulationResultSchema.parse({ ok: true, reason: null });
+    }
+    return DlmmSimulationResultSchema.parse(
+      await resolveMockBehavior(this.behaviors.simulateClosePosition),
     );
   }
 

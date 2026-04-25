@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { HttpTokenIntelGateway } from "../adapters/analytics/HttpTokenIntelGateway.js";
 import { HttpDlmmGateway } from "../adapters/dlmm/HttpDlmmGateway.js";
+import type { DlmmGateway } from "../adapters/dlmm/DlmmGateway.js";
 import { MeteoraSdkDlmmGateway } from "../adapters/dlmm/MeteoraSdkDlmmGateway.js";
 import { JupiterApiSwapGateway } from "../adapters/jupiter/JupiterApiSwapGateway.js";
 import { HttpAiStrategyReviewer } from "../adapters/llm/HttpAiStrategyReviewer.js";
@@ -19,6 +20,8 @@ import { SolanaRpcWalletGateway } from "../adapters/wallet/SolanaRpcWalletGatewa
 import { HttpScreeningGateway } from "../adapters/screening/HttpScreeningGateway.js";
 import { MeteoraPoolDiscoveryScreeningGateway } from "../adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
 import type { ManagementSignals } from "../domain/rules/managementRules.js";
+import type { Position } from "../domain/entities/Position.js";
+import type { RebalanceActionRequestPayload } from "../app/usecases/requestRebalance.js";
 import type { ScreeningPolicy } from "../domain/rules/screeningRules.js";
 import type { UserConfig } from "../infra/config/configSchema.js";
 import {
@@ -123,19 +126,97 @@ function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
 }
 
 function createConservativeSignalProvider(): (input: {
-  position: unknown;
+  position: Position;
   portfolio: unknown;
   now: string;
 }) => Promise<ManagementSignals> {
-  return async (_input) => ({
-    forcedManualClose: false,
-    severeTokenRisk: false,
-    liquidityCollapse: false,
-    severeNegativeYield: false,
-    claimableFeesUsd: 0,
-    expectedRebalanceImprovement: false,
-    dataIncomplete: false,
-  });
+  return async ({ position }) => {
+    const activeBin = position.activeBin;
+    const rangeWidth = position.rangeUpperBin - position.rangeLowerBin;
+    const outOfRange =
+      activeBin !== null &&
+      (activeBin < position.rangeLowerBin ||
+        activeBin > position.rangeUpperBin);
+    const nearEdge =
+      activeBin !== null &&
+      rangeWidth > 0 &&
+      Math.min(
+        activeBin - position.rangeLowerBin,
+        position.rangeUpperBin - activeBin,
+      ) /
+        rangeWidth <
+        0.1;
+
+    return {
+      forcedManualClose: false,
+      severeTokenRisk: false,
+      liquidityCollapse: false,
+      severeNegativeYield: false,
+      claimableFeesUsd: Math.max(0, position.feesClaimedUsd),
+      expectedRebalanceImprovement: outOfRange || nearEdge,
+      dataIncomplete: false,
+    };
+  };
+}
+
+function createLiveAiRebalancePlanner(input: {
+  dlmmGateway: Pick<DlmmGateway, "getPoolInfo">;
+}): (args: {
+  position: Position;
+  aiRebalanceDecision?:
+    | {
+        action: "hold" | "claim_only" | "rebalance_same_pool" | "exit";
+        rebalancePlan: {
+          strategy: "spot" | "curve" | "bid_ask";
+          binsBelow: number;
+          binsAbove: number;
+          slippageBps: number;
+        } | null;
+      }
+    | undefined;
+}) => Promise<RebalanceActionRequestPayload | null> {
+  return async ({ position, aiRebalanceDecision }) => {
+    if (
+      aiRebalanceDecision?.action !== "rebalance_same_pool" ||
+      aiRebalanceDecision.rebalancePlan === null
+    ) {
+      return null;
+    }
+
+    const poolInfo = await input.dlmmGateway.getPoolInfo(position.poolAddress);
+    const plan = aiRebalanceDecision.rebalancePlan;
+    const activeBin = poolInfo.activeBin;
+    const rangeLowerBin = activeBin - plan.binsBelow;
+    const rangeUpperBin = activeBin + plan.binsAbove;
+    const estimatedValueUsd = Math.max(position.currentValueUsd, 0);
+    if (estimatedValueUsd <= 0) {
+      return null;
+    }
+
+    return {
+      reason: "AI rebalance planner selected same-pool redeploy",
+      redeploy: {
+        poolAddress: position.poolAddress,
+        tokenXMint: position.tokenXMint,
+        tokenYMint: position.tokenYMint,
+        baseMint: position.baseMint,
+        quoteMint: position.quoteMint,
+        amountBase: position.deployAmountBase,
+        amountQuote: position.deployAmountQuote,
+        slippageBps: plan.slippageBps,
+        strategy: plan.strategy,
+        rangeLowerBin,
+        rangeUpperBin,
+        initialActiveBin: activeBin,
+        estimatedValueUsd,
+        entryMetadata: {
+          ...position.entryMetadata,
+          binStep: poolInfo.binStep,
+          activeBinAtEntry: activeBin,
+        },
+      },
+    };
+  };
 }
 
 function toRuntimeScreeningPolicy(userScreening: {
@@ -596,7 +677,7 @@ async function main() {
         : {}),
     },
     signalProvider: createConservativeSignalProvider(),
-    rebalancePlanner: async () => null,
+    rebalancePlanner: createLiveAiRebalancePlanner({ dlmmGateway }),
     lessonPromptService: new DefaultLessonPromptService(
       stores.lessonRepository,
       stores.poolMemoryRepository,

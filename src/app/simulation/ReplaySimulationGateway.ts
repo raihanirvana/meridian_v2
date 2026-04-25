@@ -316,6 +316,14 @@ export class ReplaySimulationGateway
     );
   }
 
+  public async simulateDeployLiquidity() {
+    return { ok: true, reason: null };
+  }
+
+  public async simulateClosePosition() {
+    return { ok: true, reason: null };
+  }
+
   public async listPositionsForWallet(
     wallet: string,
   ): Promise<WalletPositionsSnapshot> {

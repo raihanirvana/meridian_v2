@@ -463,6 +463,7 @@ describe("real adapters", () => {
 
     await screening.listCandidates({ limit: 5, timeframe: "1h" });
 
+    expect(new URL(requestedUrl).pathname).toBe("/v1/candidates");
     expect(requestedUrl).toContain("timeframe=1h");
     expect(requestedUrl).toContain("limit=5");
   });

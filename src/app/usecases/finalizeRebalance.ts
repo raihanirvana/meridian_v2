@@ -331,6 +331,7 @@ function buildPendingRedeployPosition(input: {
     realizedPnlUsd: 0,
     unrealizedPnlBase: 0,
     unrealizedPnlUsd: 0,
+    lastRebalanceAt: input.now,
     rebalanceCount: input.closedPosition.rebalanceCount + 1,
     partialCloseCount: 0,
     strategy: payload.redeploy.strategy,

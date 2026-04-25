@@ -53,7 +53,21 @@
     "claimFeesThresholdUsd": 20,
     "partialCloseEnabled": false,
     "partialCloseProfitTargetUsd": 100,
-    "rebalanceEnabled": true
+    "rebalanceEnabled": true,
+    "aiRebalanceEnabled": false,
+    "aiRebalanceMode": "advisory",
+    "minAiRebalanceConfidence": 0.78,
+    "minPositionAgeMinutesBeforeRebalance": 8,
+    "rebalanceCooldownMinutes": 20,
+    "minRebalancePoolTvlUsd": 10000,
+    "rebalanceEdgeThresholdPct": 0.1,
+    "maxRebalanceBinsBelow": 90,
+    "maxRebalanceBinsAbove": 90,
+    "maxRebalanceSlippageBps": 150,
+    "requireFreshActiveBin": true,
+    "maxActiveBinDrift": 3,
+    "requireRebalanceSimulation": true,
+    "exitInsteadOfRebalanceWhenRiskHigh": true
   },
   "ai": {
     "mode": "advisory",

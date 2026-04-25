@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import { CandidateSchema } from "../../domain/entities/Candidate.js";
 import { PositionSchema } from "../../domain/entities/Position.js";
+import {
+  AiRebalanceDecisionSchema,
+  RebalanceReviewInputSchema,
+  type AiRebalanceDecision,
+  type RebalanceReviewInput,
+} from "../../domain/entities/RebalanceDecision.js";
 import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const CandidateRankingInputSchema = z
@@ -65,11 +71,15 @@ export interface LlmGateway {
   explainManagementDecision(
     input: ManagementExplanationInput,
   ): Promise<ManagementExplanationResult>;
+  reviewRebalanceDecision?(
+    input: RebalanceReviewInput,
+  ): Promise<AiRebalanceDecision>;
 }
 
 export interface MockLlmGatewayBehaviors {
   rankCandidates: MockBehavior<CandidateRankingResult>;
   explainManagementDecision: MockBehavior<ManagementExplanationResult>;
+  reviewRebalanceDecision?: MockBehavior<AiRebalanceDecision>;
 }
 
 export class MockLlmGateway implements LlmGateway {
@@ -90,6 +100,21 @@ export class MockLlmGateway implements LlmGateway {
     ManagementExplanationInputSchema.parse(input);
     return ManagementExplanationResultSchema.parse(
       await resolveMockBehavior(this.behaviors.explainManagementDecision),
+    );
+  }
+
+  public async reviewRebalanceDecision(
+    input: RebalanceReviewInput,
+  ): Promise<AiRebalanceDecision> {
+    RebalanceReviewInputSchema.parse(input);
+    if (this.behaviors.reviewRebalanceDecision === undefined) {
+      throw new Error(
+        "reviewRebalanceDecision mock behavior is not configured",
+      );
+    }
+
+    return AiRebalanceDecisionSchema.parse(
+      await resolveMockBehavior(this.behaviors.reviewRebalanceDecision),
     );
   }
 }

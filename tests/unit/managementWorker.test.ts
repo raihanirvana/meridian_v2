@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
@@ -14,6 +15,7 @@ import { ActionQueue } from "../../src/app/services/ActionQueue.js";
 import { runManagementWorker } from "../../src/app/workers/managementWorker.js";
 import { type Action } from "../../src/domain/entities/Action.js";
 import { type Position } from "../../src/domain/entities/Position.js";
+import type { RebalanceReviewInput } from "../../src/domain/entities/RebalanceDecision.js";
 import { type ManagementPolicy } from "../../src/domain/rules/managementRules.js";
 import { type PortfolioRiskPolicy } from "../../src/domain/rules/riskRules.js";
 
@@ -782,5 +784,353 @@ describe("management worker", () => {
     const actions = await actionRepository.list();
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("REBALANCE");
+  });
+
+  it("builds AI rebalance review from entry pool metadata and fresh pool info", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    let capturedReview: RebalanceReviewInput | null = null;
+
+    await stateRepository.upsert(
+      buildPosition({
+        activeBin: 30,
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        outOfRangeSince: "2026-04-21T11:50:00.000Z",
+        entryMetadata: {
+          poolName: "TOKEN/SOL",
+          binStep: 80,
+          activeBinAtEntry: 15,
+          poolTvlUsd: 180_000,
+          volume5mUsd: 12_000,
+          volume15mUsd: 52_000,
+          volume1hUsd: 210_000,
+          volume24hUsd: 950_000,
+          fees15mUsd: 260,
+          fees1hUsd: 1_100,
+          feeTvlRatio24h: 0.018,
+          priceChange5mPct: 1.1,
+          priceChange15mPct: 2.4,
+          priceChange1hPct: 4.8,
+          volatility15mPct: 0.032,
+          liquidityDepthNearActive: "medium",
+          trendDirection: "up",
+          trendStrength: "medium",
+          meanReversionSignal: "weak",
+        },
+      }),
+    );
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: { type: "success", value: null },
+        deployLiquidity: {
+          type: "success",
+          value: { actionType: "DEPLOY", positionId: "pos_new", txIds: [] },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_001",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 0,
+            txIds: [],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "pos_001",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: { wallet: "wallet_001", positions: [] },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "TOKEN/SOL",
+            binStep: 80,
+            activeBin: 33,
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        aiRebalanceEnabled: true,
+        aiRebalanceMode: "dry_run",
+        claimFeesThresholdUsd: 999,
+        maxOutOfRangeMinutes: 0,
+      }),
+      signalProvider: () => ({
+        forcedManualClose: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0.42,
+        expectedRebalanceImprovement: true,
+        dataIncomplete: false,
+      }),
+      aiRebalancePlanner: {
+        async reviewRebalanceDecision(review) {
+          capturedReview = review;
+          return {
+            action: "rebalance_same_pool",
+            confidence: 0.9,
+            riskLevel: "medium",
+            reason: ["healthy pool"],
+            rebalancePlan: {
+              strategy: "spot",
+              binsBelow: 20,
+              binsAbove: 20,
+              slippageBps: 100,
+              maxPositionAgeMinutes: 30,
+              stopLossPct: 1,
+              takeProfitPct: 2,
+              trailingStopPct: 0.5,
+            },
+            rejectIf: [],
+          };
+        },
+      },
+      journalRepository,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.status).toBe("DRY_RUN");
+    expect(capturedReview?.position.activeBinAtEntry).toBe(15);
+    expect(capturedReview?.position.currentActiveBin).toBe(30);
+    expect(capturedReview?.pool.currentActiveBin).toBe(33);
+    expect(capturedReview?.pool.tvlUsd).toBe(180_000);
+    expect(capturedReview?.pool.volume24hUsd).toBe(950_000);
+    expect(capturedReview?.pool.fees1hUsd).toBe(1_100);
+  });
+
+  it("blocks constrained AI rebalance when redeploy simulation fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(
+      buildPosition({
+        activeBin: 30,
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        outOfRangeSince: "2026-04-21T11:50:00.000Z",
+        currentValueUsd: 120,
+        entryMetadata: {
+          binStep: 80,
+          activeBinAtEntry: 15,
+          poolTvlUsd: 180_000,
+          liquidityDepthNearActive: "medium",
+        },
+      }),
+    );
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: { type: "success", value: null },
+        deployLiquidity: {
+          type: "success",
+          value: { actionType: "DEPLOY", positionId: "pos_new", txIds: [] },
+        },
+        simulateDeployLiquidity: {
+          type: "success",
+          value: { ok: false, reason: "redeploy simulation failed" },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_001",
+            txIds: [],
+          },
+        },
+        simulateClosePosition: {
+          type: "success",
+          value: { ok: true, reason: null },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 0,
+            txIds: [],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "pos_001",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: { wallet: "wallet_001", positions: [] },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "TOKEN/SOL",
+            binStep: 80,
+            activeBin: 30,
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        aiRebalanceEnabled: true,
+        aiRebalanceMode: "constrained_action",
+        claimFeesThresholdUsd: 999,
+        maxOutOfRangeMinutes: 0,
+        minRebalancePoolTvlUsd: 100_000,
+      }),
+      signalProvider: () => ({
+        forcedManualClose: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: true,
+        dataIncomplete: false,
+      }),
+      aiRebalancePlanner: {
+        async reviewRebalanceDecision() {
+          return {
+            action: "rebalance_same_pool",
+            confidence: 0.9,
+            riskLevel: "medium",
+            reason: ["healthy pool"],
+            rebalancePlan: {
+              strategy: "spot",
+              binsBelow: 20,
+              binsAbove: 20,
+              slippageBps: 100,
+              maxPositionAgeMinutes: 30,
+              stopLossPct: 1,
+              takeProfitPct: 2,
+              trailingStopPct: 0.5,
+            },
+            rejectIf: [],
+          };
+        },
+      },
+      rebalancePlanner: () => ({
+        reason: "ai same-pool rebalance",
+        redeploy: {
+          poolAddress: "pool_001",
+          tokenXMint: "mint_x",
+          tokenYMint: "mint_y",
+          baseMint: "mint_base",
+          quoteMint: "mint_quote",
+          amountBase: 1,
+          amountQuote: 0.5,
+          strategy: "spot",
+          rangeLowerBin: 10,
+          rangeUpperBin: 50,
+          initialActiveBin: 30,
+          estimatedValueUsd: 120,
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.status).toBe("BLOCKED_BY_RISK");
+    expect(result.positionResults[0]?.triggerReasons).toContain(
+      "rebalance_redeploy_simulation_failed",
+    );
+    await expect(actionRepository.list()).resolves.toHaveLength(0);
+    const events = await journalRepository.list();
+    expect(events.map((event) => event.eventType)).toContain(
+      "REBALANCE_PREFLIGHT_SIMULATED",
+    );
   });
 });
