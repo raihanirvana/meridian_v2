@@ -19,6 +19,7 @@ import {
   PositionSchema,
   type Position,
 } from "../../domain/entities/Position.js";
+import { StrategySchema, type Strategy } from "../../domain/types/enums.js";
 import {
   ClaimFeesRequestSchema,
   ClaimFeesResultSchema,
@@ -290,6 +291,11 @@ function toStrategyType(
     default:
       throw new Error(`Unsupported Meteora strategy: ${strategy}`);
   }
+}
+
+function normalizePositionStrategy(strategy: string | undefined): Strategy {
+  const parsed = StrategySchema.safeParse(strategy);
+  return parsed.success ? parsed.data : "spot";
 }
 
 function inferInitialActiveBin(request: DeployLiquidityRequest): number {
@@ -975,7 +981,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         unrealizedPnlUsd: position.unrealizedPnlUsd,
         rebalanceCount: 0,
         partialCloseCount: 0,
-        strategy: "unknown",
+        strategy: normalizePositionStrategy(recentDeploy?.strategy),
         rangeLowerBin: position.rangeLowerBin,
         rangeUpperBin: position.rangeUpperBin,
         activeBin: position.activeBin,

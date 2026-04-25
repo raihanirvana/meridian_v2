@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { PositionStatusSchema } from "../types/enums.js";
+import { PositionStatusSchema, StrategySchema } from "../types/enums.js";
 
 const TimestampSchema = z.string().datetime();
 
@@ -65,7 +65,7 @@ export const PositionSchema = z
     lastRebalanceAt: TimestampSchema.nullable().optional(),
     rebalanceCount: z.number().int().nonnegative(),
     partialCloseCount: z.number().int().nonnegative(),
-    strategy: z.string().min(1),
+    strategy: StrategySchema,
     rangeLowerBin: z.number().int(),
     rangeUpperBin: z.number().int(),
     activeBin: z.number().int().nullable(),

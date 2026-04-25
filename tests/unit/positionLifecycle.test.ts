@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canTransitionPositionStatus,
+  transitionRebalancePositionStatus,
   transitionPositionStatus,
 } from "../../src/domain/stateMachines/positionLifecycle.js";
 import { PositionSchema } from "../../src/domain/entities/Position.js";
@@ -34,11 +35,25 @@ describe("positionLifecycle", () => {
     status = transitionPositionStatus(status, "REBALANCE_REQUESTED");
     status = transitionPositionStatus(status, "CLOSING_FOR_REBALANCE");
     status = transitionPositionStatus(status, "CLOSE_CONFIRMED");
-    status = transitionPositionStatus(status, "REDEPLOY_REQUESTED");
+    status = transitionRebalancePositionStatus(status, "REDEPLOY_REQUESTED");
     status = transitionPositionStatus(status, "REDEPLOYING");
     status = transitionPositionStatus(status, "OPEN");
 
     expect(status).toBe("OPEN");
+  });
+
+  it("requires rebalance context before redeploying from CLOSE_CONFIRMED", () => {
+    expect(
+      canTransitionPositionStatus("CLOSE_CONFIRMED", "REDEPLOY_REQUESTED"),
+    ).toBe(false);
+    expect(() =>
+      transitionPositionStatus("CLOSE_CONFIRMED", "REDEPLOY_REQUESTED"),
+    ).toThrow(/Invalid position transition/i);
+    expect(
+      canTransitionPositionStatus("CLOSE_CONFIRMED", "REDEPLOY_REQUESTED", {
+        flow: "rebalance",
+      }),
+    ).toBe(true);
   });
 
   it("parses a position entity with official lifecycle status", () => {
@@ -78,6 +93,45 @@ describe("positionLifecycle", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid position strategy values", () => {
+    const result = PositionSchema.safeParse({
+      positionId: "pos_bad_strategy",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_base",
+      quoteMint: "mint_quote",
+      wallet: "wallet_001",
+      status: "DEPLOY_REQUESTED",
+      openedAt: null,
+      lastSyncedAt: "2026-04-18T00:00:00.000Z",
+      closedAt: null,
+      deployAmountBase: 1,
+      deployAmountQuote: 0.5,
+      currentValueBase: 1,
+      currentValueUsd: 100,
+      feesClaimedBase: 0,
+      feesClaimedUsd: 0,
+      realizedPnlBase: 0,
+      realizedPnlUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      rebalanceCount: 0,
+      partialCloseCount: 0,
+      strategy: "martingale",
+      rangeLowerBin: 10,
+      rangeUpperBin: 20,
+      activeBin: 15,
+      outOfRangeSince: null,
+      lastManagementDecision: null,
+      lastManagementReason: null,
+      lastWriteActionId: null,
+      needsReconciliation: false,
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("rejects direct CLOSE_CONFIRMED to CLOSED transition", () => {

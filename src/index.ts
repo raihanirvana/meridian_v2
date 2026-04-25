@@ -106,7 +106,10 @@ export {
 export {
   POSITION_LIFECYCLE,
   canTransitionPositionStatus,
+  transitionClosePositionStatus,
   transitionPositionStatus,
+  transitionRebalancePositionStatus,
+  type PositionTransitionFlow,
 } from "./domain/stateMachines/positionLifecycle.js";
 export {
   buildContextString,
@@ -778,6 +781,12 @@ export {
   type CreateRuntimeStoresInput,
   type RuntimeStores,
 } from "./runtime/createRuntimeStores.js";
+export {
+  RuntimeOwnerLockActiveError,
+  acquireRuntimeOwnerLock,
+  type RuntimeOwnerLock,
+  type RuntimeOwnerLockRecord,
+} from "./runtime/RuntimeOwnerLock.js";
 export {
   createRuntimeSupervisor,
   createRuntimeSupervisorFromUserConfig,

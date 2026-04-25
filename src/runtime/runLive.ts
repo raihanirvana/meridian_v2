@@ -38,6 +38,7 @@ import { handleTelegramOperatorCommand } from "../app/usecases/handleTelegramOpe
 import { createRuntimeStores } from "./createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "./createRuntimeSupervisor.js";
 import { resolveLiveRedeployAmounts } from "./liveRebalancePlanner.js";
+import { acquireRuntimeOwnerLock } from "./RuntimeOwnerLock.js";
 
 const RuntimeBootstrapEnvSchema = z
   .object({
@@ -519,6 +520,11 @@ async function main() {
       ? {}
       : { dataDir: runtimeEnv.MERIDIAN_DATA_DIR }),
   });
+  const runtimeOwnerLock = await acquireRuntimeOwnerLock({
+    dataDir: stores.paths.dataDir,
+    now,
+  });
+  const stopRuntimeOwnerHeartbeat = runtimeOwnerLock.startHeartbeat();
   const policyProvider = new DefaultPolicyProvider({
     basePolicy: toRuntimeScreeningPolicy(config.user.screening),
     runtimePolicyStore: stores.runtimePolicyStore,
@@ -980,6 +986,8 @@ async function main() {
     clearInterval(reportingTimer);
     stopOperatorStdinLoop?.();
     stopTelegramOperatorPolling?.();
+    stopRuntimeOwnerHeartbeat();
+    void runtimeOwnerLock.release();
     logger.info({ signal }, "runtime supervisor stopped");
     process.exit(0);
   };
@@ -991,6 +999,7 @@ async function main() {
     {
       wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
       dataDir: stores.paths.dataDir,
+      runtimeOwner: runtimeOwnerLock.ownerId,
       queueIntervalSec: runtimeEnv.ACTION_QUEUE_INTERVAL_SEC,
       screeningIntervalSec: config.user.schedule.screeningIntervalSec,
       reconciliationIntervalSec: config.user.schedule.reconciliationIntervalSec,

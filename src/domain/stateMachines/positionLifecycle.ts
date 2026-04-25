@@ -39,7 +39,7 @@ const BASE_POSITION_TRANSITIONS = {
   ],
   CLOSE_REQUESTED: ["CLOSING", "FAILED", "ABORTED"],
   CLOSING: ["CLOSE_CONFIRMED", "RECONCILIATION_REQUIRED", "FAILED", "ABORTED"],
-  CLOSE_CONFIRMED: ["RECONCILING", "REDEPLOY_REQUESTED"],
+  CLOSE_CONFIRMED: ["RECONCILING"],
   REDEPLOY_REQUESTED: ["REDEPLOYING", "FAILED", "ABORTED"],
   REDEPLOYING: ["OPEN", "RECONCILIATION_REQUIRED", "FAILED", "ABORTED"],
   RECONCILIATION_REQUIRED: ["RECONCILING", "FAILED", "ABORTED"],
@@ -66,9 +66,14 @@ export const POSITION_LIFECYCLE: Readonly<
   Record<PositionStatus, readonly PositionStatus[]>
 > = BASE_POSITION_TRANSITIONS;
 
+export type PositionTransitionFlow = "normal_close" | "rebalance";
+
 export function canTransitionPositionStatus(
   from: PositionStatus,
   to: PositionStatus,
+  context: {
+    flow?: PositionTransitionFlow;
+  } = {},
 ): boolean {
   PositionStatusSchema.parse(from);
   PositionStatusSchema.parse(to);
@@ -81,16 +86,41 @@ export function canTransitionPositionStatus(
     return true;
   }
 
+  if (
+    from === "CLOSE_CONFIRMED" &&
+    to === "REDEPLOY_REQUESTED" &&
+    context.flow === "rebalance"
+  ) {
+    return true;
+  }
+
   return POSITION_LIFECYCLE[from].includes(to);
 }
 
 export function transitionPositionStatus(
   from: PositionStatus,
   to: PositionStatus,
+  context?: {
+    flow?: PositionTransitionFlow;
+  },
 ): PositionStatus {
-  if (!canTransitionPositionStatus(from, to)) {
+  if (!canTransitionPositionStatus(from, to, context)) {
     throw new Error(`Invalid position transition: ${from} -> ${to}`);
   }
 
   return to;
+}
+
+export function transitionRebalancePositionStatus(
+  from: PositionStatus,
+  to: PositionStatus,
+): PositionStatus {
+  return transitionPositionStatus(from, to, { flow: "rebalance" });
+}
+
+export function transitionClosePositionStatus(
+  from: PositionStatus,
+  to: PositionStatus,
+): PositionStatus {
+  return transitionPositionStatus(from, to, { flow: "normal_close" });
 }
