@@ -485,6 +485,7 @@ function validateRedeployTarget(input: {
 
 function validatePostCloseRedeploySettlement(
   closeResult: z.infer<typeof CloseActionResultPayloadSchema>,
+  requestedRedeploy: DeployActionRequestPayload,
 ): string | null {
   if (closeResult.releasedAmountSource !== "post_tx") {
     return "Rebalance redeploy validation failed because post-close token settlement amounts are unavailable";
@@ -497,7 +498,31 @@ function validatePostCloseRedeploySettlement(
     return "Rebalance redeploy validation failed because post-close token settlement amounts are missing";
   }
 
+  if (
+    requestedRedeploy.amountBase > 0 &&
+    closeResult.releasedAmountBase === undefined
+  ) {
+    return "Rebalance redeploy validation failed because post-close base token settlement amount is missing";
+  }
+
+  if (
+    requestedRedeploy.amountQuote > 0 &&
+    closeResult.releasedAmountQuote === undefined
+  ) {
+    return "Rebalance redeploy validation failed because post-close quote token settlement amount is missing";
+  }
+
   return null;
+}
+
+function resolveUsableEstimatedReleasedValueUsd(input: {
+  estimatedReleasedValueUsd?: number | undefined;
+  fallbackCurrentValueUsd: number;
+}): number {
+  return input.estimatedReleasedValueUsd !== undefined &&
+    input.estimatedReleasedValueUsd > 0
+    ? input.estimatedReleasedValueUsd
+    : input.fallbackCurrentValueUsd;
 }
 
 async function finalizeCloseLeg(input: {
@@ -555,9 +580,11 @@ async function finalizeCloseLeg(input: {
   }
 
   const closeConfirmedPosition = closeConfirmedPositionLike;
-  const availableCapitalUsd =
-    input.closeSubmitted.closeResult.estimatedReleasedValueUsd ??
-    closeConfirmedPosition.currentValueUsd;
+  const availableCapitalUsd = resolveUsableEstimatedReleasedValueUsd({
+    estimatedReleasedValueUsd:
+      input.closeSubmitted.closeResult.estimatedReleasedValueUsd,
+    fallbackCurrentValueUsd: closeConfirmedPosition.currentValueUsd,
+  });
   const closedPosition = buildClosedOldPosition({
     closeConfirmedPosition,
     actionId: input.latestAction.actionId,
@@ -582,9 +609,10 @@ function buildPostCloseRedeployPayload(input: {
   const closeResult = input.closeSubmitted.closeResult;
   const amountBase = closeResult.releasedAmountBase ?? 0;
   const amountQuote = closeResult.releasedAmountQuote ?? 0;
-  const estimatedValueUsd =
-    closeResult.estimatedReleasedValueUsd ??
-    input.closeConfirmedPosition.currentValueUsd;
+  const estimatedValueUsd = resolveUsableEstimatedReleasedValueUsd({
+    estimatedReleasedValueUsd: closeResult.estimatedReleasedValueUsd,
+    fallbackCurrentValueUsd: input.closeConfirmedPosition.currentValueUsd,
+  });
 
   return DeployActionRequestPayloadSchema.parse({
     ...input.requestedRedeploy,
@@ -766,9 +794,11 @@ export async function finalizeRebalance(
           error: null,
         });
 
-        const settlementValidationError = validatePostCloseRedeploySettlement(
-          latestPayload.closeResult,
-        );
+        const settlementValidationError =
+          validatePostCloseRedeploySettlement(
+            latestPayload.closeResult,
+            requestPayload.redeploy,
+          );
         let postCloseRedeployPayload: DeployActionRequestPayload | null = null;
         let validationError = settlementValidationError;
         if (validationError === null) {

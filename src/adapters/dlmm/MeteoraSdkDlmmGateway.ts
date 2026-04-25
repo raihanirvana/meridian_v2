@@ -740,7 +740,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       preCloseFeesClaimError,
       ...(releasedAmountBase === null ? {} : { releasedAmountBase }),
       ...(releasedAmountQuote === null ? {} : { releasedAmountQuote }),
-      ...(positionBeforeClose?.currentValueUsd === undefined
+      ...(positionBeforeClose?.currentValueUsd === undefined ||
+      positionBeforeClose.currentValueUsd <= 0
         ? {}
         : { estimatedReleasedValueUsd: positionBeforeClose.currentValueUsd }),
       releasedAmountSource:

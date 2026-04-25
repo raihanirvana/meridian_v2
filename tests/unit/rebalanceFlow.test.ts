@@ -395,6 +395,130 @@ describe("rebalance flow", () => {
     expect(finalized.newPosition?.currentValueUsd).toBe(123);
   });
 
+  it("uses close-confirmed USD when post-close USD estimate is zero", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_zero_usd_estimate"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_zero_usd_estimate",
+      txIds: ["tx_close_zero_usd_estimate"],
+      releasedAmountBase: 1.37,
+      releasedAmountQuote: 0.75,
+      estimatedReleasedValueUsd: 0,
+      releasedAmountSource: "post_tx",
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_zero_usd_estimate",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_zero_usd_estimate",
+      buildCloseConfirmedPosition("pos_zero_usd_estimate", 120),
+    );
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const resultPayload = persistedAction?.resultPayload as
+      | { redeployRequest?: { estimatedValueUsd?: number } }
+      | null
+      | undefined;
+
+    expect(finalized.outcome).toBe("REDEPLOY_SUBMITTED");
+    expect(gateway.deployRequests).toHaveLength(1);
+    expect(finalized.newPosition?.currentValueUsd).toBe(120);
+    expect(resultPayload?.redeployRequest?.estimatedValueUsd).toBe(120);
+  });
+
+  it("aborts redeploy when a requested token side is missing from post-close settlement", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_missing_quote"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_missing_quote",
+      txIds: ["tx_close_missing_quote"],
+      releasedAmountBase: 1.37,
+      estimatedReleasedValueUsd: 120,
+      releasedAmountSource: "post_tx",
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_missing_quote",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_missing_quote",
+      buildCloseConfirmedPosition("pos_missing_quote", 120),
+    );
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("REBALANCE_ABORTED");
+    expect(finalized.action.error).toMatch(/quote token settlement amount is missing/i);
+    expect(gateway.deployRequests).toHaveLength(0);
+  });
+
   it("aborts redeploy when post-close token settlement amounts are unavailable", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
