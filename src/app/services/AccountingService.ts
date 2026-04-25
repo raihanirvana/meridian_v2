@@ -19,6 +19,7 @@ export const CloseAccountingSummarySchema = z
     feesClaimedBase: z.number().nonnegative(),
     feesClaimedUsd: z.number().nonnegative(),
     currentValueBase: z.number().nonnegative(),
+    currentValueQuote: z.number().nonnegative().optional(),
     currentValueUsd: z.number().nonnegative(),
     postCloseSwap: z.record(z.string(), z.unknown()).nullable(),
   })
@@ -58,6 +59,9 @@ export function buildCloseAccountingSummary(
     feesClaimedBase: position.feesClaimedBase,
     feesClaimedUsd: position.feesClaimedUsd,
     currentValueBase: position.currentValueBase,
+    ...(position.currentValueQuote === undefined
+      ? {}
+      : { currentValueQuote: position.currentValueQuote }),
     currentValueUsd: position.currentValueUsd,
     postCloseSwap,
   });

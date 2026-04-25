@@ -218,6 +218,7 @@ function buildClosedPosition(input: {
     ),
     closedAt: input.reconcilingPosition.closedAt ?? input.now,
     currentValueBase: 0,
+    currentValueQuote: 0,
     currentValueUsd: 0,
     unrealizedPnlBase: 0,
     unrealizedPnlUsd: 0,

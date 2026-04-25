@@ -29,6 +29,10 @@ import {
   RebalanceActionRequestPayloadSchema,
   deriveRebalanceCapitalRequirement,
 } from "./requestRebalance.js";
+import {
+  DeployActionRequestPayloadSchema,
+  type DeployActionRequestPayload,
+} from "./requestDeploy.js";
 
 const CloseActionResultPayloadSchema = ClosePositionResultSchema;
 const DeployActionResultPayloadSchema = DeployLiquidityResultSchema;
@@ -41,6 +45,7 @@ export const RebalanceRedeploySubmittedPayloadSchema = z
     closedPositionId: z.string().min(1),
     availableCapitalUsd: z.number().nonnegative(),
     redeployResult: DeployActionResultPayloadSchema,
+    redeployRequest: DeployActionRequestPayloadSchema.optional(),
   })
   .strict();
 
@@ -52,6 +57,7 @@ export const RebalanceCompletedPayloadSchema = z
     closedPositionId: z.string().min(1),
     availableCapitalUsd: z.number().nonnegative(),
     redeployResult: DeployActionResultPayloadSchema,
+    redeployRequest: DeployActionRequestPayloadSchema.optional(),
     confirmedPositionId: z.string().min(1),
   })
   .strict();
@@ -269,6 +275,7 @@ function buildClosedOldPosition(input: {
     status: transitionPositionStatus(reconcilingPosition.status, "CLOSED"),
     closedAt: reconcilingPosition.closedAt ?? input.now,
     currentValueBase: 0,
+    currentValueQuote: 0,
     currentValueUsd: 0,
     unrealizedPnlBase: 0,
     unrealizedPnlUsd: 0,
@@ -298,11 +305,15 @@ function buildReconciliationRequiredPosition(
 function buildPendingRedeployPosition(input: {
   action: Action & { positionId: string; type: "REBALANCE" };
   closedPosition: Position;
+  redeployPayload: DeployActionRequestPayload;
   redeployResult: z.infer<typeof DeployActionResultPayloadSchema>;
   now: string;
 }): Position {
   const payload = RebalanceActionRequestPayloadSchema.parse(
     input.action.requestPayload,
+  );
+  const redeployPayload = DeployActionRequestPayloadSchema.parse(
+    input.redeployPayload,
   );
   const redeployingStatus = transitionPositionStatus(
     "REDEPLOY_REQUESTED",
@@ -311,20 +322,23 @@ function buildPendingRedeployPosition(input: {
 
   return PositionSchema.parse({
     positionId: input.redeployResult.positionId,
-    poolAddress: payload.redeploy.poolAddress,
-    tokenXMint: payload.redeploy.tokenXMint,
-    tokenYMint: payload.redeploy.tokenYMint,
-    baseMint: payload.redeploy.baseMint,
-    quoteMint: payload.redeploy.quoteMint,
+    poolAddress: redeployPayload.poolAddress,
+    tokenXMint: redeployPayload.tokenXMint,
+    tokenYMint: redeployPayload.tokenYMint,
+    baseMint: redeployPayload.baseMint,
+    quoteMint: redeployPayload.quoteMint,
     wallet: input.action.wallet,
     status: redeployingStatus,
     openedAt: null,
     lastSyncedAt: input.now,
     closedAt: null,
-    deployAmountBase: payload.redeploy.amountBase,
-    deployAmountQuote: payload.redeploy.amountQuote,
-    currentValueBase: payload.redeploy.amountBase,
-    currentValueUsd: payload.redeploy.estimatedValueUsd,
+    deployAmountBase: redeployPayload.amountBase,
+    deployAmountQuote: redeployPayload.amountQuote,
+    currentValueBase: redeployPayload.amountBase,
+    ...(redeployPayload.amountQuote <= 0
+      ? {}
+      : { currentValueQuote: redeployPayload.amountQuote }),
+    currentValueUsd: redeployPayload.estimatedValueUsd,
     feesClaimedBase: 0,
     feesClaimedUsd: 0,
     realizedPnlBase: 0,
@@ -334,18 +348,18 @@ function buildPendingRedeployPosition(input: {
     lastRebalanceAt: input.now,
     rebalanceCount: input.closedPosition.rebalanceCount + 1,
     partialCloseCount: 0,
-    strategy: payload.redeploy.strategy,
-    rangeLowerBin: payload.redeploy.rangeLowerBin,
-    rangeUpperBin: payload.redeploy.rangeUpperBin,
-    activeBin: payload.redeploy.initialActiveBin,
+    strategy: redeployPayload.strategy,
+    rangeLowerBin: redeployPayload.rangeLowerBin,
+    rangeUpperBin: redeployPayload.rangeUpperBin,
+    activeBin: redeployPayload.initialActiveBin,
     outOfRangeSince: null,
     lastManagementDecision: "REBALANCE",
     lastManagementReason: payload.reason,
     lastWriteActionId: input.action.actionId,
     needsReconciliation: false,
-    ...(payload.redeploy.entryMetadata === undefined
+    ...(redeployPayload.entryMetadata === undefined
       ? {}
-      : { entryMetadata: payload.redeploy.entryMetadata }),
+      : { entryMetadata: redeployPayload.entryMetadata }),
   });
 }
 
@@ -399,6 +413,7 @@ function buildRedeploySubmittedPayload(input: {
   closeAccounting: Record<string, unknown>;
   closedPositionId: string;
   availableCapitalUsd: number;
+  redeployRequest: DeployActionRequestPayload;
   redeployResult: z.infer<typeof DeployActionResultPayloadSchema>;
 }): RebalanceRedeploySubmittedPayload {
   return RebalanceRedeploySubmittedPayloadSchema.parse({
@@ -407,6 +422,7 @@ function buildRedeploySubmittedPayload(input: {
     closeAccounting: input.closeAccounting,
     closedPositionId: input.closedPositionId,
     availableCapitalUsd: input.availableCapitalUsd,
+    redeployRequest: input.redeployRequest,
     redeployResult: input.redeployResult,
   });
 }
@@ -422,6 +438,9 @@ function buildCompletedPayload(input: {
     closedPositionId: input.redeploySubmitted.closedPositionId,
     availableCapitalUsd: input.redeploySubmitted.availableCapitalUsd,
     redeployResult: input.redeploySubmitted.redeployResult,
+    ...(input.redeploySubmitted.redeployRequest === undefined
+      ? {}
+      : { redeployRequest: input.redeploySubmitted.redeployRequest }),
     confirmedPositionId: input.confirmedPositionId,
   });
 }
@@ -446,9 +465,15 @@ function buildAbortedPayload(input: {
 function validateRedeployTarget(input: {
   availableCapitalUsd: number;
   requestedCapitalUsd: number;
+  amountBase: number;
+  amountQuote: number;
 }): string | null {
   if (input.availableCapitalUsd <= 0) {
     return "Rebalance redeploy validation failed because closed position released no usable capital";
+  }
+
+  if (input.amountBase <= 0 && input.amountQuote <= 0) {
+    return "Rebalance redeploy validation failed because closed position released no usable token amounts";
   }
 
   if (input.availableCapitalUsd < input.requestedCapitalUsd) {
@@ -458,8 +483,26 @@ function validateRedeployTarget(input: {
   return null;
 }
 
+function validatePostCloseRedeploySettlement(
+  closeResult: z.infer<typeof CloseActionResultPayloadSchema>,
+): string | null {
+  if (closeResult.releasedAmountSource !== "post_tx") {
+    return "Rebalance redeploy validation failed because post-close token settlement amounts are unavailable";
+  }
+
+  if (
+    closeResult.releasedAmountBase === undefined &&
+    closeResult.releasedAmountQuote === undefined
+  ) {
+    return "Rebalance redeploy validation failed because post-close token settlement amounts are missing";
+  }
+
+  return null;
+}
+
 async function finalizeCloseLeg(input: {
   latestAction: Action & { type: "REBALANCE"; positionId: string };
+  closeSubmitted: RebalanceCloseSubmittedPayload;
   stateRepository: StateRepository;
   dlmmGateway: DlmmGateway;
   now: string;
@@ -512,7 +555,9 @@ async function finalizeCloseLeg(input: {
   }
 
   const closeConfirmedPosition = closeConfirmedPositionLike;
-  const availableCapitalUsd = closeConfirmedPosition.currentValueUsd;
+  const availableCapitalUsd =
+    input.closeSubmitted.closeResult.estimatedReleasedValueUsd ??
+    closeConfirmedPosition.currentValueUsd;
   const closedPosition = buildClosedOldPosition({
     closeConfirmedPosition,
     actionId: input.latestAction.actionId,
@@ -527,6 +572,26 @@ async function finalizeCloseLeg(input: {
     closeAccounting: toJournalRecord(closeAccounting),
     availableCapitalUsd,
   };
+}
+
+function buildPostCloseRedeployPayload(input: {
+  requestedRedeploy: DeployActionRequestPayload;
+  closeSubmitted: RebalanceCloseSubmittedPayload;
+  closeConfirmedPosition: Position;
+}): DeployActionRequestPayload {
+  const closeResult = input.closeSubmitted.closeResult;
+  const amountBase = closeResult.releasedAmountBase ?? 0;
+  const amountQuote = closeResult.releasedAmountQuote ?? 0;
+  const estimatedValueUsd =
+    closeResult.estimatedReleasedValueUsd ??
+    input.closeConfirmedPosition.currentValueUsd;
+
+  return DeployActionRequestPayloadSchema.parse({
+    ...input.requestedRedeploy,
+    amountBase,
+    amountQuote,
+    estimatedValueUsd,
+  });
 }
 
 export async function finalizeRebalance(
@@ -618,6 +683,7 @@ export async function finalizeRebalance(
         try {
           closeLeg = await finalizeCloseLeg({
             latestAction,
+            closeSubmitted: latestPayload,
             stateRepository: input.stateRepository,
             dlmmGateway: input.dlmmGateway,
             now,
@@ -700,12 +766,26 @@ export async function finalizeRebalance(
           error: null,
         });
 
-        const validationError = validateRedeployTarget({
-          availableCapitalUsd: closeLeg.availableCapitalUsd,
-          requestedCapitalUsd: deriveRebalanceCapitalRequirement(
-            requestPayload.redeploy,
-          ),
-        });
+        const settlementValidationError = validatePostCloseRedeploySettlement(
+          latestPayload.closeResult,
+        );
+        let postCloseRedeployPayload: DeployActionRequestPayload | null = null;
+        let validationError = settlementValidationError;
+        if (validationError === null) {
+          postCloseRedeployPayload = buildPostCloseRedeployPayload({
+            requestedRedeploy: requestPayload.redeploy,
+            closeSubmitted: latestPayload,
+            closeConfirmedPosition: closeLeg.closeConfirmedPosition,
+          });
+          validationError = validateRedeployTarget({
+            availableCapitalUsd: closeLeg.availableCapitalUsd,
+            requestedCapitalUsd: deriveRebalanceCapitalRequirement(
+              postCloseRedeployPayload,
+            ),
+            amountBase: postCloseRedeployPayload.amountBase,
+            amountQuote: postCloseRedeployPayload.amountQuote,
+          });
+        }
 
         if (validationError !== null) {
           const abortedPayload = buildAbortedPayload({
@@ -750,6 +830,10 @@ export async function finalizeRebalance(
             newPosition: null,
             outcome: "REBALANCE_ABORTED" as const,
           };
+        }
+
+        if (postCloseRedeployPayload === null) {
+          throw new Error("post-close redeploy payload unexpectedly missing");
         }
 
         if (
@@ -808,20 +892,20 @@ export async function finalizeRebalance(
           redeployResult = DeployActionResultPayloadSchema.parse(
             await input.dlmmGateway.deployLiquidity({
               wallet: latestAction.wallet,
-              poolAddress: requestPayload.redeploy.poolAddress,
-              tokenXMint: requestPayload.redeploy.tokenXMint,
-              tokenYMint: requestPayload.redeploy.tokenYMint,
-              baseMint: requestPayload.redeploy.baseMint,
-              quoteMint: requestPayload.redeploy.quoteMint,
-              amountBase: requestPayload.redeploy.amountBase,
-              amountQuote: requestPayload.redeploy.amountQuote,
-              ...(requestPayload.redeploy.slippageBps === undefined
+              poolAddress: postCloseRedeployPayload.poolAddress,
+              tokenXMint: postCloseRedeployPayload.tokenXMint,
+              tokenYMint: postCloseRedeployPayload.tokenYMint,
+              baseMint: postCloseRedeployPayload.baseMint,
+              quoteMint: postCloseRedeployPayload.quoteMint,
+              amountBase: postCloseRedeployPayload.amountBase,
+              amountQuote: postCloseRedeployPayload.amountQuote,
+              ...(postCloseRedeployPayload.slippageBps === undefined
                 ? {}
-                : { slippageBps: requestPayload.redeploy.slippageBps }),
-              strategy: requestPayload.redeploy.strategy,
-              rangeLowerBin: requestPayload.redeploy.rangeLowerBin,
-              rangeUpperBin: requestPayload.redeploy.rangeUpperBin,
-              initialActiveBin: requestPayload.redeploy.initialActiveBin,
+                : { slippageBps: postCloseRedeployPayload.slippageBps }),
+              strategy: postCloseRedeployPayload.strategy,
+              rangeLowerBin: postCloseRedeployPayload.rangeLowerBin,
+              rangeUpperBin: postCloseRedeployPayload.rangeUpperBin,
+              initialActiveBin: postCloseRedeployPayload.initialActiveBin,
             }),
           );
         } catch (error) {
@@ -876,6 +960,7 @@ export async function finalizeRebalance(
         const pendingRedeployPosition = buildPendingRedeployPosition({
           action: latestAction,
           closedPosition: closeLeg.closedPosition,
+          redeployPayload: postCloseRedeployPayload,
           redeployResult,
           now,
         });
@@ -941,6 +1026,7 @@ export async function finalizeRebalance(
           closeAccounting: closeLeg.closeAccounting,
           closedPositionId: closeLeg.closedPosition.positionId,
           availableCapitalUsd: closeLeg.availableCapitalUsd,
+          redeployRequest: postCloseRedeployPayload,
           redeployResult,
         });
         const waitingAction = {

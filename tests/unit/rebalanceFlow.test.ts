@@ -154,6 +154,10 @@ class RebalanceTestGateway implements DlmmGateway {
     actionType: "CLOSE",
     closedPositionId: "pos_old",
     txIds: ["tx_close_001"],
+    releasedAmountBase: 1.2,
+    releasedAmountQuote: 0.6,
+    estimatedReleasedValueUsd: 120,
+    releasedAmountSource: "post_tx",
   };
 
   public deployResult: DeployLiquidityResult = {
@@ -162,6 +166,8 @@ class RebalanceTestGateway implements DlmmGateway {
     txIds: ["tx_deploy_001"],
   };
 
+  public readonly deployRequests: DeployLiquidityRequest[] = [];
+
   public deployError: Error | null = null;
 
   public async getPosition(positionId: string): Promise<Position | null> {
@@ -169,8 +175,9 @@ class RebalanceTestGateway implements DlmmGateway {
   }
 
   public async deployLiquidity(
-    _request: DeployLiquidityRequest,
+    request: DeployLiquidityRequest,
   ): Promise<DeployLiquidityResult> {
+    this.deployRequests.push(request);
     if (this.deployError !== null) {
       throw this.deployError;
     }
@@ -323,6 +330,127 @@ describe("rebalance flow", () => {
     expect(journalEvents.map((event) => event.eventType)).toContain(
       "REBALANCE_FINALIZED",
     );
+  });
+
+  it("redeploys with post-close token amounts instead of the stale request amounts", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_actual_amounts"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_actual_amounts",
+      txIds: ["tx_close_actual_amounts"],
+      releasedAmountBase: 1.37,
+      releasedAmountQuote: 22.5,
+      estimatedReleasedValueUsd: 123,
+      releasedAmountSource: "post_tx",
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_actual_amounts",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_actual_amounts",
+      buildCloseConfirmedPosition("pos_actual_amounts", 999),
+    );
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("REDEPLOY_SUBMITTED");
+    expect(gateway.deployRequests).toHaveLength(1);
+    expect(gateway.deployRequests[0]?.amountBase).toBe(1.37);
+    expect(gateway.deployRequests[0]?.amountQuote).toBe(22.5);
+    expect(finalized.newPosition?.deployAmountBase).toBe(1.37);
+    expect(finalized.newPosition?.deployAmountQuote).toBe(22.5);
+    expect(finalized.newPosition?.currentValueUsd).toBe(123);
+  });
+
+  it("aborts redeploy when post-close token settlement amounts are unavailable", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_unavailable_amounts"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_unavailable_amounts",
+      txIds: ["tx_close_unavailable_amounts"],
+      releasedAmountSource: "unavailable",
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_unavailable_amounts",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_unavailable_amounts",
+      buildCloseConfirmedPosition("pos_unavailable_amounts", 120),
+    );
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("REBALANCE_ABORTED");
+    expect(finalized.action.status).toBe("FAILED");
+    expect(finalized.action.error).toMatch(/settlement amounts are unavailable/i);
+    expect(gateway.deployRequests).toHaveLength(0);
+    expect(finalized.newPosition).toBeNull();
   });
 
   it("marks rebalance TIMED_OUT when the old close leg never confirms", async () => {
@@ -487,6 +615,10 @@ describe("rebalance flow", () => {
       actionType: "CLOSE",
       closedPositionId: "pos_old_resume",
       txIds: ["tx_close_resume"],
+      releasedAmountBase: 1.2,
+      releasedAmountQuote: 0.6,
+      estimatedReleasedValueUsd: 120,
+      releasedAmountSource: "post_tx",
     };
 
     const action = await requestRebalance({
@@ -553,7 +685,7 @@ describe("rebalance flow", () => {
     ).toContain("REBALANCE_FINALIZED");
   });
 
-  it("aborts rebalance if closed capital is below the redeploy requirement", async () => {
+  it("aborts rebalance if the closed leg releases no usable token amounts", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
       filePath: path.join(directory, "actions.json"),
@@ -575,6 +707,10 @@ describe("rebalance flow", () => {
       actionType: "CLOSE",
       closedPositionId: "pos_low_capital",
       txIds: ["tx_close_low_capital"],
+      releasedAmountBase: 0,
+      releasedAmountQuote: 0,
+      estimatedReleasedValueUsd: 40,
+      releasedAmountSource: "post_tx",
     };
 
     const action = await requestRebalance({
@@ -598,7 +734,10 @@ describe("rebalance flow", () => {
 
     gateway.positions.set(
       "pos_low_capital",
-      buildCloseConfirmedPosition("pos_low_capital", 40),
+      {
+        ...buildCloseConfirmedPosition("pos_low_capital", 0),
+        currentValueBase: 0,
+      },
     );
 
     const finalized = await finalizeRebalance({
@@ -640,6 +779,10 @@ describe("rebalance flow", () => {
       actionType: "CLOSE",
       closedPositionId: "pos_redeploy_fail",
       txIds: ["tx_close_redeploy_fail"],
+      releasedAmountBase: 1.2,
+      releasedAmountQuote: 0.6,
+      estimatedReleasedValueUsd: 120,
+      releasedAmountSource: "post_tx",
     };
     gateway.deployError = new Error("redeploy unavailable");
 
@@ -705,6 +848,10 @@ describe("rebalance flow", () => {
       actionType: "CLOSE",
       closedPositionId: "pos_redeploy_block",
       txIds: ["tx_close_block"],
+      releasedAmountBase: 1.2,
+      releasedAmountQuote: 0.6,
+      estimatedReleasedValueUsd: 120,
+      releasedAmountSource: "post_tx",
     };
 
     const action = await requestRebalance({

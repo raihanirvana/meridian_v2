@@ -206,6 +206,7 @@ describe("deploy flow", () => {
     const pendingPosition = await stateRepository.get("pos_001");
     expect(pendingPosition?.status).toBe("DEPLOYING");
     expect(pendingPosition?.openedAt).toBeNull();
+    expect(pendingPosition?.currentValueQuote).toBe(deployPayload.amountQuote);
 
     const confirmation = await confirmDeployAction({
       actionId: action.actionId,
@@ -227,6 +228,9 @@ describe("deploy flow", () => {
 
     expect(persistedAction?.status).toBe("DONE");
     expect(persistedPosition?.status).toBe("OPEN");
+    expect(persistedPosition?.currentValueQuote).toBe(
+      deployPayload.amountQuote,
+    );
     expect(persistedPosition?.entryMetadata).toEqual(
       deployPayload.entryMetadata,
     );

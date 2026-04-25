@@ -652,6 +652,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       parsed.wallet,
     );
     const pool = await this.getPool(poolAddress);
+    const positionBeforeClose = await this.getPosition(parsed.positionId).catch(
+      () => null,
+    );
     const positionPubkey = new PublicKey(parsed.positionId);
     const claimTxIds: string[] = [];
     const closeTxIds: string[] = [];
@@ -706,6 +709,24 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       );
     }
 
+    const txIds = [...claimTxIds, ...closeTxIds];
+    const baseMint =
+      positionBeforeClose?.baseMint ?? pool.lbPair.tokenXMint.toBase58();
+    const quoteMint =
+      positionBeforeClose?.quoteMint ?? pool.lbPair.tokenYMint.toBase58();
+    const releasedAmountBase =
+      await this.resolveWalletTokenAmountIncreaseFromTransactions({
+        txIds,
+        wallet: parsed.wallet,
+        mint: baseMint,
+      });
+    const releasedAmountQuote =
+      await this.resolveWalletTokenAmountIncreaseFromTransactions({
+        txIds,
+        wallet: parsed.wallet,
+        mint: quoteMint,
+      });
+
     this.recentDeploys.delete(parsed.positionId);
     this.claimedBaseByPositionId.delete(parsed.positionId);
     this.mintMappingByPositionId.delete(parsed.positionId);
@@ -714,9 +735,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     return ClosePositionResultSchema.parse({
       actionType: "CLOSE",
       closedPositionId: parsed.positionId,
-      txIds: [...claimTxIds, ...closeTxIds],
+      txIds,
       preCloseFeesClaimed,
       preCloseFeesClaimError,
+      ...(releasedAmountBase === null ? {} : { releasedAmountBase }),
+      ...(releasedAmountQuote === null ? {} : { releasedAmountQuote }),
+      ...(positionBeforeClose?.currentValueUsd === undefined
+        ? {}
+        : { estimatedReleasedValueUsd: positionBeforeClose.currentValueUsd }),
+      releasedAmountSource:
+        releasedAmountBase === null && releasedAmountQuote === null
+          ? "unavailable"
+          : "post_tx",
     });
   }
 
@@ -916,6 +946,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     const now = this.now();
     const positions = mappedPositions.map((position) => {
       const mintMapping = this.resolvePositionMintMapping(position);
+      const recentDeploy = this.recentDeploys.get(position.positionId)?.value;
       return PositionSchema.parse({
         positionId: position.positionId,
         poolAddress: position.poolAddress,
@@ -928,9 +959,12 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         openedAt: position.openedAt ?? now,
         lastSyncedAt: now,
         closedAt: null,
-        deployAmountBase: 0,
-        deployAmountQuote: 0,
-        currentValueBase: 0,
+        deployAmountBase: recentDeploy?.amountBase ?? 0,
+        deployAmountQuote: recentDeploy?.amountQuote ?? 0,
+        currentValueBase: recentDeploy?.amountBase ?? 0,
+        ...(recentDeploy?.amountQuote === undefined
+          ? {}
+          : { currentValueQuote: recentDeploy.amountQuote }),
         currentValueUsd: clampNonNegative(position.currentValueUsd),
         feesClaimedBase: 0,
         feesClaimedUsd: clampNonNegative(position.feesClaimedUsd),
@@ -1365,7 +1399,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       closedAt: null,
       deployAmountBase: request.amountBase,
       deployAmountQuote: request.amountQuote,
-      currentValueBase: 0,
+      currentValueBase: request.amountBase,
+      currentValueQuote: request.amountQuote,
       currentValueUsd: 0,
       feesClaimedBase: 0,
       feesClaimedUsd: 0,
@@ -1639,6 +1674,14 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
   }
 
   private async resolveClaimedBaseAmountFromTransactions(input: {
+    txIds: string[];
+    wallet: string;
+    mint: string;
+  }): Promise<number | null> {
+    return this.resolveWalletTokenAmountIncreaseFromTransactions(input);
+  }
+
+  private async resolveWalletTokenAmountIncreaseFromTransactions(input: {
     txIds: string[];
     wallet: string;
     mint: string;

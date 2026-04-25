@@ -37,6 +37,7 @@ import { handleTelegramOperatorCommand } from "../app/usecases/handleTelegramOpe
 
 import { createRuntimeStores } from "./createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "./createRuntimeSupervisor.js";
+import { resolveLiveRedeployAmounts } from "./liveRebalancePlanner.js";
 
 const RuntimeBootstrapEnvSchema = z
   .object({
@@ -189,7 +190,8 @@ function createLiveAiRebalancePlanner(input: {
     const rangeLowerBin = activeBin - plan.binsBelow;
     const rangeUpperBin = activeBin + plan.binsAbove;
     const estimatedValueUsd = Math.max(position.currentValueUsd, 0);
-    if (estimatedValueUsd <= 0) {
+    const { amountBase, amountQuote } = resolveLiveRedeployAmounts(position);
+    if (estimatedValueUsd <= 0 || (amountBase <= 0 && amountQuote <= 0)) {
       return null;
     }
 
@@ -201,8 +203,8 @@ function createLiveAiRebalancePlanner(input: {
         tokenYMint: position.tokenYMint,
         baseMint: position.baseMint,
         quoteMint: position.quoteMint,
-        amountBase: position.deployAmountBase,
-        amountQuote: position.deployAmountQuote,
+        amountBase,
+        amountQuote,
         slippageBps: plan.slippageBps,
         strategy: plan.strategy,
         rangeLowerBin,

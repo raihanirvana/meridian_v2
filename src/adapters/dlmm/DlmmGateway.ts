@@ -40,6 +40,12 @@ export const ClosePositionResultSchema = z.object({
   txIds: z.array(z.string().min(1)),
   preCloseFeesClaimed: z.boolean().optional(),
   preCloseFeesClaimError: z.string().min(1).nullable().optional(),
+  releasedAmountBase: z.number().nonnegative().optional(),
+  releasedAmountQuote: z.number().nonnegative().optional(),
+  estimatedReleasedValueUsd: z.number().nonnegative().optional(),
+  releasedAmountSource: z
+    .enum(["post_tx", "position_snapshot", "unavailable"])
+    .optional(),
 });
 
 export const ClaimFeesRequestSchema = z.object({

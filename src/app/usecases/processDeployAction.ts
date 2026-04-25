@@ -116,6 +116,7 @@ function buildPendingDeployPosition(input: {
     deployAmountBase: input.payload.amountBase,
     deployAmountQuote: input.payload.amountQuote,
     currentValueBase: input.payload.amountBase,
+    currentValueQuote: input.payload.amountQuote,
     currentValueUsd: input.payload.estimatedValueUsd,
     feesClaimedBase: 0,
     feesClaimedUsd: 0,

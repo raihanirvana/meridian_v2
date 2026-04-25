@@ -52,6 +52,7 @@ export const PositionSchema = z
     deployAmountBase: z.number().nonnegative(),
     deployAmountQuote: z.number().nonnegative(),
     currentValueBase: z.number().nonnegative(),
+    currentValueQuote: z.number().nonnegative().optional(),
     currentValueUsd: z.number().nonnegative(),
     feesClaimedBase: z.number().nonnegative(),
     feesClaimedUsd: z.number().nonnegative(),
