@@ -178,6 +178,24 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function extractActiveBinFromPool(
+  rawPool: Record<string, unknown>,
+): number | null {
+  const dlmmParams = asRecord(rawPool.dlmm_params ?? rawPool.dlmmParams);
+  return (
+    asNumber(rawPool.active_bin) ??
+    asNumber(rawPool.activeBin) ??
+    asNumber(rawPool.active_id) ??
+    asNumber(rawPool.activeId) ??
+    asNumber(rawPool.activeBinId) ??
+    asNumber(rawPool.poolActiveBinId) ??
+    asNumber(dlmmParams.active_bin) ??
+    asNumber(dlmmParams.activeBin) ??
+    asNumber(dlmmParams.active_id) ??
+    asNumber(dlmmParams.activeId)
+  );
+}
+
 function clampNonNegative(value: number | null): number {
   return value === null ? 0 : Math.max(value, 0);
 }
@@ -1022,6 +1040,15 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       const rawPool = asRecord(
         await this.fetchJson(`/pools/${encodeURIComponent(parsedPoolAddress)}`),
       );
+      const activeBin = extractActiveBinFromPool(rawPool);
+      if (activeBin === null) {
+        // Data API returned a pool record but with none of the recognized
+        // active-bin fields. Falling back to 0 here would silently corrupt
+        // downstream range/strategy/drift math, so escalate to the SDK path.
+        throw new Error(
+          `Meteora data API pool record for ${parsedPoolAddress} is missing active bin`,
+        );
+      }
       return PoolInfoSchema.parse({
         poolAddress: parsedPoolAddress,
         pairLabel:
@@ -1036,11 +1063,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         binStep:
           asNumber(rawPool.binStep) ??
           asNumber(asRecord(rawPool.dlmmParams).binStep) ??
+          asNumber(asRecord(rawPool.dlmm_params).binStep) ??
+          asNumber(asRecord(rawPool.dlmm_params).bin_step) ??
           1,
-        activeBin:
-          asNumber(rawPool.activeBinId) ??
-          asNumber(rawPool.poolActiveBinId) ??
-          0,
+        activeBin,
       });
     } catch {
       const pool = await this.getPool(parsedPoolAddress);

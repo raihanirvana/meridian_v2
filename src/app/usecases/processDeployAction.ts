@@ -161,6 +161,13 @@ function buildOpenPosition(input: {
   return PositionSchema.parse({
     ...input.pendingPosition,
     ...input.confirmedPosition,
+    // pendingPosition.strategy is authoritative — it comes from the deploy
+    // request payload. confirmedPosition.strategy may be an adapter-level
+    // default (e.g. "spot") when the SDK/data API cannot recover the actual
+    // strategy from open-position state. Preserve the user's selection so
+    // PerformanceRecord/lesson learning sees the strategy that was actually
+    // deployed.
+    strategy: input.pendingPosition.strategy,
     status:
       input.pendingPosition.status === "OPEN"
         ? "OPEN"

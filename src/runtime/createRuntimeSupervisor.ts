@@ -1169,13 +1169,18 @@ export function createRuntimeSupervisor(
 
     async runRecommendedCycle(cycleInput = {}) {
       const triggerSource = cycleInput.triggerSource ?? "cron";
+      // Reconciliation first so stale RECONCILING/WAITING_CONFIRMATION state
+      // is settled before management decisions and screening shortlists run on
+      // it. Screening + auto-deploy depend on accurate position state, so
+      // running screening before reconciliation can cause auto-deploys to be
+      // sized against not-yet-finalized positions.
+      const reconciliation = await this.runReconciliationTick(triggerSource);
+      const management = await this.runManagementTick(triggerSource);
+      const processedActions = await this.runActionQueueTick();
       const screening =
         cycleInput.includeScreening === false
           ? null
           : await this.runScreeningTick(triggerSource);
-      const reconciliation = await this.runReconciliationTick(triggerSource);
-      const management = await this.runManagementTick(triggerSource);
-      const processedActions = await this.runActionQueueTick();
       const reporting =
         cycleInput.includeReporting === false
           ? null

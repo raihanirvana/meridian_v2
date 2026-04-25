@@ -12,6 +12,14 @@ import { type PoolMemoryRepository } from "../../adapters/storage/PoolMemoryRepo
 export interface BuildLessonsPromptInput {
   role: LessonRole;
   maxLessons?: number;
+  /**
+   * When set, controls whether smaller auto-cycle caps are applied. Defaults
+   * to `role !== "GENERAL"` so screening/management/strategy/rebalance auto
+   * cycles stay tight, while operator/manual GENERAL prompts get the larger
+   * cap. Set to `false` for an operator-driven prompt that needs the full
+   * lesson budget on a non-GENERAL role.
+   */
+  isAutoCycle?: boolean;
   includePoolMemory?: {
     candidates: Array<{
       poolAddress: string;
@@ -36,10 +44,11 @@ export class DefaultLessonPromptService implements LessonPromptService {
     const blocks: string[] = [];
 
     if (lessons.length > 0) {
+      const isAutoCycle = input.isAutoCycle ?? input.role !== "GENERAL";
       const sections = selectLessonsForRole({
         lessons,
         role: input.role,
-        caps: defaultLessonCaps(input.role !== "GENERAL", input.maxLessons),
+        caps: defaultLessonCaps(isAutoCycle, input.maxLessons),
         now: new Date().toISOString(),
       });
       const lessonPrompt = formatLessonsPrompt(sections).trim();

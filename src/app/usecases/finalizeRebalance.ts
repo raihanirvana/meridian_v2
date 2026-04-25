@@ -386,6 +386,11 @@ function buildOpenRedeployedPosition(input: {
   return PositionSchema.parse({
     ...input.pendingPosition,
     ...input.confirmedPosition,
+    // pendingPosition.strategy comes from the redeploy request payload and
+    // is authoritative; confirmedPosition.strategy from listPositionsForWallet
+    // may be an adapter-level default that would otherwise corrupt
+    // PerformanceRecord/lesson tracking on the new leg.
+    strategy: input.pendingPosition.strategy,
     status:
       input.pendingPosition.status === "OPEN"
         ? "OPEN"

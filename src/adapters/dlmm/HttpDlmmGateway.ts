@@ -45,6 +45,18 @@ export interface HttpDlmmGatewayOptions {
   timeoutMs?: number;
 }
 
+/**
+ * HTTP-bridged DLMM gateway. Implements the live mutation/read surface against
+ * an external HTTP wrapper, but does NOT expose simulation endpoints — both
+ * `simulateDeployLiquidity` and `simulateClosePosition` always return
+ * `{ ok: false }`.
+ *
+ * Operational consequence: when the runtime is configured with
+ * `requireRebalanceSimulation = true` (or any constrained-action AI rebalance
+ * path), every rebalance review will be blocked with "simulation unavailable".
+ * Use {@link MeteoraSdkDlmmGateway} (or an HTTP bridge that wires real
+ * simulation endpoints) for those code paths.
+ */
 export class HttpDlmmGateway implements DlmmGateway {
   private readonly client: JsonHttpClient;
 
