@@ -711,4 +711,11 @@ Status: Complete
   - auto-deploy dari shortlist sekarang membangun payload dari `finalStrategyDecision`, bukan output AI mentah; mode default tetap `recommendation_only` dan `strategyReviewEnabled=false`
   - mode `dry_run_payload` diblokir bila `runtime.dryRun=false`, sedangkan `guarded_auto` live tidak memakai AI payload kecuali `allowAiStrategyForDeploy=true`
   - journal `STRATEGY_DECISION_VALIDATED` membandingkan config static, deterministic strategy, AI recommendation, dan final validated strategy; risk engine full deploy juga dijalankan sebelum dry-run/queue
-- `npm test` terakhir hijau dengan total `276` tests passed
+- Audit follow-up pasca Batch 24 sekarang juga sudah masuk:
+  - auto-compound redeploy menghitung `estimatedValueUsd` dari nilai USD eksplisit / SOL price, bukan token unit mentah
+  - auto-compound child `DEPLOY` wajib menerima risk guard; jika guard tidak tersedia, redeploy diblokir fail-safe dan claim tetap selesai
+  - reconciliation recovery juga bisa memasok risk guard untuk auto-compound resume lewat runtime supervisor
+  - auto-deploy loop tidak lagi memakai snapshot portfolio stale untuk iterasi live berikutnya; pending/open positions dan hourly deploy count diproyeksikan per kandidat
+  - `strategyDecisionRules` tidak lagi memasukkan free-form simulation error ke `riskFlags`
+  - native Meteora live snapshot sekarang mempertahankan mapping `baseMint` / `quoteMint` dari deploy bot, sehingga snapshot tokenX/tokenY tidak membalik accounting claim/swap untuk posisi yang dibuka robot
+- `npm test` terakhir hijau dengan total `278` tests passed

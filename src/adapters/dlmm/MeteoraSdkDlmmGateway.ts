@@ -128,6 +128,11 @@ interface MappedApiPosition {
   claimedBaseAmount: number | null;
 }
 
+interface PositionMintMapping {
+  baseMint: string;
+  quoteMint: string;
+}
+
 interface TimestampedValue<T> {
   value: T;
   cachedAtMs: number;
@@ -374,6 +379,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     string,
     TimestampedValue<DeployLiquidityRequest>
   >();
+  private readonly mintMappingByPositionId = new Map<
+    string,
+    TimestampedValue<PositionMintMapping>
+  >();
   private readonly claimedBaseByPositionId = new Map<
     string,
     TimestampedValue<number>
@@ -522,6 +531,15 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       value: parsedRequest,
       cachedAtMs: Date.now(),
     });
+    const baseMint = parsedRequest.baseMint;
+    const quoteMint = parsedRequest.quoteMint;
+    if (baseMint === undefined || quoteMint === undefined) {
+      throw new Error("Meteora native deploy requires baseMint and quoteMint");
+    }
+    this.rememberPositionMintMapping(positionId, {
+      baseMint,
+      quoteMint,
+    });
     this.openPositionsCache = null;
     this.poolByPositionId.set(positionId, {
       value: parsed,
@@ -600,6 +618,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     this.recentDeploys.delete(parsed.positionId);
     this.claimedBaseByPositionId.delete(parsed.positionId);
+    this.mintMappingByPositionId.delete(parsed.positionId);
     this.poolByPositionId.delete(parsed.positionId);
     this.openPositionsCache = null;
     return ClosePositionResultSchema.parse({
@@ -743,14 +762,15 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     }
 
     const now = this.now();
-    const positions = mappedPositions.map((position) =>
-      PositionSchema.parse({
+    const positions = mappedPositions.map((position) => {
+      const mintMapping = this.resolvePositionMintMapping(position);
+      return PositionSchema.parse({
         positionId: position.positionId,
         poolAddress: position.poolAddress,
         tokenXMint: position.tokenXMint,
         tokenYMint: position.tokenYMint,
-        baseMint: position.tokenXMint,
-        quoteMint: position.tokenYMint,
+        baseMint: mintMapping.baseMint,
+        quoteMint: mintMapping.quoteMint,
         wallet: parsedWallet,
         status: "OPEN",
         openedAt: position.openedAt ?? now,
@@ -777,13 +797,17 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         lastManagementReason: null,
         lastWriteActionId: null,
         needsReconciliation: false,
-      }),
-    );
+      });
+    });
 
     for (const position of positions) {
       this.poolByPositionId.set(position.positionId, {
         value: position.poolAddress,
         cachedAtMs: Date.now(),
+      });
+      this.rememberPositionMintMapping(position.positionId, {
+        baseMint: position.baseMint,
+        quoteMint: position.quoteMint,
       });
     }
     this.openPositionsCache = {
@@ -969,6 +993,41 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     );
 
     return results;
+  }
+
+  private rememberPositionMintMapping(
+    positionId: string,
+    mapping: PositionMintMapping,
+  ): void {
+    this.mintMappingByPositionId.set(positionId, {
+      value: mapping,
+      cachedAtMs: Date.now(),
+    });
+  }
+
+  private resolvePositionMintMapping(
+    position: MappedApiPosition,
+  ): PositionMintMapping {
+    const cached = this.mintMappingByPositionId.get(position.positionId);
+    if (cached !== undefined) {
+      return cached.value;
+    }
+
+    const recentDeploy = this.recentDeploys.get(position.positionId);
+    if (
+      recentDeploy?.value.baseMint !== undefined &&
+      recentDeploy.value.quoteMint !== undefined
+    ) {
+      return {
+        baseMint: recentDeploy.value.baseMint,
+        quoteMint: recentDeploy.value.quoteMint,
+      };
+    }
+
+    return {
+      baseMint: position.tokenXMint,
+      quoteMint: position.tokenYMint,
+    };
   }
 
   private async fetchOpenPositionsFromSdk(
@@ -1417,6 +1476,12 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     for (const [key, entry] of this.claimedBaseByPositionId.entries()) {
       if (isExpired(entry)) {
         this.claimedBaseByPositionId.delete(key);
+      }
+    }
+
+    for (const [key, entry] of this.mintMappingByPositionId.entries()) {
+      if (isExpired(entry)) {
+        this.mintMappingByPositionId.delete(key);
       }
     }
   }

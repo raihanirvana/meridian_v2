@@ -272,6 +272,54 @@ describe("MeteoraSdkDlmmGateway", () => {
     expect(snapshot.positions[0]?.rangeUpperBin).toBe(20);
   });
 
+  it("preserves bot deploy base/quote mint mapping when live snapshot returns tokenX/tokenY order", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    getAllLbPairPositionsByUserMock.mockResolvedValue({
+      pool_001: {
+        lbPairPositionsData: [
+          {
+            publicKey: {
+              toString: () => "generated_position",
+            },
+          },
+        ],
+      },
+    });
+    const gateway = createGateway({
+      fetchFn: vi.fn(async () => {
+        throw new Error("data api unavailable");
+      }),
+    });
+
+    await gateway.deployLiquidity({
+      wallet: "wallet_001",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_y",
+      quoteMint: "mint_x",
+      amountBase: 1,
+      amountQuote: 0,
+      strategy: "bid_ask",
+      rangeLowerBin: 10,
+      rangeUpperBin: 20,
+      initialActiveBin: 15,
+    });
+
+    const snapshot = await gateway.listPositionsForWallet("wallet_001");
+    const position = snapshot.positions.find(
+      (item) => item.positionId === "generated_position",
+    );
+
+    expect(position).toMatchObject({
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_y",
+      quoteMint: "mint_x",
+    });
+  });
+
   it("fails fast instead of using fabricated close ranges when position range cannot be loaded", async () => {
     const pool = createPool({
       getPosition: vi.fn(async () => {

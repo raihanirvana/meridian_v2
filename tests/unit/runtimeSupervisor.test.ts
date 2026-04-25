@@ -1240,4 +1240,163 @@ describe("runtime supervisor", () => {
       },
     });
   });
+
+  it("does not use a stale portfolio snapshot to queue multiple auto deploys in one live cycle", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    const firstCandidate = buildCandidate();
+    const secondCandidate: Candidate = {
+      ...buildCandidate(),
+      candidateId: "cand_002",
+      poolAddress: "pool_002",
+      symbolPair: "DEF-SOL",
+    };
+    const userConfig = buildUserConfig({
+      deploy: {
+        defaultAmountSol: 0.25,
+        minAmountSol: 0.1,
+        autoDeployFromShortlist: true,
+        maxAutoDeploysPerCycle: 2,
+        strategy: "bid_ask",
+        binsBelow: 69,
+        binsAbove: 0,
+        slippageBps: 300,
+        maxActiveBinDrift: 3,
+        maxBinsBelow: 120,
+        maxBinsAbove: 120,
+        maxSlippageBps: 300,
+        requireFreshSnapshot: true,
+        strategyFallbackMode: "config_static",
+      },
+      runtime: {
+        dryRun: false,
+        logLevel: "info",
+        operatorStdinEnabled: true,
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig,
+      stores,
+      gateways: {
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [firstCandidate, secondCandidate],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "error",
+            error: new Error("deploy should not run during screening"),
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              binStep: 80,
+              activeBin: 100,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    const queuedActions = await stores.actionRepository.listByStatuses([
+      "QUEUED",
+    ]);
+    const blockedRiskEvents = (await stores.journalRepository.list()).filter(
+      (event) => event.eventType === "DEPLOY_REQUEST_BLOCKED_BY_RISK",
+    );
+
+    expect(queuedActions).toHaveLength(1);
+    expect(blockedRiskEvents.at(-1)?.error).toContain(
+      "wallet already has an active write action",
+    );
+  });
 });

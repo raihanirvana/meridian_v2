@@ -7,10 +7,12 @@ import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlS
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
 import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
+import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
 import {
   PositionSchema,
   type Position,
 } from "../../domain/entities/Position.js";
+import type { PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
@@ -21,6 +23,8 @@ import {
   DeployActionRequestPayloadSchema,
   requestDeploy,
 } from "./requestDeploy.js";
+
+const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 const CompoundDeployTemplateSchema = z
   .object({
@@ -85,6 +89,13 @@ export type PostClaimSwapHook = (
   input: PostClaimSwapInput,
 ) => Promise<Record<string, unknown> | null>;
 
+export interface CompoundDeployRiskGuard {
+  portfolio: PortfolioState;
+  policy: PortfolioRiskPolicy;
+  recentNewDeploys: number;
+  solPriceUsd?: number;
+}
+
 export interface FinalizeClaimFeesInput {
   actionId: string;
   actionRepository: ActionRepository;
@@ -97,6 +108,7 @@ export interface FinalizeClaimFeesInput {
   runtimeControlStore?: RuntimeControlStore;
   now?: () => string;
   postClaimSwapHook?: PostClaimSwapHook;
+  compoundDeployRiskGuard?: CompoundDeployRiskGuard;
 }
 
 export interface FinalizeClaimFeesResult {
@@ -227,6 +239,7 @@ function buildCompoundDeployPayload(input: {
   template: z.infer<typeof CompoundDeployTemplateSchema>;
   outputMint: string;
   outputAmount: number;
+  outputAmountUsd: number;
 }): z.infer<typeof DeployActionRequestPayloadSchema> {
   const amountBase =
     input.outputMint === input.template.baseMint ? input.outputAmount : 0;
@@ -250,11 +263,48 @@ function buildCompoundDeployPayload(input: {
     rangeLowerBin: input.template.rangeLowerBin,
     rangeUpperBin: input.template.rangeUpperBin,
     initialActiveBin: input.template.initialActiveBin,
-    estimatedValueUsd: input.outputAmount,
+    estimatedValueUsd: input.outputAmountUsd,
     ...(input.template.entryMetadata === undefined
       ? {}
       : { entryMetadata: input.template.entryMetadata }),
   });
+}
+
+function resolveCompoundOutputValueUsd(input: {
+  outputMint: string;
+  outputAmount: number;
+  swapResult: Record<string, unknown>;
+  solPriceUsd?: number;
+}): number {
+  const explicitValueUsd = z
+    .number()
+    .nonnegative()
+    .safeParse(input.swapResult.outputAmountUsd);
+  if (explicitValueUsd.success) {
+    return explicitValueUsd.data;
+  }
+
+  if (
+    input.outputMint === SOL_MINT &&
+    input.solPriceUsd !== undefined &&
+    input.solPriceUsd > 0
+  ) {
+    return input.outputAmount * input.solPriceUsd;
+  }
+
+  throw new Error(
+    "compound output USD value unavailable; provide outputAmountUsd or SOL price",
+  );
+}
+
+function buildCompoundRiskGuard(input: { riskGuard: CompoundDeployRiskGuard }) {
+  return {
+    ...input.riskGuard,
+    portfolio: {
+      ...input.riskGuard.portfolio,
+      pendingActions: Math.max(0, input.riskGuard.portfolio.pendingActions - 1),
+    },
+  };
 }
 
 async function persistReconcilingAction(input: {
@@ -280,6 +330,9 @@ async function runClaimPostProcessing(input: {
   actionQueue: ActionQueue | undefined;
   runtimeControlStore: RuntimeControlStore | undefined;
   postClaimSwapHook: PostClaimSwapHook | undefined;
+  compoundDeployRiskGuard:
+    | FinalizeClaimFeesInput["compoundDeployRiskGuard"]
+    | undefined;
   now: string;
 }): Promise<{
   action: Action;
@@ -475,11 +528,25 @@ async function runClaimPostProcessing(input: {
             .number()
             .nonnegative()
             .parse(swapResult.outputAmount);
+          const outputAmountUsd = resolveCompoundOutputValueUsd({
+            outputMint: compound.outputMint,
+            outputAmount,
+            swapResult,
+            ...(input.compoundDeployRiskGuard?.solPriceUsd === undefined
+              ? {}
+              : { solPriceUsd: input.compoundDeployRiskGuard.solPriceUsd }),
+          });
           const deployPayload = buildCompoundDeployPayload({
             template: compound.deployTemplate,
             outputMint: compound.outputMint,
             outputAmount,
+            outputAmountUsd,
           });
+          if (input.compoundDeployRiskGuard === undefined) {
+            throw new Error(
+              "compound deploy risk guard unavailable; auto-compound redeploy blocked",
+            );
+          }
           const deployAction = await requestDeploy({
             actionQueue: input.actionQueue,
             wallet: workingAction.wallet,
@@ -493,6 +560,9 @@ async function runClaimPostProcessing(input: {
             ...(input.runtimeControlStore === undefined
               ? {}
               : { runtimeControlStore: input.runtimeControlStore }),
+            riskGuard: buildCompoundRiskGuard({
+              riskGuard: input.compoundDeployRiskGuard,
+            }),
           });
           compound = ClaimAutoCompoundStateSchema.parse({
             ...compound,
@@ -684,6 +754,7 @@ export async function finalizeClaimFees(
             actionQueue: input.actionQueue,
             runtimeControlStore: input.runtimeControlStore,
             postClaimSwapHook: input.postClaimSwapHook,
+            compoundDeployRiskGuard: input.compoundDeployRiskGuard,
             now,
           });
           return {
@@ -790,6 +861,7 @@ export async function finalizeClaimFees(
           actionQueue: input.actionQueue,
           runtimeControlStore: input.runtimeControlStore,
           postClaimSwapHook: input.postClaimSwapHook,
+          compoundDeployRiskGuard: input.compoundDeployRiskGuard,
           now,
         });
         return {
@@ -827,6 +899,7 @@ export async function finalizeClaimFees(
         actionQueue: input.actionQueue,
         runtimeControlStore: input.runtimeControlStore,
         postClaimSwapHook: input.postClaimSwapHook,
+        compoundDeployRiskGuard: input.compoundDeployRiskGuard,
         now,
       });
       return {

@@ -27,6 +27,7 @@ import {
 import { finalizeClose, type PostCloseSwapHook } from "./finalizeClose.js";
 import {
   finalizeClaimFees,
+  type CompoundDeployRiskGuard,
   type PostClaimSwapHook,
 } from "./finalizeClaimFees.js";
 import { confirmDeployAction } from "./processDeployAction.js";
@@ -77,6 +78,10 @@ export interface ReconcilePortfolioInput {
   wallets?: string[];
   postCloseSwapHook?: PostCloseSwapHook;
   postClaimSwapHook?: PostClaimSwapHook;
+  claimCompoundRiskGuardProvider?: (input: {
+    wallet: string;
+    now: string;
+  }) => Promise<CompoundDeployRiskGuard> | CompoundDeployRiskGuard;
   dryRun?: boolean;
 }
 
@@ -93,6 +98,7 @@ interface RecoverReconcilingActionInput {
   journalRepository?: JournalRepository;
   runtimeControlStore?: RuntimeControlStore;
   postClaimSwapHook?: PostClaimSwapHook;
+  claimCompoundRiskGuardProvider?: ReconcilePortfolioInput["claimCompoundRiskGuardProvider"];
   walletLock: WalletLock;
   positionLock: PositionLock;
   now: string;
@@ -301,6 +307,15 @@ async function recoverReconcilingAction(
         walletLock: input.walletLock,
         positionLock: input.positionLock,
         now: () => input.now,
+        ...(input.claimCompoundRiskGuardProvider === undefined
+          ? {}
+          : {
+              compoundDeployRiskGuard:
+                await input.claimCompoundRiskGuardProvider({
+                  wallet: latestAction.wallet,
+                  now: input.now,
+                }),
+            }),
         ...(input.actionQueue === undefined
           ? {}
           : { actionQueue: input.actionQueue }),
@@ -528,6 +543,15 @@ export async function reconcilePortfolio(
             walletLock,
             positionLock,
             now: () => now,
+            ...(input.claimCompoundRiskGuardProvider === undefined
+              ? {}
+              : {
+                  compoundDeployRiskGuard:
+                    await input.claimCompoundRiskGuardProvider({
+                      wallet: action.wallet,
+                      now,
+                    }),
+                }),
             ...(input.actionQueue === undefined
               ? {}
               : { actionQueue: input.actionQueue }),
@@ -630,6 +654,12 @@ export async function reconcilePortfolio(
             ...(input.postClaimSwapHook === undefined
               ? {}
               : { postClaimSwapHook: input.postClaimSwapHook }),
+            ...(input.claimCompoundRiskGuardProvider === undefined
+              ? {}
+              : {
+                  claimCompoundRiskGuardProvider:
+                    input.claimCompoundRiskGuardProvider,
+                }),
           }),
         );
       } catch (error) {

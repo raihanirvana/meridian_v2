@@ -555,6 +555,13 @@ export function createRuntimeSupervisor(
       }
 
       try {
+        const portfolioForRisk: PortfolioState = input.config.runtime.dryRun
+          ? portfolio
+          : {
+              ...portfolio,
+              pendingActions: portfolio.pendingActions + deployedThisCycle,
+              openPositions: portfolio.openPositions + deployedThisCycle,
+            };
         const poolInfo = await input.gateways.dlmmGateway.getPoolInfo(
           candidate.poolAddress,
         );
@@ -623,7 +630,7 @@ export function createRuntimeSupervisor(
 
         const riskResult = evaluatePortfolioRisk({
           action: "DEPLOY",
-          portfolio,
+          portfolio: portfolioForRisk,
           policy: input.config.risk,
           proposedAllocationUsd: payload.estimatedValueUsd,
           proposedPoolAddress: payload.poolAddress,
@@ -715,9 +722,9 @@ export function createRuntimeSupervisor(
           journalRepository: input.stores.journalRepository,
           runtimeControlStore: input.stores.runtimeControlStore,
           riskGuard: {
-            portfolio,
+            portfolio: portfolioForRisk,
             policy: input.config.risk,
-            recentNewDeploys: recentDeploys.length,
+            recentNewDeploys: recentDeploys.length + deployedThisCycle,
             solPriceUsd: solPrice.priceUsd,
           },
         });
@@ -744,6 +751,48 @@ export function createRuntimeSupervisor(
         });
       }
     }
+  }
+
+  async function buildCompoundDeployRiskGuard(inputEvent: {
+    wallet: string;
+    now: string;
+  }) {
+    const [portfolio, actions, solPrice] = await Promise.all([
+      buildPortfolioState({
+        wallet: inputEvent.wallet,
+        minReserveUsd: input.config.risk.minReserveUsd,
+        dailyLossLimitPct: input.config.risk.dailyLossLimitPct,
+        circuitBreakerCooldownMin: input.config.risk.circuitBreakerCooldownMin,
+        stateRepository: input.stores.stateRepository,
+        actionRepository: input.stores.actionRepository,
+        journalRepository: input.stores.journalRepository,
+        walletGateway: input.gateways.walletGateway,
+        priceGateway: input.gateways.priceGateway,
+        now: inputEvent.now,
+      }),
+      input.stores.actionRepository.list(),
+      input.gateways.priceGateway.getSolPriceUsd(),
+    ]);
+    const oneHourAgo = Date.parse(inputEvent.now) - 60 * 60 * 1000;
+    const recentNewDeploys = actions.filter((action) => {
+      const requestedAtMs = Date.parse(action.requestedAt);
+      return (
+        action.wallet === inputEvent.wallet &&
+        action.type === "DEPLOY" &&
+        action.status !== "FAILED" &&
+        action.status !== "ABORTED" &&
+        action.status !== "TIMED_OUT" &&
+        Number.isFinite(requestedAtMs) &&
+        requestedAtMs >= oneHourAgo
+      );
+    }).length;
+
+    return {
+      portfolio,
+      policy: input.config.risk,
+      recentNewDeploys,
+      solPriceUsd: solPrice.priceUsd,
+    };
   }
 
   async function runQueueHandler(action: Action) {
@@ -878,6 +927,7 @@ export function createRuntimeSupervisor(
         wallets: [input.wallet],
         dryRun: input.config.runtime.dryRun,
         ...(postClaimSwapHook === undefined ? {} : { postClaimSwapHook }),
+        claimCompoundRiskGuardProvider: buildCompoundDeployRiskGuard,
         ...(input.now === undefined ? {} : { now: input.now }),
       });
     },

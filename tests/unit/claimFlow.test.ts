@@ -71,6 +71,37 @@ function buildOpenPosition(overrides: Partial<Position> = {}): Position {
   };
 }
 
+function buildCompoundDeployRiskGuard() {
+  return {
+    portfolio: {
+      walletBalance: 1_000,
+      reservedBalance: 950,
+      availableBalance: 950,
+      openPositions: 1,
+      pendingActions: 1,
+      dailyRealizedPnl: 0,
+      solPriceUsd: 100,
+      drawdownState: "NORMAL" as const,
+      circuitBreakerState: "OFF" as const,
+      exposureByToken: {},
+      exposureByPool: {},
+    },
+    policy: {
+      maxConcurrentPositions: 5,
+      maxCapitalUsagePct: 90,
+      minReserveUsd: 1,
+      maxTokenExposurePct: 90,
+      maxPoolExposurePct: 90,
+      maxRebalancesPerPosition: 2,
+      dailyLossLimitPct: 10,
+      circuitBreakerCooldownMin: 180,
+      maxNewDeploysPerHour: 5,
+    },
+    recentNewDeploys: 0,
+    solPriceUsd: 100,
+  };
+}
+
 describe("claim flow", () => {
   it("finalizes claim fees and persists optional auto-swap result without breaking lifecycle", async () => {
     const directory = await makeTempDir();
@@ -627,10 +658,12 @@ describe("claim flow", () => {
       }),
       actionQueue,
       journalRepository,
+      compoundDeployRiskGuard: buildCompoundDeployRiskGuard(),
       postClaimSwapHook: async () => ({
         txId: "tx_swap_compound",
         inputAmount: 1,
         outputAmount: 0.75,
+        outputAmountUsd: 75,
       }),
       now: () => "2026-04-22T10:02:00.000Z",
     });
@@ -650,6 +683,7 @@ describe("claim flow", () => {
       poolAddress: "pool_001",
       amountBase: 0,
       amountQuote: 0.75,
+      estimatedValueUsd: 75,
     });
   });
 
@@ -1116,6 +1150,7 @@ describe("claim flow", () => {
             txId: "tx_swap_compound",
             inputAmount: 1,
             outputAmount: 0.75,
+            outputAmountUsd: 75,
           },
         },
       },
@@ -1188,6 +1223,7 @@ describe("claim flow", () => {
       }),
       actionQueue,
       journalRepository,
+      compoundDeployRiskGuard: buildCompoundDeployRiskGuard(),
       now: () => "2026-04-22T10:05:00.000Z",
     });
 

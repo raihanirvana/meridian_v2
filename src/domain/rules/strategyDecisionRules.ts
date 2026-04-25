@@ -231,7 +231,7 @@ function collectCandidateBlockers(input: {
   }
   if (!input.simulationPassed) {
     reasonCodes.push("dlmm_simulation_failed");
-    riskFlags.push(input.simulationError ?? "simulation_failed");
+    riskFlags.push("simulation_failed");
   }
 
   return {
