@@ -23,6 +23,8 @@
     "requireFreshSnapshot": true,
     "maxEstimatedSlippageBps": 300,
     "maxStrategySnapshotAgeMs": 120000,
+    "aiReviewPoolSize": 30,
+    "enrichmentConcurrency": 10,
     "minHolderCount": 500,
     "allowedBinSteps": [80, 100, 125],
     "blockedLaunchpads": [],
@@ -62,7 +64,8 @@
     "strategyReviewEnabled": false,
     "strategyReviewMode": "recommendation_only",
     "allowAiStrategyForDeploy": false,
-    "minAiStrategyConfidence": 0.7
+    "minAiStrategyConfidence": 0.7,
+    "walletRiskMode": "small"
   },
   "deploy": {
     "defaultAmountSol": 0.25,

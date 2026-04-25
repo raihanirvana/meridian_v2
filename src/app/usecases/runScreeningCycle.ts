@@ -76,6 +76,30 @@ function asOptionalNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<U>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index] as T, index);
+      }
+    }),
+  );
+  return results;
+}
+
 function toScreeningInput(
   candidate: Candidate,
   details: {
@@ -228,6 +252,7 @@ export interface RunScreeningCycleInput {
   aiTimeoutMs?: number;
   poolMemoryRepository?: PoolMemoryRepository;
   candidateLimit?: number;
+  enrichmentConcurrency?: number;
   now?: () => string;
 }
 
@@ -264,8 +289,10 @@ export async function runScreeningCycle(
     timeframe: screeningPolicy.timeframe,
   });
 
-  const enrichedResults = await Promise.all(
-    listedCandidates.map(async (candidate) => {
+  const enrichedResults = await mapWithConcurrency(
+    listedCandidates,
+    input.enrichmentConcurrency ?? 10,
+    async (candidate) => {
       const tokenMint = asString(
         candidate.tokenRiskSnapshot.tokenXMint,
         "tokenXMint",
@@ -321,7 +348,7 @@ export async function runScreeningCycle(
           now,
         ),
       };
-    }),
+    },
   );
   const enrichedInputs = enrichedResults.map((item) => item.screeningInput);
   const enrichedCandidates = enrichedResults.map(

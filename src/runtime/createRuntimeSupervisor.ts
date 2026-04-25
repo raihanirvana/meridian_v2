@@ -168,6 +168,22 @@ function asOptionalStringFromRecord(
     : undefined;
 }
 
+function deriveDailyLossRemainingSol(input: {
+  maxDailyLossSol?: number;
+  dailyRealizedPnlUsd: number;
+  solPriceUsd: number;
+}): number | undefined {
+  if (input.maxDailyLossSol === undefined || input.solPriceUsd <= 0) {
+    return undefined;
+  }
+
+  const dailyLossSol = Math.max(
+    0,
+    -input.dailyRealizedPnlUsd / input.solPriceUsd,
+  );
+  return Math.max(0, input.maxDailyLossSol - dailyLossSol);
+}
+
 function buildAutoDeployPayload(input: {
   candidate: Candidate;
   poolInfo: Awaited<ReturnType<DlmmGateway["getPoolInfo"]>>;
@@ -280,7 +296,7 @@ export function createRuntimeSupervisor(
     maxWashTradingRiskPct: 20,
     rejectDuplicatePoolExposure: true,
     rejectDuplicateTokenExposure: true,
-    shortlistLimit: 3,
+    shortlistLimit: input.config.screening.aiReviewPoolSize ?? 30,
   };
   const policyProvider = new DefaultPolicyProvider({
     basePolicy: baseScreeningPolicy,
@@ -523,6 +539,13 @@ export function createRuntimeSupervisor(
     }
 
     const solPrice = await input.gateways.priceGateway.getSolPriceUsd();
+    const dailyLossRemainingSol = deriveDailyLossRemainingSol({
+      ...(input.config.risk.maxDailyLossSol === undefined
+        ? {}
+        : { maxDailyLossSol: input.config.risk.maxDailyLossSol }),
+      dailyRealizedPnlUsd: portfolio.dailyRealizedPnl,
+      solPriceUsd: solPrice.priceUsd,
+    });
     const strategyReviews = input.config.ai.strategyReviewEnabled
       ? await reviewStrategyWithAi({
           wallet: input.wallet,
@@ -539,6 +562,18 @@ export function createRuntimeSupervisor(
             binsAbove: input.config.deploy.binsAbove,
             slippageBps: input.config.deploy.slippageBps,
           },
+          botContext: {
+            walletRiskMode: input.config.ai.walletRiskMode,
+            maxPositionSol: input.config.deploy.defaultAmountSol,
+            maxSlippageBps: input.config.deploy.maxSlippageBps,
+            maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
+            maxOpenPositions: input.config.risk.maxConcurrentPositions,
+            currentlyOpenPositions: portfolio.openPositions,
+            allowedStrategies: ["curve", "spot", "bid_ask"],
+            ...(dailyLossRemainingSol === undefined
+              ? {}
+              : { dailyLossRemainingSol }),
+          },
           ...(input.now === undefined ? {} : { now: input.now }),
         })
       : null;
@@ -548,8 +583,27 @@ export function createRuntimeSupervisor(
         review,
       ]),
     );
+    const candidateById = new Map(
+      screening.shortlist.map((candidate) => [
+        candidate.candidateId,
+        candidate,
+      ]),
+    );
+    const aiOrderedCandidates =
+      strategyReviews === null
+        ? screening.shortlist
+        : [
+            ...strategyReviews.reviews.flatMap((review) => {
+              const candidate = candidateById.get(review.candidateId);
+              return candidate === undefined ? [] : [candidate];
+            }),
+            ...screening.shortlist.filter(
+              (candidate) =>
+                !strategyReviewByCandidateId.has(candidate.candidateId),
+            ),
+          ];
     let deployedThisCycle = 0;
-    for (const candidate of screening.shortlist) {
+    for (const candidate of aiOrderedCandidates) {
       if (deployedThisCycle >= input.config.deploy.maxAutoDeploysPerCycle) {
         break;
       }
@@ -890,6 +944,7 @@ export function createRuntimeSupervisor(
           ? {}
           : { aiTimeoutMs: input.aiTimeoutMs }),
         poolMemoryRepository: input.stores.poolMemoryRepository,
+        enrichmentConcurrency: input.config.screening.enrichmentConcurrency,
         schedulerMetadataStore: input.stores.schedulerMetadataStore,
         intervalSec: input.config.schedule.screeningIntervalSec,
         triggerSource,

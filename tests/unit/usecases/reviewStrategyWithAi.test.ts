@@ -176,6 +176,74 @@ describe("reviewStrategyWithAi", () => {
     );
   });
 
+  it("sends the top deterministic candidates as one batch so AI can rerank deploy priorities", async () => {
+    const seenBatchInputs: unknown[] = [];
+    const candidateA = buildCandidate({
+      candidateId: "cand_a",
+      poolAddress: "pool_a",
+      symbolPair: "AAA-SOL",
+    });
+    const candidateB = buildCandidate({
+      candidateId: "cand_b",
+      poolAddress: "pool_b",
+      symbolPair: "BBB-SOL",
+    });
+    const reviewer: AiStrategyReviewer = {
+      async reviewCandidateStrategy() {
+        throw new Error("single review should not be called for batch review");
+      },
+      async reviewCandidateStrategies(input) {
+        seenBatchInputs.push(input);
+        return [
+          buildAiReview({
+            poolAddress: "pool_b",
+            recommendedStrategy: "spot",
+            binsBelow: 30,
+            binsAbove: 30,
+            reasons: ["best risk-adjusted candidate"],
+          }),
+          buildAiReview({
+            poolAddress: "pool_a",
+            decision: "watch",
+            recommendedStrategy: "none",
+            confidence: 0.9,
+            riskLevel: "medium",
+            binsBelow: 0,
+            binsAbove: 0,
+            slippageBps: 0,
+            maxPositionAgeMinutes: 0,
+            stopLossPct: 0,
+            takeProfitPct: 0,
+            trailingStopPct: 0,
+            reasons: ["watch until volume stabilizes"],
+          }),
+        ];
+      },
+    };
+
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [candidateA, candidateB],
+      aiMode: "advisory",
+      reviewer,
+      botContext: {
+        walletRiskMode: "small",
+        maxPositionSol: 0.05,
+        dailyLossRemainingSol: 0.3,
+        allowedStrategies: ["curve", "spot", "bid_ask"],
+      },
+      now: () => now,
+    });
+
+    expect(seenBatchInputs).toHaveLength(1);
+    expect(result.reviews.map((review) => review.poolAddress)).toEqual([
+      "pool_b",
+      "pool_a",
+    ]);
+    expect(result.reviews[0]?.review.decision).toBe("deploy");
+    expect(result.reviews[1]?.review.decision).toBe("watch");
+  });
+
   it("falls back when AI returns an invalid strategy enum", async () => {
     const result = await reviewStrategyWithAi({
       wallet: "wallet_001",

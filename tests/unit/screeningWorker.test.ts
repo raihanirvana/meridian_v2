@@ -636,4 +636,93 @@ describe("screening worker", () => {
     const result = await runPromise;
     expect(result.candidates).toHaveLength(2);
   });
+
+  it("caps candidate enrichment concurrency to protect upstream rate limits", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    let activeDetails = 0;
+    let maxActiveDetails = 0;
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: {
+        async listCandidates() {
+          return [
+            buildGatewayCandidate({
+              candidateId: "cand_001",
+              poolAddress: "pool_001",
+            }),
+            buildGatewayCandidate({
+              candidateId: "cand_002",
+              poolAddress: "pool_002",
+              symbolPair: "XYZ-SOL",
+            }),
+            buildGatewayCandidate({
+              candidateId: "cand_003",
+              poolAddress: "pool_003",
+              symbolPair: "DEF-SOL",
+            }),
+          ];
+        },
+        async getCandidateDetails(poolAddress) {
+          activeDetails += 1;
+          maxActiveDetails = Math.max(maxActiveDetails, activeDetails);
+          await Promise.resolve();
+          activeDetails -= 1;
+          return {
+            poolAddress,
+            pairLabel: poolAddress,
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+          };
+        },
+      },
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: now,
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: now,
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy({ shortlistLimit: 3 });
+        },
+      },
+      aiMode: "disabled",
+      enrichmentConcurrency: 1,
+      now: () => now,
+    });
+
+    expect(result.candidates).toHaveLength(3);
+    expect(maxActiveDetails).toBe(1);
+  });
 });

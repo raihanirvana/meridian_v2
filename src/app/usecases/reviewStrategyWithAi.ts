@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AiStrategyReviewInputSchema,
   StrategyReviewResultSchema,
+  type AiStrategyBotContext,
   type AiStrategyReviewer,
   type StrategyReviewResult,
 } from "../../adapters/llm/AiStrategyReviewer.js";
@@ -66,6 +67,7 @@ export interface ReviewStrategyWithAiInput {
     takeProfitPct?: number;
     trailingStopPct?: number;
   };
+  botContext?: AiStrategyBotContext;
   now?: () => string;
 }
 
@@ -178,6 +180,13 @@ function buildSystemPrompt(): string {
     "Use spot for moderate-volatility non-directional pools.",
     "Use bid_ask only for volatile mean-reverting pools.",
     "If confidence is low, return watch or reject, not deploy.",
+    "You may recommend one strategy only: curve, spot, bid_ask, or none.",
+    "Use curve for low-volatility sideways pools.",
+    "Use spot for moderate-volatility pools with stable volume and no strong directional trend.",
+    "Use bid_ask only for high-volume, high-volatility, mean-reverting pools with sufficient depth.",
+    "Reject suspicious token risk, shallow liquidity, stale data, excessive price movement, or unrealistic fee/TVL.",
+    "If confidence is below the requested minimum, decision must be watch or reject.",
+    "If riskLevel is high, decision must be reject.",
     "You do not have write permission. You only produce recommendation JSON.",
   ].join("\n");
 }
@@ -239,26 +248,127 @@ export async function reviewStrategyWithAi(
   const reviews: StrategyReviewWithAiItem[] = [];
   const shouldUseAi = aiMode !== "disabled" && input.reviewer !== undefined;
 
-  for (const candidate of candidates) {
-    let item: StrategyReviewWithAiItem;
-    if (!candidate.hardFilterPassed) {
-      item = StrategyReviewWithAiItemSchema.parse({
+  async function appendItem(item: StrategyReviewWithAiItem): Promise<void> {
+    reviews.push(item);
+    await appendReviewJournal({
+      journalRepository: input.journalRepository,
+      timestamp: reviewedAt,
+      wallet: input.wallet,
+      item,
+    });
+  }
+
+  const hardFilterFailed = candidates.filter(
+    (candidate) => !candidate.hardFilterPassed,
+  );
+  for (const candidate of hardFilterFailed) {
+    await appendItem(
+      StrategyReviewWithAiItemSchema.parse({
         candidateId: candidate.candidateId,
         poolAddress: candidate.poolAddress,
         source: "DETERMINISTIC",
         review: deterministicReview(candidate, input),
         aiError: null,
-      });
-      reviews.push(item);
-      await appendReviewJournal({
-        journalRepository: input.journalRepository,
-        timestamp: reviewedAt,
-        wallet: input.wallet,
-        item,
-      });
-      continue;
-    }
+      }),
+    );
+  }
 
+  const aiEligibleCandidates = candidates.filter(
+    (candidate) => candidate.hardFilterPassed,
+  );
+
+  if (
+    shouldUseAi &&
+    input.reviewer?.reviewCandidateStrategies !== undefined &&
+    aiEligibleCandidates.length > 0
+  ) {
+    try {
+      const aiReviews = await withTimeout(
+        input.reviewer.reviewCandidateStrategies({
+          candidates: aiEligibleCandidates,
+          systemPrompt: buildSystemPrompt(),
+          ...(input.botContext === undefined
+            ? {}
+            : { botContext: input.botContext }),
+        }),
+        timeoutMs,
+      );
+      const reviewByPool = new Map(
+        aiReviews.map((review) => [review.poolAddress, review] as const),
+      );
+
+      for (const candidate of aiEligibleCandidates) {
+        if (!reviewByPool.has(candidate.poolAddress)) {
+          throw new Error(
+            `AI strategy review omitted poolAddress ${candidate.poolAddress}`,
+          );
+        }
+      }
+
+      const candidateByPool = new Map(
+        aiEligibleCandidates.map((candidate) => [
+          candidate.poolAddress,
+          candidate,
+        ]),
+      );
+      for (const aiReview of aiReviews) {
+        const candidate = candidateByPool.get(aiReview.poolAddress);
+        if (candidate === undefined) {
+          continue;
+        }
+        await appendItem(
+          StrategyReviewWithAiItemSchema.parse({
+            candidateId: candidate.candidateId,
+            poolAddress: candidate.poolAddress,
+            source: "AI",
+            review: enforceLowConfidencePolicy({
+              review: StrategyReviewResultSchema.parse(aiReview),
+              minConfidence,
+            }),
+            aiError: null,
+          }),
+        );
+      }
+
+      return StrategyReviewWithAiResultSchema.parse({
+        reviewedAt,
+        reviews,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "AI batch strategy review fallback to deterministic result",
+      );
+      for (const candidate of aiEligibleCandidates) {
+        await appendItem(
+          StrategyReviewWithAiItemSchema.parse({
+            candidateId: candidate.candidateId,
+            poolAddress: candidate.poolAddress,
+            source: "FALLBACK",
+            review: deterministicReview(candidate, input),
+            aiError: errorMessage(error),
+          }),
+        );
+      }
+
+      return StrategyReviewWithAiResultSchema.parse({
+        reviewedAt,
+        reviews: candidates
+          .map((candidate) =>
+            reviews.find(
+              (review) => review.candidateId === candidate.candidateId,
+            ),
+          )
+          .filter(
+            (review): review is StrategyReviewWithAiItem =>
+              review !== undefined,
+          ),
+      });
+    }
+  }
+
+  for (const candidate of aiEligibleCandidates) {
+    let item: StrategyReviewWithAiItem;
     if (!shouldUseAi || input.reviewer === undefined) {
       item = StrategyReviewWithAiItemSchema.parse({
         candidateId: candidate.candidateId,
@@ -267,13 +377,7 @@ export async function reviewStrategyWithAi(
         review: deterministicReview(candidate, input),
         aiError: null,
       });
-      reviews.push(item);
-      await appendReviewJournal({
-        journalRepository: input.journalRepository,
-        timestamp: reviewedAt,
-        wallet: input.wallet,
-        item,
-      });
+      await appendItem(item);
       continue;
     }
 
@@ -284,6 +388,9 @@ export async function reviewStrategyWithAi(
             AiStrategyReviewInputSchema.parse({
               candidate,
               systemPrompt: buildSystemPrompt(),
+              ...(input.botContext === undefined
+                ? {}
+                : { botContext: input.botContext }),
             }),
           ),
           timeoutMs,
@@ -317,17 +424,17 @@ export async function reviewStrategyWithAi(
       });
     }
 
-    reviews.push(item);
-    await appendReviewJournal({
-      journalRepository: input.journalRepository,
-      timestamp: reviewedAt,
-      wallet: input.wallet,
-      item,
-    });
+    await appendItem(item);
   }
 
   return StrategyReviewWithAiResultSchema.parse({
     reviewedAt,
-    reviews,
+    reviews: candidates
+      .map((candidate) =>
+        reviews.find((review) => review.candidateId === candidate.candidateId),
+      )
+      .filter(
+        (review): review is StrategyReviewWithAiItem => review !== undefined,
+      ),
   });
 }

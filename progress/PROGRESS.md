@@ -718,4 +718,11 @@ Status: Complete
   - auto-deploy loop tidak lagi memakai snapshot portfolio stale untuk iterasi live berikutnya; pending/open positions dan hourly deploy count diproyeksikan per kandidat
   - `strategyDecisionRules` tidak lagi memasukkan free-form simulation error ke `riskFlags`
   - native Meteora live snapshot sekarang mempertahankan mapping `baseMint` / `quoteMint` dari deploy bot, sehingga snapshot tokenX/tokenY tidak membalik accounting claim/swap untuk posisi yang dibuka robot
-- `npm test` terakhir hijau dengan total `278` tests passed
+- Screening/AI strategy flow sekarang mengikuti desain `pool discovery -> hard filter -> scoring top-N -> AI analyst -> deterministic validator -> risk/simulation/deploy`:
+  - `screening.aiReviewPoolSize` default `30`, jadi AI tidak menerima raw pool universe; AI hanya melihat shortlist deterministic yang sudah lolos hard filter/scoring
+  - `AiStrategyReviewer` mendukung batch review strict JSON array plus `botContext` (`maxPositionSol`, slippage cap, active-bin drift cap, open positions, daily loss remaining, allowed strategies)
+  - auto-deploy memakai urutan kandidat dari batch AI review, tapi tetap melewati `StrategyDecisionValidator`, full portfolio risk engine, live pool-info payload builder, dry-run/queue boundary, dan SDK preflight saat action diproses
+  - rekomendasi AI `watch` / `reject`, high risk, low confidence, bins/slippage di luar policy, atau deploy dengan slippage tidak positif sekarang menjadi reject deterministic, bukan fallback deploy
+  - deploy-mode AI juga sekarang wajib memberi `maxPositionAgeMinutes`, `stopLossPct`, dan `takeProfitPct` positif; `walletRiskMode` dipindahkan ke config AI agar prompt risk profile tidak hardcoded
+  - enrichment screening sekarang punya `screening.enrichmentConcurrency` default `10`, jadi top-30 AI review tidak lagi memicu enrichment request paralel tak terbatas ke screening/token-intel API
+- `npm test` terakhir hijau dengan total `282` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

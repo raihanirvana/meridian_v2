@@ -366,10 +366,15 @@ export {
   type MockLlmGatewayBehaviors,
 } from "./adapters/llm/LlmGateway.js";
 export {
+  AiStrategyBatchReviewInputSchema,
+  AiStrategyBotContextSchema,
   AiStrategyReviewInputSchema,
   MockAiStrategyReviewer,
+  StrategyReviewBatchResultSchema,
   StrategyReviewResultSchema,
   type AiStrategyReviewer,
+  type AiStrategyBatchReviewInput,
+  type AiStrategyBotContext,
   type AiStrategyReviewInput,
   type MockAiStrategyReviewerBehaviors,
   type StrategyReviewResult,

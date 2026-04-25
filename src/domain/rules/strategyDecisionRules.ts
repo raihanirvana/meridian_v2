@@ -279,6 +279,28 @@ function collectAiBlockers(input: {
     reasonCodes.push("ai_slippage_above_limit");
     riskFlags.push("slippage_above_limit");
   }
+  if (input.aiReview.decision === "deploy" && input.aiReview.slippageBps <= 0) {
+    reasonCodes.push("ai_slippage_missing_for_deploy");
+    riskFlags.push("missing_deploy_slippage");
+  }
+  if (
+    input.aiReview.decision === "deploy" &&
+    input.aiReview.maxPositionAgeMinutes <= 0
+  ) {
+    reasonCodes.push("ai_max_position_age_missing_for_deploy");
+    riskFlags.push("missing_deploy_max_position_age");
+  }
+  if (input.aiReview.decision === "deploy" && input.aiReview.stopLossPct <= 0) {
+    reasonCodes.push("ai_stop_loss_missing_for_deploy");
+    riskFlags.push("missing_deploy_stop_loss");
+  }
+  if (
+    input.aiReview.decision === "deploy" &&
+    input.aiReview.takeProfitPct <= 0
+  ) {
+    reasonCodes.push("ai_take_profit_missing_for_deploy");
+    riskFlags.push("missing_deploy_take_profit");
+  }
   if (
     strategy === "bid_ask" &&
     (input.candidate.strategySuitability.strategyRiskFlags.includes(
@@ -377,11 +399,10 @@ export function validateStrategyDecision(
     policy,
   });
   if (aiBlockers.riskFlags.length > 0 || aiBlockers.reasonCodes.length > 0) {
-    return fallbackDecision({
+    return rejectDecision({
       candidate,
       mode,
       configStrategy,
-      policy,
       reasonCodes: aiBlockers.reasonCodes,
       riskFlags: aiBlockers.riskFlags,
       ...(input.aiReview === undefined ? {} : { aiReview: input.aiReview }),

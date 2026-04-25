@@ -190,6 +190,46 @@ describe("validateStrategyDecision", () => {
     expect(decision.riskFlags).toContain("bins_below_above_limit");
   });
 
+  it("rejects AI deploy recommendations without positive slippage", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate(),
+      mode: "guarded_auto",
+      aiReview: buildAiReview({ slippageBps: 0 }),
+      configStrategy,
+      policy: {
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.riskFlags).toContain("missing_deploy_slippage");
+  });
+
+  it("rejects AI deploy recommendations without positive exit controls", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate(),
+      mode: "guarded_auto",
+      aiReview: buildAiReview({
+        maxPositionAgeMinutes: 0,
+        stopLossPct: 0,
+        takeProfitPct: 0,
+      }),
+      configStrategy,
+      policy: {
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.riskFlags).toEqual(
+      expect.arrayContaining([
+        "missing_deploy_max_position_age",
+        "missing_deploy_stop_loss",
+        "missing_deploy_take_profit",
+      ]),
+    );
+  });
+
   it("uses config static strategy in recommendation_only mode", () => {
     const decision = validateStrategyDecision({
       candidate: buildCandidate(),

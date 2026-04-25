@@ -6,8 +6,11 @@ import {
   type FetchLike,
 } from "../http/HttpJsonClient.js";
 import {
+  AiStrategyBatchReviewInputSchema,
   AiStrategyReviewInputSchema,
+  StrategyReviewBatchResultSchema,
   StrategyReviewResultSchema,
+  type AiStrategyBatchReviewInput,
   type AiStrategyReviewInput,
   type AiStrategyReviewer,
   type StrategyReviewResult,
@@ -88,6 +91,12 @@ function extractJsonPayload(input: string): unknown {
   try {
     return JSON.parse(candidate);
   } catch {
+    const arrayStart = candidate.indexOf("[");
+    const arrayEnd = candidate.lastIndexOf("]");
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      return JSON.parse(candidate.slice(arrayStart, arrayEnd + 1));
+    }
+
     const objectStart = candidate.indexOf("{");
     const objectEnd = candidate.lastIndexOf("}");
     if (objectStart >= 0 && objectEnd > objectStart) {
@@ -95,6 +104,30 @@ function extractJsonPayload(input: string): unknown {
     }
     throw new Error("LLM response is not valid JSON");
   }
+}
+
+function buildSystemContent(systemPrompt: string | null): string {
+  return [
+    systemPrompt,
+    "Return JSON only. No markdown fences. Capital preservation is more important than yield.",
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
+}
+
+function buildCandidatePayload(input: AiStrategyReviewInput) {
+  return {
+    poolAddress: input.candidate.poolAddress,
+    symbolPair: input.candidate.symbolPair,
+    score: input.candidate.score,
+    scoreBreakdown: input.candidate.scoreBreakdown,
+    marketFeatureSnapshot: input.candidate.marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot: input.candidate.dlmmMicrostructureSnapshot,
+    tokenRiskSnapshot: input.candidate.tokenRiskSnapshot,
+    smartMoneySnapshot: input.candidate.smartMoneySnapshot,
+    dataFreshnessSnapshot: input.candidate.dataFreshnessSnapshot,
+    strategySuitability: input.candidate.strategySuitability,
+  };
 }
 
 export class HttpAiStrategyReviewer implements AiStrategyReviewer {
@@ -130,29 +163,13 @@ export class HttpAiStrategyReviewer implements AiStrategyReviewer {
         messages: [
           {
             role: "system",
-            content: [
-              parsedInput.systemPrompt,
-              "Return JSON only. Match StrategyReviewResult exactly. No markdown fences.",
-            ]
-              .filter((part): part is string => part !== null)
-              .join("\n\n"),
+            content: `${buildSystemContent(parsedInput.systemPrompt)}\n\nReturn one StrategyReviewResult JSON object exactly.`,
           },
           {
             role: "user",
             content: JSON.stringify({
-              poolAddress: parsedInput.candidate.poolAddress,
-              symbolPair: parsedInput.candidate.symbolPair,
-              score: parsedInput.candidate.score,
-              scoreBreakdown: parsedInput.candidate.scoreBreakdown,
-              marketFeatureSnapshot:
-                parsedInput.candidate.marketFeatureSnapshot,
-              dlmmMicrostructureSnapshot:
-                parsedInput.candidate.dlmmMicrostructureSnapshot,
-              tokenRiskSnapshot: parsedInput.candidate.tokenRiskSnapshot,
-              smartMoneySnapshot: parsedInput.candidate.smartMoneySnapshot,
-              dataFreshnessSnapshot:
-                parsedInput.candidate.dataFreshnessSnapshot,
-              strategySuitability: parsedInput.candidate.strategySuitability,
+              botContext: parsedInput.botContext ?? null,
+              candidate: buildCandidatePayload(parsedInput),
             }),
           },
         ],
@@ -180,6 +197,72 @@ export class HttpAiStrategyReviewer implements AiStrategyReviewer {
     }
 
     const parsed = StrategyReviewResultSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new AdapterResponseValidationError("HttpAiStrategyReviewer", [
+        ...parsed.error.issues.map(
+          (issue) => `${issue.path.join(".")}: ${issue.message}`,
+        ),
+      ]);
+    }
+
+    return parsed.data;
+  }
+
+  public async reviewCandidateStrategies(
+    input: AiStrategyBatchReviewInput,
+  ): Promise<StrategyReviewResult[]> {
+    const parsedInput = AiStrategyBatchReviewInputSchema.parse(input);
+    const response = await this.client.request({
+      method: "POST",
+      path: "/chat/completions",
+      body: {
+        model: this.model,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: `${buildSystemContent(parsedInput.systemPrompt)}\n\nReturn one JSON array. Each item must match StrategyReviewResult exactly. Include exactly one item for every candidate poolAddress.`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              botContext: parsedInput.botContext ?? null,
+              candidates: parsedInput.candidates.map((candidate) =>
+                buildCandidatePayload({
+                  candidate,
+                  systemPrompt: parsedInput.systemPrompt,
+                  ...(parsedInput.botContext === undefined
+                    ? {}
+                    : { botContext: parsedInput.botContext }),
+                }),
+              ),
+            }),
+          },
+        ],
+      },
+      responseSchema: ChatCompletionResponseSchema,
+    });
+    const content = normalizeMessageContent(
+      response.choices[0]?.message?.content,
+    );
+    if (content === null) {
+      throw new AdapterResponseValidationError("HttpAiStrategyReviewer", [
+        "LLM response did not include textual message content",
+      ]);
+    }
+
+    let payload: unknown;
+    try {
+      payload = extractJsonPayload(content);
+    } catch (error) {
+      throw new AdapterResponseValidationError("HttpAiStrategyReviewer", [
+        error instanceof Error
+          ? error.message
+          : "LLM response is not valid JSON",
+      ]);
+    }
+
+    const parsed = StrategyReviewBatchResultSchema.safeParse(payload);
     if (!parsed.success) {
       throw new AdapterResponseValidationError("HttpAiStrategyReviewer", [
         ...parsed.error.issues.map(

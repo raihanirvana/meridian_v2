@@ -68,6 +68,8 @@ export const UserConfigSchema = z
         requireFreshSnapshot: z.boolean().default(true),
         maxEstimatedSlippageBps: z.number().positive().default(300),
         maxStrategySnapshotAgeMs: z.number().int().positive().default(120_000),
+        aiReviewPoolSize: z.number().int().positive().default(30),
+        enrichmentConcurrency: z.number().int().positive().default(10),
         minHolderCount: z.number().int().positive(),
         allowedBinSteps: z.array(z.number().int().positive()).min(1),
         blockedLaunchpads: z.array(z.string().min(1)),
@@ -109,6 +111,7 @@ export const UserConfigSchema = z
         ),
         allowAiStrategyForDeploy: z.boolean().default(false),
         minAiStrategyConfidence: z.number().min(0).max(1).default(0.7),
+        walletRiskMode: z.string().min(1).default("small"),
       })
       .strict(),
     deploy: z

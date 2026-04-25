@@ -151,6 +151,7 @@ function toRuntimeScreeningPolicy(userScreening: {
   minHolderCount: number;
   allowedBinSteps: number[];
   blockedLaunchpads: string[];
+  aiReviewPoolSize?: number | undefined;
 }): ScreeningPolicy {
   return {
     ...userScreening,
@@ -163,7 +164,7 @@ function toRuntimeScreeningPolicy(userScreening: {
     maxWashTradingRiskPct: 20,
     rejectDuplicatePoolExposure: true,
     rejectDuplicateTokenExposure: true,
-    shortlistLimit: 3,
+    shortlistLimit: userScreening.aiReviewPoolSize ?? 30,
   };
 }
 
