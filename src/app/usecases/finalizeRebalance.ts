@@ -1156,6 +1156,26 @@ export async function finalizeRebalance(
           now,
         });
 
+        const redeploySubmittedPayload = buildRedeploySubmittedPayload({
+          closeSubmitted: closeFinalizedPayload,
+          closeAccounting: closeLeg.closeAccounting,
+          closedPositionId: closeLeg.closedPosition.positionId,
+          availableCapitalUsd: closeLeg.availableCapitalUsd,
+          performanceSnapshot: closeLeg.closeConfirmedPosition,
+          redeployRequest: postCloseRedeployPayload,
+          redeployResult,
+        });
+        const waitingAction = {
+          ...actionAfterCloseFinalized,
+          resultPayload: toJournalRecord(redeploySubmittedPayload),
+          txIds: [...actionAfterCloseFinalized.txIds, ...redeployResult.txIds],
+          error: null,
+        } satisfies Action;
+        // Persist action with REDEPLOY_SUBMITTED phase BEFORE state upsert so a
+        // crash here cannot cause finalizeRebalance to re-submit deployLiquidity
+        // on retry (action would otherwise still look like CLOSE_SUBMITTED).
+        await input.actionRepository.upsert(waitingAction);
+
         try {
           await input.stateRepository.upsert(pendingRedeployPosition);
         } catch (error) {
@@ -1168,19 +1188,15 @@ export async function finalizeRebalance(
           try {
             await input.stateRepository.upsert(reconciliationPosition);
           } catch {
-            // Best effort only; the action payload retains the new positionId.
+            // Best effort only; the action payload (REDEPLOY_SUBMITTED) already retains redeployResult.positionId.
           }
 
           const timedOutAction = {
-            ...actionAfterCloseFinalized,
+            ...waitingAction,
             status: transitionActionStatus(
-              actionAfterCloseFinalized.status,
+              waitingAction.status,
               "TIMED_OUT",
             ),
-            txIds: [
-              ...actionAfterCloseFinalized.txIds,
-              ...redeployResult.txIds,
-            ],
             error: `Rebalance redeploy submitted but local persistence requires reconciliation: ${errorMessage(
               error,
               "unknown local persistence error",
@@ -1217,23 +1233,6 @@ export async function finalizeRebalance(
             outcome: "TIMED_OUT" as const,
           };
         }
-
-        const redeploySubmittedPayload = buildRedeploySubmittedPayload({
-          closeSubmitted: closeFinalizedPayload,
-          closeAccounting: closeLeg.closeAccounting,
-          closedPositionId: closeLeg.closedPosition.positionId,
-          availableCapitalUsd: closeLeg.availableCapitalUsd,
-          performanceSnapshot: closeLeg.closeConfirmedPosition,
-          redeployRequest: postCloseRedeployPayload,
-          redeployResult,
-        });
-        const waitingAction = {
-          ...actionAfterCloseFinalized,
-          resultPayload: toJournalRecord(redeploySubmittedPayload),
-          txIds: [...actionAfterCloseFinalized.txIds, ...redeployResult.txIds],
-          error: null,
-        } satisfies Action;
-        await input.actionRepository.upsert(waitingAction);
 
         await appendJournalEvent(input.journalRepository, {
           timestamp: now,

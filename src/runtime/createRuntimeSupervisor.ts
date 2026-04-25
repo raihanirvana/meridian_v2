@@ -1086,6 +1086,7 @@ export function createRuntimeSupervisor(
         dlmmGateway: input.gateways.dlmmGateway,
         actionQueue: input.stores.actionQueue,
         journalRepository: input.stores.journalRepository,
+        performanceRepository: input.stores.performanceRepository,
         runtimeControlStore: input.stores.runtimeControlStore,
         schedulerMetadataStore: input.stores.schedulerMetadataStore,
         intervalSec: input.config.schedule.reconciliationIntervalSec,

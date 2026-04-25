@@ -6,6 +6,7 @@ import {
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
+import type { PerformanceRepositoryInterface } from "../../adapters/storage/PerformanceRepository.js";
 import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Action } from "../../domain/entities/Action.js";
@@ -86,6 +87,7 @@ export interface ReconcilePortfolioInput {
   dlmmGateway: DlmmGateway;
   actionQueue?: ActionQueue;
   journalRepository?: JournalRepository;
+  performanceRepository?: PerformanceRepositoryInterface;
   runtimeControlStore?: RuntimeControlStore;
   walletLock?: WalletLock;
   positionLock?: PositionLock;
@@ -245,6 +247,8 @@ async function ensureTerminalClosedPositionLearning(input: {
   action: Action;
   stateRepository: StateRepository;
   lessonHook?: LessonHook;
+  performanceRepository?: PerformanceRepositoryInterface;
+  performanceRecordedPositionIds?: Set<string>;
   journalRepository?: JournalRepository;
   now: string;
 }): Promise<ReconciliationRecord | null> {
@@ -269,6 +273,10 @@ async function ensureTerminalClosedPositionLearning(input: {
       return null;
     }
 
+    if (input.performanceRecordedPositionIds?.has(positionId)) {
+      return null;
+    }
+
     const position = await input.stateRepository.get(positionId);
     if (position === null || position.status !== "CLOSED") {
       return null;
@@ -285,6 +293,8 @@ async function ensureTerminalClosedPositionLearning(input: {
       reason: closeRequest.data.reason,
       now: input.now,
     });
+
+    input.performanceRecordedPositionIds?.add(positionId);
 
     return createRecord({
       scope: "ACTION",
@@ -319,6 +329,10 @@ async function ensureTerminalClosedPositionLearning(input: {
       return null;
     }
 
+    if (input.performanceRecordedPositionIds?.has(oldPositionId)) {
+      return null;
+    }
+
     const position = await input.stateRepository.get(oldPositionId);
     if (position === null || position.status !== "CLOSED") {
       return null;
@@ -335,6 +349,8 @@ async function ensureTerminalClosedPositionLearning(input: {
       reason: request.data.reason,
       now: input.now,
     });
+
+    input.performanceRecordedPositionIds?.add(oldPositionId);
 
     return createRecord({
       scope: "ACTION",
@@ -523,6 +539,49 @@ async function recoverReconcilingAction(
           now: input.now,
         });
       }
+
+      // Close already succeeded on-chain (position is CLOSED with zero balances)
+      // and the lesson hook has been re-run idempotently. Only the finalizer was
+      // interrupted, so finalize the action as DONE rather than FAILED — keeping
+      // the audit trail accurate.
+      const doneAction = {
+        ...latestAction,
+        status: transitionActionStatus(latestAction.status, "DONE"),
+        error: null,
+        completedAt: input.now,
+      } satisfies Action;
+      await input.actionRepository.upsert(doneAction);
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: input.now,
+        eventType: "ACTION_STARTUP_RECOVERY_FINALIZED_CLOSED_ACTION",
+        actor: latestAction.requestedBy,
+        wallet: latestAction.wallet,
+        positionId: targetPositionId,
+        actionId: latestAction.actionId,
+        before: toJournalRecord({
+          action: latestAction,
+          position,
+        }),
+        after: toJournalRecord({
+          action: doneAction,
+          position,
+        }),
+        txIds: latestAction.txIds,
+        resultStatus: doneAction.status,
+        error: null,
+      });
+
+      return createRecord({
+        scope: "ACTION",
+        entityId: doneAction.actionId,
+        wallet: doneAction.wallet,
+        positionId: targetPositionId,
+        actionId: doneAction.actionId,
+        outcome: "RECONCILED_OK",
+        detail:
+          "Startup recovery confirmed close already complete on-chain; action transitioned to DONE",
+      });
     }
 
     const failedAction = {
@@ -860,6 +919,20 @@ export async function reconcilePortfolio(
   const allActions = await input.actionRepository.list();
 
   if (input.dryRun !== true) {
+    // Pre-compute the set of positionIds that already have a durable performance
+    // record so we can skip re-running the lesson hook on every cycle. Lesson
+    // hook side-effects are idempotent, but skipping here avoids noisy
+    // reconciliation/journal records and unnecessary repo reads for closed
+    // positions that have already been learned from.
+    const performanceRecordedPositionIds =
+      input.performanceRepository === undefined
+        ? undefined
+        : new Set(
+            (await input.performanceRepository.list()).map(
+              (record) => record.positionId,
+            ),
+          );
+
     for (const action of allActions) {
       const learningRecord = await ensureTerminalClosedPositionLearning({
         action,
@@ -867,6 +940,12 @@ export async function reconcilePortfolio(
         ...(input.lessonHook === undefined
           ? {}
           : { lessonHook: input.lessonHook }),
+        ...(input.performanceRepository === undefined
+          ? {}
+          : { performanceRepository: input.performanceRepository }),
+        ...(performanceRecordedPositionIds === undefined
+          ? {}
+          : { performanceRecordedPositionIds }),
         ...(input.journalRepository === undefined
           ? {}
           : { journalRepository: input.journalRepository }),
