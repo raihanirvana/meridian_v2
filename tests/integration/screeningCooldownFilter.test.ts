@@ -89,6 +89,7 @@ function buildCandidate(
     volumeUsd: 25_000,
     volumeConsistencyScore: 75,
     feeToTvlRatio: 0.09,
+    feePerTvl24h: 0.03,
     organicScore: 80,
     holderCount: 1_200,
     binStep: 100,
@@ -130,7 +131,7 @@ function buildCandidate(
 }
 
 describe("screening cooldown filter", () => {
-  it("removes candidates whose pools are still in cooldown", () => {
+  it("marks candidates whose pools are still in cooldown without hiding them", () => {
     const result = screenAndScoreCandidates({
       candidates: [
         buildCandidate({
@@ -158,7 +159,11 @@ describe("screening cooldown filter", () => {
     });
 
     expect(result.candidates.map((candidate) => candidate.candidateId)).toEqual(
-      ["cand_open"],
+      ["cand_on_cooldown", "cand_open"],
     );
+    expect(result.candidates[0]?.decision).toBe("REJECTED_COOLDOWN");
+    expect(result.shortlist.map((candidate) => candidate.candidateId)).toEqual([
+      "cand_open",
+    ]);
   });
 });

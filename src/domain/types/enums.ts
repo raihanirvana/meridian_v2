@@ -80,6 +80,7 @@ export const CandidateDecisionSchema = z.enum([
   "SHORTLISTED",
   "SELECTED",
   "REJECTED_EXPOSURE",
+  "REJECTED_COOLDOWN",
 ]);
 
 export const ManagementActionSchema = z.enum([

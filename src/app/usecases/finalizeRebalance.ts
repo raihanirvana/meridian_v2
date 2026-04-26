@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ClosePositionResultSchema,
   DeployLiquidityResultSchema,
+  isAmbiguousSubmissionError,
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
@@ -37,6 +38,18 @@ import {
 
 const CloseActionResultPayloadSchema = ClosePositionResultSchema;
 const DeployActionResultPayloadSchema = DeployLiquidityResultSchema;
+
+export const RebalanceRedeploySubmittingPayloadSchema = z
+  .object({
+    phase: z.literal("REDEPLOY_SUBMITTING"),
+    closeResult: CloseActionResultPayloadSchema,
+    closeAccounting: z.record(z.string(), z.unknown()),
+    closedPositionId: z.string().min(1),
+    availableCapitalUsd: z.number().nonnegative(),
+    performanceSnapshot: PositionSchema.optional(),
+    redeployRequest: DeployActionRequestPayloadSchema,
+  })
+  .strict();
 
 export const RebalanceRedeploySubmittedPayloadSchema = z
   .object({
@@ -81,6 +94,7 @@ export const RebalanceActionResultPayloadSchema = z.discriminatedUnion(
   "phase",
   [
     RebalanceCloseSubmittedPayloadSchema,
+    RebalanceRedeploySubmittingPayloadSchema,
     RebalanceRedeploySubmittedPayloadSchema,
     RebalanceCompletedPayloadSchema,
     RebalanceAbortedPayloadSchema,
@@ -92,6 +106,9 @@ type RebalanceCloseSubmittedPayload = z.infer<
 >;
 type RebalanceRedeploySubmittedPayload = z.infer<
   typeof RebalanceRedeploySubmittedPayloadSchema
+>;
+type RebalanceRedeploySubmittingPayload = z.infer<
+  typeof RebalanceRedeploySubmittingPayloadSchema
 >;
 type RebalanceCompletedPayload = z.infer<
   typeof RebalanceCompletedPayloadSchema
@@ -418,6 +435,25 @@ function buildOpenRedeployedPosition(input: {
   });
 }
 
+function validateRedeployConfirmationIdentity(input: {
+  pendingPosition: Position;
+  confirmedPosition: Position;
+}): string | null {
+  const fields: Array<
+    keyof Pick<Position, "poolAddress" | "tokenXMint" | "tokenYMint" | "wallet">
+  > = ["poolAddress", "tokenXMint", "tokenYMint", "wallet"];
+
+  for (const field of fields) {
+    if (input.pendingPosition[field] !== input.confirmedPosition[field]) {
+      return `redeploy confirmation ${field} mismatch: expected ${String(
+        input.pendingPosition[field],
+      )}, got ${String(input.confirmedPosition[field])}`;
+    }
+  }
+
+  return null;
+}
+
 function buildRedeploySubmittedPayload(input: {
   closeSubmitted: RebalanceCloseSubmittedPayload;
   closeAccounting: Record<string, unknown>;
@@ -438,6 +474,27 @@ function buildRedeploySubmittedPayload(input: {
       : { performanceSnapshot: input.performanceSnapshot }),
     redeployRequest: input.redeployRequest,
     redeployResult: input.redeployResult,
+  });
+}
+
+function buildRedeploySubmittingPayload(input: {
+  closeSubmitted: RebalanceCloseSubmittedPayload;
+  closeAccounting: Record<string, unknown>;
+  closedPositionId: string;
+  availableCapitalUsd: number;
+  performanceSnapshot?: Position;
+  redeployRequest: DeployActionRequestPayload;
+}): RebalanceRedeploySubmittingPayload {
+  return RebalanceRedeploySubmittingPayloadSchema.parse({
+    phase: "REDEPLOY_SUBMITTING",
+    closeResult: input.closeSubmitted.closeResult,
+    closeAccounting: input.closeAccounting,
+    closedPositionId: input.closedPositionId,
+    availableCapitalUsd: input.availableCapitalUsd,
+    ...(input.performanceSnapshot === undefined
+      ? {}
+      : { performanceSnapshot: input.performanceSnapshot }),
+    redeployRequest: input.redeployRequest,
   });
 }
 
@@ -1152,6 +1209,23 @@ export async function finalizeRebalance(
           };
         }
 
+        const redeploySubmittingPayload = buildRedeploySubmittingPayload({
+          closeSubmitted: closeFinalizedPayload,
+          closeAccounting: closeLeg.closeAccounting,
+          closedPositionId: closeLeg.closedPosition.positionId,
+          availableCapitalUsd: closeLeg.availableCapitalUsd,
+          performanceSnapshot: closeLeg.closeConfirmedPosition,
+          redeployRequest: postCloseRedeployPayload,
+        });
+        const submittingAction = {
+          ...actionAfterCloseFinalized,
+          resultPayload: toJournalRecord(redeploySubmittingPayload),
+          error: null,
+        } satisfies Action;
+        // Durable intent marker: if the process dies before deployLiquidity
+        // returns, retry must reconcile instead of blindly submitting again.
+        await input.actionRepository.upsert(submittingAction);
+
         let redeployResult: z.infer<typeof DeployActionResultPayloadSchema>;
 
         try {
@@ -1175,6 +1249,76 @@ export async function finalizeRebalance(
             }),
           );
         } catch (error) {
+          if (isAmbiguousSubmissionError(error)) {
+            redeployResult = DeployActionResultPayloadSchema.parse({
+              actionType: "DEPLOY",
+              positionId: error.positionId,
+              txIds: error.txIds,
+              submissionAmbiguous: true,
+            });
+            const pendingRedeployPosition = buildPendingRedeployPosition({
+              action: submittingAction,
+              closedPosition: closeLeg.closedPosition,
+              redeployPayload: postCloseRedeployPayload,
+              redeployResult,
+              now,
+            });
+            const reconciliationPosition = buildReconciliationRequiredPosition(
+              pendingRedeployPosition,
+              latestAction.actionId,
+              now,
+            );
+            await input.stateRepository.upsert(reconciliationPosition);
+
+            const redeploySubmittedPayload = buildRedeploySubmittedPayload({
+              closeSubmitted: closeFinalizedPayload,
+              closeAccounting: closeLeg.closeAccounting,
+              closedPositionId: closeLeg.closedPosition.positionId,
+              availableCapitalUsd: closeLeg.availableCapitalUsd,
+              performanceSnapshot: closeLeg.closeConfirmedPosition,
+              redeployRequest: postCloseRedeployPayload,
+              redeployResult,
+            });
+            const waitingAction = {
+              ...submittingAction,
+              resultPayload: toJournalRecord(redeploySubmittedPayload),
+              txIds: [...submittingAction.txIds, ...error.txIds],
+              error: `Rebalance redeploy submission ambiguous; reconciliation required: ${errorMessage(
+                error,
+                "ambiguous redeploy submission",
+              )}`,
+            } satisfies Action;
+            await input.actionRepository.upsert(waitingAction);
+
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "REBALANCE_REDEPLOY_SUBMISSION_AMBIGUOUS",
+              actor: latestAction.requestedBy,
+              wallet: latestAction.wallet,
+              positionId: reconciliationPosition.positionId,
+              actionId: latestAction.actionId,
+              before: toJournalRecord({
+                action: latestAction,
+                oldPosition: closeLeg.closedPosition,
+              }),
+              after: toJournalRecord({
+                action: waitingAction,
+                oldPosition: closeLeg.closedPosition,
+                newPosition: reconciliationPosition,
+              }),
+              txIds: waitingAction.txIds,
+              resultStatus: waitingAction.status,
+              error: waitingAction.error,
+            });
+
+            return {
+              action: waitingAction,
+              oldPosition: closeLeg.closedPosition,
+              newPosition: reconciliationPosition,
+              outcome: "REDEPLOY_SUBMITTED" as const,
+            };
+          }
+
           const failureReason = `Rebalance redeploy failed after old leg closed: ${errorMessage(
             error,
             "unknown redeploy submission error",
@@ -1188,13 +1332,10 @@ export async function finalizeRebalance(
             failureReason,
           });
           const failedAction = {
-            ...actionAfterCloseFinalized,
-            status: transitionActionStatus(
-              actionAfterCloseFinalized.status,
-              "FAILED",
-            ),
+            ...submittingAction,
+            status: transitionActionStatus(submittingAction.status, "FAILED"),
             resultPayload: toJournalRecord(abortedPayload),
-            txIds: actionAfterCloseFinalized.txIds,
+            txIds: submittingAction.txIds,
             error: failureReason,
             completedAt: now,
           } satisfies Action;
@@ -1245,9 +1386,9 @@ export async function finalizeRebalance(
           redeployResult,
         });
         const waitingAction = {
-          ...actionAfterCloseFinalized,
+          ...submittingAction,
           resultPayload: toJournalRecord(redeploySubmittedPayload),
-          txIds: [...actionAfterCloseFinalized.txIds, ...redeployResult.txIds],
+          txIds: [...submittingAction.txIds, ...redeployResult.txIds],
           error: null,
         } satisfies Action;
         // Persist action with REDEPLOY_SUBMITTED phase BEFORE state upsert so a
@@ -1339,6 +1480,47 @@ export async function finalizeRebalance(
         };
       }
 
+      if (latestPayload.phase === "REDEPLOY_SUBMITTING") {
+        const oldPosition = await input.stateRepository.get(
+          latestAction.positionId,
+        );
+        const timedOutAction = {
+          ...latestAction,
+          status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
+          error:
+            "Rebalance redeploy was in REDEPLOY_SUBMITTING at startup; manual reconciliation required before retrying deploy",
+          completedAt: now,
+        } satisfies Action;
+        await input.actionRepository.upsert(timedOutAction);
+
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "REBALANCE_REDEPLOY_SUBMITTING_RECOVERY_REQUIRED",
+          actor: latestAction.requestedBy,
+          wallet: latestAction.wallet,
+          positionId: latestPayload.closedPositionId,
+          actionId: latestAction.actionId,
+          before: toJournalRecord({
+            action: latestAction,
+            redeployRequest: latestPayload.redeployRequest,
+          }),
+          after: toJournalRecord({
+            action: timedOutAction,
+            oldPosition,
+          }),
+          txIds: timedOutAction.txIds,
+          resultStatus: timedOutAction.status,
+          error: timedOutAction.error,
+        });
+
+        return {
+          action: timedOutAction,
+          oldPosition,
+          newPosition: null,
+          outcome: "TIMED_OUT" as const,
+        };
+      }
+
       if (latestPayload.phase === "REDEPLOY_SUBMITTED") {
         const newPositionId = latestPayload.redeployResult.positionId;
 
@@ -1395,6 +1577,61 @@ export async function finalizeRebalance(
             confirmedPosition !== null &&
             confirmedPosition.status === "OPEN"
           ) {
+            const identityError = validateRedeployConfirmationIdentity({
+              pendingPosition,
+              confirmedPosition,
+            });
+            if (identityError !== null) {
+              const reconciliationPosition =
+                buildReconciliationRequiredPosition(
+                  pendingPosition,
+                  latestActionAfterRedeployLock.actionId,
+                  now,
+                );
+              await input.stateRepository.upsert(reconciliationPosition);
+
+              const timedOutAction = {
+                ...latestActionAfterRedeployLock,
+                status: transitionActionStatus(
+                  latestActionAfterRedeployLock.status,
+                  "TIMED_OUT",
+                ),
+                error: identityError,
+                completedAt: now,
+              } satisfies Action;
+              await input.actionRepository.upsert(timedOutAction);
+
+              await appendJournalEvent(input.journalRepository, {
+                timestamp: now,
+                eventType: "REBALANCE_REDEPLOY_IDENTITY_MISMATCH",
+                actor: latestActionAfterRedeployLock.requestedBy,
+                wallet: latestActionAfterRedeployLock.wallet,
+                positionId: pendingPosition.positionId,
+                actionId: latestActionAfterRedeployLock.actionId,
+                before: toJournalRecord({
+                  action: latestActionAfterRedeployLock,
+                  oldPosition,
+                  newPosition: pendingPosition,
+                  confirmedPosition,
+                }),
+                after: toJournalRecord({
+                  action: timedOutAction,
+                  oldPosition,
+                  newPosition: reconciliationPosition,
+                }),
+                txIds: timedOutAction.txIds,
+                resultStatus: timedOutAction.status,
+                error: identityError,
+              });
+
+              return {
+                action: timedOutAction,
+                oldPosition,
+                newPosition: reconciliationPosition,
+                outcome: "TIMED_OUT" as const,
+              };
+            }
+
             const openPosition = buildOpenRedeployedPosition({
               pendingPosition,
               confirmedPosition,
@@ -1514,6 +1751,60 @@ export async function finalizeRebalance(
               txIds: timedOutAction.txIds,
               resultStatus: timedOutAction.status,
               error: timedOutAction.error,
+            });
+
+            return {
+              action: timedOutAction,
+              oldPosition,
+              newPosition: reconciliationPosition,
+              outcome: "TIMED_OUT" as const,
+            };
+          }
+
+          const identityError = validateRedeployConfirmationIdentity({
+            pendingPosition,
+            confirmedPosition,
+          });
+          if (identityError !== null) {
+            const reconciliationPosition = buildReconciliationRequiredPosition(
+              pendingPosition,
+              latestActionAfterRedeployLock.actionId,
+              now,
+            );
+            await input.stateRepository.upsert(reconciliationPosition);
+
+            const timedOutAction = {
+              ...latestActionAfterRedeployLock,
+              status: transitionActionStatus(
+                latestActionAfterRedeployLock.status,
+                "TIMED_OUT",
+              ),
+              error: identityError,
+              completedAt: now,
+            } satisfies Action;
+            await input.actionRepository.upsert(timedOutAction);
+
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "REBALANCE_REDEPLOY_IDENTITY_MISMATCH",
+              actor: latestActionAfterRedeployLock.requestedBy,
+              wallet: latestActionAfterRedeployLock.wallet,
+              positionId: pendingPosition.positionId,
+              actionId: latestActionAfterRedeployLock.actionId,
+              before: toJournalRecord({
+                action: latestActionAfterRedeployLock,
+                oldPosition,
+                newPosition: pendingPosition,
+                confirmedPosition,
+              }),
+              after: toJournalRecord({
+                action: timedOutAction,
+                oldPosition,
+                newPosition: reconciliationPosition,
+              }),
+              txIds: timedOutAction.txIds,
+              resultStatus: timedOutAction.status,
+              error: identityError,
             });
 
             return {

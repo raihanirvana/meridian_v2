@@ -177,8 +177,10 @@ export function scoreCandidate(input: {
     100,
   );
   const launchpadPenaltyScore = clamp(
-    policy.launchpadPenaltyByName[candidate.launchpad ?? ""] ??
-      candidate.narrativePenaltyScore,
+    candidate.launchpad === null
+      ? candidate.narrativePenaltyScore
+      : (policy.launchpadPenaltyByName[candidate.launchpad] ??
+          candidate.narrativePenaltyScore),
     0,
     100,
   );

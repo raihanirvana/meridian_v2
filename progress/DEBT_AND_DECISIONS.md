@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-25 (Batch 25 AI rebalance planner)
+Last updated: 2026-04-26 (Batch 8-11 hardening follow-up)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -88,9 +88,8 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Revisit: wajib diputuskan eksplisit sebelum atau saat Batch 14 AI advisory; pilih antara melipat exposure reject ke `REJECTED_HARD_FILTER` atau merevisi PRD/spec resmi.
 
 - `N18` exposure reject saat ini short-circuit sehingga daftar rejection reason tidak lengkap di [screeningRules.ts](c:/Users/PC/Desktop/meridian_v2/src/domain/rules/screeningRules.ts:136)
-  Status: deferred
-  Kenapa ditunda: tidak mengubah correctness hasil reject, tetapi observability menurun karena candidate yang gagal exposure + hard filter lain hanya membawa reason exposure.
-  Revisit: saat operator/reporting mulai membutuhkan penjelasan reject yang lengkap, idealnya sebelum Batch 13 atau 14.
+  Status: closed
+  Kenapa ditutup: `evaluateScreeningHardFilters()` sekarang tetap menggabungkan hard-filter reasons saat decision akhir berupa `REJECTED_EXPOSURE`, sehingga operator/debugging tidak kehilangan alasan lain seperti organic/blocked/risk filter.
 
 - `N19` risk flag `below_target_volume` terlalu sensitif karena menyala untuk deviasi kecil dari target di [candidateScore.ts](c:/Users/PC/Desktop/refining-code/meridian_v2/src/domain/scoring/candidateScore.ts:223)
   Status: deferred
@@ -98,9 +97,8 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Revisit: saat Batch 14 AI advisory mulai membaca riskFlags sebagai signal ranking/reasoning, atau saat reporting mulai menampilkan flags ke operator.
 
 - `N20` `launchpadPenaltyByName` bisa memakai key string kosong untuk candidate launchpad `null` di [candidateScore.ts](c:/Users/PC/Desktop/refining-code/meridian_v2/src/domain/scoring/candidateScore.ts:144)
-  Status: deferred
-  Kenapa ditunda: ini footgun konfigurasi kecil, bukan bug runtime umum. Tetapi config dengan key `""` bisa diam-diam memberi penalty ke candidate null-launchpad alih-alih fallback ke `narrativePenaltyScore`.
-  Revisit: sebelum config screening/scoring mulai dioperasikan lebih luas atau saat Batch 14/16 memperkenalkan config/operator surface yang lebih aktif.
+  Status: closed
+  Kenapa ditutup: scoring sekarang memperlakukan `launchpad === null` eksplisit sebagai fallback ke `narrativePenaltyScore`; key config `""` tidak lagi bisa memberi penalty diam-diam ke candidate tanpa launchpad. Regression ada di `screeningRules.test.ts`.
 
 - `F5` duplicate request-accepted journal pattern (`*_REQUEST_ACCEPTED` + `ACTION_ENQUEUED`) di [requestDeploy.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestDeploy.ts:1) dan [requestRebalance.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/requestRebalance.ts:1)
   Status: deferred
@@ -131,9 +129,8 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditutup: close leg rebalance sekarang mengikuti pola `N14`; `AmbiguousSubmissionError` dipetakan ke `WAITING_CONFIRMATION`, posisi lama masuk `RECONCILIATION_REQUIRED`, dan journal menulis `REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS`. Regression test ada di `rebalanceFlow.test.ts`.
 
 - `N22` crash gap antara `deployLiquidity()` sukses dan persist phase `REDEPLOY_SUBMITTED` action di [finalizeRebalance.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeRebalance.ts:694)
-  Status: deferred
-  Kenapa ditunda: kalau proses mati setelah redeploy submit sukses tetapi sebelum payload/action phase baru tersimpan, restart bisa membaca action masih `CLOSE_SUBMITTED` dan salah menurunkan old leg ke `RECONCILIATION_REQUIRED`, sementara new leg on-chain sudah ada tanpa local state.
-  Revisit: sebelum recovery/reconciliation rebalance dianggap production-ready; kemungkinan perlu intermediate commit marker atau journal-based resume strategy.
+  Status: closed
+  Kenapa ditutup: `finalizeRebalance()` sekarang menulis durable `REDEPLOY_SUBMITTING` intent marker sebelum memanggil `deployLiquidity()`. Jika runtime crash pada fase itu, retry tidak akan submit ulang secara buta dan akan meminta reconciliation. Jika adapter melempar `AmbiguousSubmissionError` setelah broadcast, action tetap `WAITING_CONFIRMATION` dengan phase `REDEPLOY_SUBMITTED`, pending new position masuk `RECONCILIATION_REQUIRED`, dan journal menulis `REBALANCE_REDEPLOY_SUBMISSION_AMBIGUOUS`.
 
 - `T7` coverage gap rebalance flow di [rebalanceFlow.test.ts](c:/Users/PC/Desktop/meridian_v2/tests/unit/rebalanceFlow.test.ts:1) dan [reconciliationWorker.test.ts](c:/Users/PC/Desktop/meridian_v2/tests/unit/reconciliationWorker.test.ts:1)
   Status: deferred

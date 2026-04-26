@@ -253,6 +253,33 @@ describe("management rules", () => {
     expect(result.reason).toMatch(/trailing take profit/i);
   });
 
+  it("lets trailing take profit outrank reconcile-only when it is configured as hard exit", () => {
+    const result = evaluateManagementAction(
+      buildInput({
+        position: {
+          currentValueUsd: 107,
+          unrealizedPnlUsd: 7,
+          peakPnlPct: 12,
+          peakPnlRecordedAt: "2026-04-20T00:30:00.000Z",
+        },
+        signals: {
+          dataIncomplete: true,
+        },
+        policy: {
+          trailingTakeProfitEnabled: true,
+          trailingTriggerPct: 8,
+          trailingDropPct: 3,
+          claimFeesThresholdUsd: 999,
+          partialCloseEnabled: false,
+        },
+      }),
+    );
+
+    expect(result.action).toBe("CLOSE");
+    expect(result.priority).toBe("HARD_EXIT");
+    expect(result.reason).toMatch(/trailing take profit/i);
+  });
+
   it("treats zero thresholds as disabled for stop loss, claim fees, and partial close", () => {
     const result = evaluateManagementAction(
       buildInput({

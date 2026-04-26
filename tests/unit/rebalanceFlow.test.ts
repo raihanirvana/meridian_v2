@@ -424,6 +424,156 @@ describe("rebalance flow", () => {
     );
   });
 
+  it("routes ambiguous redeploy submission to confirmation instead of aborting after the old leg closes", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    gateway.positions.set("pos_old", buildCloseConfirmedPosition("pos_old"));
+    gateway.deployError = new AmbiguousSubmissionError(
+      "redeploy submit timed out after broadcast",
+      {
+        operation: "DEPLOY",
+        positionId: "pos_new",
+        txIds: ["tx_redeploy_maybe_sent"],
+      },
+    );
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const newPosition = await stateRepository.get("pos_new");
+
+    expect(finalized.outcome).toBe("REDEPLOY_SUBMITTED");
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(newPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(newPosition?.needsReconciliation).toBe(true);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("REBALANCE_REDEPLOY_SUBMISSION_AMBIGUOUS");
+  });
+
+  it("requires reconciliation when confirmed redeploy identity does not match the request", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    gateway.positions.set("pos_old", buildCloseConfirmedPosition("pos_old"));
+
+    const firstFinalize = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(firstFinalize.outcome).toBe("REDEPLOY_SUBMITTED");
+
+    gateway.positions.set("pos_new", {
+      ...buildRedeployedOpenPosition("pos_new"),
+      poolAddress: "pool_unexpected",
+    });
+
+    const secondFinalize = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      now: () => "2026-04-20T00:08:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const newPosition = await stateRepository.get("pos_new");
+
+    expect(secondFinalize.outcome).toBe("TIMED_OUT");
+    expect(persistedAction?.status).toBe("TIMED_OUT");
+    expect(newPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(persistedAction?.error).toMatch(/poolAddress mismatch/);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("REBALANCE_REDEPLOY_IDENTITY_MISMATCH");
+  });
+
   it("redeploys with post-close token amounts instead of the stale request amounts", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

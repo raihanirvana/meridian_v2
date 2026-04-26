@@ -168,6 +168,7 @@ describe("screening rules", () => {
       candidate: buildCandidate({
         poolAddress: "pool_conflict",
         tokenXMint: "mint_conflict",
+        organicScore: 40,
       }),
       portfolio: buildPortfolio({
         exposureByPool: {
@@ -183,6 +184,12 @@ describe("screening rules", () => {
     expect(result.hardFilterPassed).toBe(false);
     expect(result.decision).toBe("REJECTED_EXPOSURE");
     expect(result.decisionReason).toMatch(/duplicate pool exposure/i);
+    expect(result.rejectionReasons).toEqual(
+      expect.arrayContaining([
+        "organic score below minimum",
+        "duplicate pool exposure",
+      ]),
+    );
   });
 
   it("builds a deterministic shortlist ordered by score", () => {
@@ -322,5 +329,65 @@ describe("screening rules", () => {
     expect(result.rejectionReasons).toContain(
       "estimated slippage above maximum",
     );
+  });
+
+  it("keeps cooldown candidates visible as rejected instead of dropping them", () => {
+    const result = screenAndScoreCandidates({
+      candidates: [
+        buildCandidate({
+          candidateId: "cand_cooldown",
+          poolAddress: "pool_cooldown",
+        }),
+        buildCandidate({
+          candidateId: "cand_open",
+          poolAddress: "pool_open",
+        }),
+      ],
+      portfolio: buildPortfolio(),
+      screeningPolicy,
+      scoringPolicy,
+      poolMemoryMap: {
+        pool_cooldown: {
+          cooldownUntil: "2026-04-21T01:00:00.000Z",
+        },
+      },
+      createdAt: now,
+      now,
+    });
+
+    expect(result.candidates.map((candidate) => candidate.candidateId)).toEqual(
+      ["cand_cooldown", "cand_open"],
+    );
+    expect(
+      result.candidates.find(
+        (candidate) => candidate.candidateId === "cand_cooldown",
+      )?.decision,
+    ).toBe("REJECTED_COOLDOWN");
+    expect(result.shortlist.map((candidate) => candidate.candidateId)).toEqual([
+      "cand_open",
+    ]);
+  });
+
+  it("does not apply empty-string launchpad penalties to null launchpad candidates", () => {
+    const result = screenAndScoreCandidates({
+      candidates: [
+        buildCandidate({
+          candidateId: "cand_null_launchpad",
+          launchpad: null,
+          narrativePenaltyScore: 10,
+        }),
+      ],
+      portfolio: buildPortfolio(),
+      screeningPolicy,
+      scoringPolicy: {
+        ...scoringPolicy,
+        launchpadPenaltyByName: {
+          "": 100,
+        },
+      },
+      createdAt: now,
+    });
+
+    expect(result.candidates[0]?.scoreBreakdown.launchpadPenalty).toBe(90);
   });
 });

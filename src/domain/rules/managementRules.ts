@@ -303,17 +303,6 @@ export function evaluateManagementAction(
     });
   }
 
-  if (input.position.needsReconciliation || input.signals.dataIncomplete) {
-    return buildResult({
-      action: "RECONCILE_ONLY",
-      priority: "RECONCILE_ONLY",
-      reason: "Position requires reconciliation before further management",
-      triggerReasons: input.position.needsReconciliation
-        ? ["position.needsReconciliation is true"]
-        : ["management snapshot is incomplete"],
-    });
-  }
-
   if (trailingTakeProfitTriggered(input)) {
     const estimatedInitialValueUsd = Math.max(
       input.position.currentValueUsd - input.position.unrealizedPnlUsd,
@@ -332,6 +321,17 @@ export function evaluateManagementAction(
         `peak pnl reached ${peakPnlPct.toFixed(2)}%`,
         `current pnl retraced to ${currentPnlPct.toFixed(2)}%`,
       ],
+    });
+  }
+
+  if (input.position.needsReconciliation || input.signals.dataIncomplete) {
+    return buildResult({
+      action: "RECONCILE_ONLY",
+      priority: "RECONCILE_ONLY",
+      reason: "Position requires reconciliation before further management",
+      triggerReasons: input.position.needsReconciliation
+        ? ["position.needsReconciliation is true"]
+        : ["management snapshot is incomplete"],
     });
   }
 

@@ -232,6 +232,54 @@ describe("reconciliation worker", () => {
     );
   });
 
+  it("does not write live snapshot sync or missing-position state while dry-run is enabled", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_missing_dry"));
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+      }),
+      journalRepository,
+      dryRun: true,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedPosition = await stateRepository.get("pos_missing_dry");
+    const journalEvents = await journalRepository.list();
+
+    expect(persistedPosition?.status).toBe("OPEN");
+    expect(persistedPosition?.needsReconciliation).toBe(false);
+    expect(journalEvents).toHaveLength(0);
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "POSITION",
+          entityId: "pos_missing_dry",
+          outcome: "REQUIRES_RETRY",
+          detail: "Dry-run skipped snapshot reconciliation write",
+        }),
+      ]),
+    );
+  });
+
   it("syncs open local positions from live wallet snapshots before management reads them", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

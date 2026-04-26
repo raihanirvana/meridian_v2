@@ -749,4 +749,10 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - rekomendasi AI `watch` / `reject`, high risk, low confidence, bins/slippage di luar policy, atau deploy dengan slippage tidak positif sekarang menjadi reject deterministic, bukan fallback deploy
   - deploy-mode AI juga sekarang wajib memberi `maxPositionAgeMinutes`, `stopLossPct`, dan `takeProfitPct` positif; `walletRiskMode` dipindahkan ke config AI agar prompt risk profile tidak hardcoded
   - enrichment screening sekarang punya `screening.enrichmentConcurrency` default `10`, jadi top-30 AI review tidak lagi memicu enrichment request paralel tak terbatas ke screening/token-intel API
-- `npm test` terakhir hijau dengan total `342` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 8-11 hardening follow-up sekarang masuk:
+  - `reconcilePortfolio(dryRun=true)` tidak lagi menulis snapshot sync/missing-position state; snapshot reconciliation hanya dilaporkan sebagai skipped retry record
+  - trailing take-profit tetap diprioritaskan sebagai `HARD_EXIT` sebelum `RECONCILE_ONLY`, sesuai semantic hard-exit yang sudah dipilih
+  - screening exposure reject mempertahankan hard-filter reasons lain; pool cooldown sekarang muncul sebagai `REJECTED_COOLDOWN`, bukan hilang diam-diam dari `result.candidates`
+  - `launchpadPenaltyByName[""]` tidak lagi berlaku untuk kandidat `launchpad=null`
+  - rebalance redeploy leg sekarang punya `REDEPLOY_SUBMITTING` intent marker, ambiguous redeploy submit recovery, dan validation eksplisit bahwa confirmed redeploy position cocok dengan wallet/pool/token request
+- `npm test` terakhir hijau dengan total `348` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

@@ -971,6 +971,21 @@ export async function reconcilePortfolio(
       );
 
       for (const position of positionsForWallet) {
+        if (input.dryRun === true) {
+          records.push(
+            createRecord({
+              scope: "POSITION",
+              entityId: position.positionId,
+              wallet,
+              positionId: position.positionId,
+              actionId: position.lastWriteActionId,
+              outcome: "REQUIRES_RETRY",
+              detail: "Dry-run skipped snapshot reconciliation write",
+            }),
+          );
+          continue;
+        }
+
         const liveSnapshot = snapshotById.get(position.positionId);
         if (liveSnapshot !== undefined) {
           const latestPosition = await input.stateRepository.get(

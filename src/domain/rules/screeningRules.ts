@@ -13,7 +13,6 @@ import {
 import { type PoolMemoryEntry } from "../entities/PoolMemory.js";
 import { PortfolioStateSchema } from "../entities/PortfolioState.js";
 import { type SignalWeights } from "../entities/SignalWeights.js";
-import { applyCooldownFilter } from "./poolMemoryRules.js";
 import {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
@@ -87,6 +86,7 @@ export const HardFilterEvaluationSchema = z
       "REJECTED_HARD_FILTER",
       "PASSED_HARD_FILTER",
       "REJECTED_EXPOSURE",
+      "REJECTED_COOLDOWN",
     ]),
     decisionReason: z.string().min(1),
     rejectionReasons: z.array(z.string().min(1)),
@@ -329,7 +329,7 @@ export function evaluateScreeningHardFilters(input: {
       hardFilterPassed: false,
       decision: "REJECTED_EXPOSURE",
       decisionReason: "Duplicate pool exposure is not allowed",
-      rejectionReasons: ["duplicate pool exposure"],
+      rejectionReasons: [...rejectionReasons, "duplicate pool exposure"],
     });
   }
 
@@ -338,7 +338,7 @@ export function evaluateScreeningHardFilters(input: {
       hardFilterPassed: false,
       decision: "REJECTED_EXPOSURE",
       decisionReason: "Duplicate token exposure is not allowed",
-      rejectionReasons: ["duplicate token exposure"],
+      rejectionReasons: [...rejectionReasons, "duplicate token exposure"],
     });
   }
 
@@ -446,6 +446,25 @@ function buildCandidateEntity(input: {
   });
 }
 
+function isCandidateCoolingDown(input: {
+  poolAddress: string;
+  poolMemoryMap?: Record<string, Pick<PoolMemoryEntry, "cooldownUntil">>;
+  now: string;
+}): boolean {
+  const cooldownUntil = input.poolMemoryMap?.[input.poolAddress]?.cooldownUntil;
+  if (cooldownUntil === undefined) {
+    return false;
+  }
+
+  const nowMs = Date.parse(input.now);
+  const cooldownMs = Date.parse(cooldownUntil);
+  if (Number.isNaN(nowMs) || Number.isNaN(cooldownMs)) {
+    return false;
+  }
+
+  return cooldownMs > nowMs;
+}
+
 export function screenAndScoreCandidates(input: {
   candidates: Array<z.infer<typeof ScreeningCandidateInputSchema>>;
   portfolio: z.infer<typeof PortfolioStateSchema>;
@@ -463,14 +482,8 @@ export function screenAndScoreCandidates(input: {
   const screeningPolicy = ScreeningPolicySchema.parse(input.screeningPolicy);
   const scoringPolicy = CandidateScorePolicySchema.parse(input.scoringPolicy);
   const createdAt = input.createdAt ?? new Date().toISOString();
-  const candidates =
-    input.poolMemoryMap === undefined
-      ? parsedCandidates
-      : applyCooldownFilter({
-          candidates: parsedCandidates,
-          poolMemoryMap: input.poolMemoryMap,
-          now: input.now ?? createdAt,
-        });
+  const now = input.now ?? createdAt;
+  const candidates = parsedCandidates;
 
   const evaluatedCandidates = candidates.map((candidate) => {
     const featureEnrichedCandidate = enrichStrategyFeatureInput(
@@ -478,6 +491,29 @@ export function screenAndScoreCandidates(input: {
       screeningPolicy,
       createdAt,
     );
+
+    if (
+      isCandidateCoolingDown({
+        poolAddress: featureEnrichedCandidate.poolAddress,
+        ...(input.poolMemoryMap === undefined
+          ? {}
+          : { poolMemoryMap: input.poolMemoryMap }),
+        now,
+      })
+    ) {
+      return buildCandidateEntity({
+        candidate: featureEnrichedCandidate,
+        hardFilter: {
+          hardFilterPassed: false,
+          decision: "REJECTED_COOLDOWN",
+          decisionReason: "Pool cooldown is active",
+          rejectionReasons: ["pool cooldown active"],
+        },
+        createdAt,
+        screeningPolicy,
+      });
+    }
+
     const hardFilter = evaluateScreeningHardFilters({
       candidate: featureEnrichedCandidate,
       portfolio,
