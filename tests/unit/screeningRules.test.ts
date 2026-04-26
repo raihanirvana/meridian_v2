@@ -4,6 +4,7 @@ import { type PortfolioState } from "../../src/domain/entities/PortfolioState.js
 import {
   evaluateScreeningHardFilters,
   screenAndScoreCandidates,
+  type ScreeningPolicy,
 } from "../../src/domain/rules/screeningRules.js";
 import {
   buildDataFreshnessSnapshot,
@@ -113,7 +114,7 @@ const screeningPolicy = {
   rejectDuplicatePoolExposure: true,
   rejectDuplicateTokenExposure: true,
   shortlistLimit: 2,
-} as const;
+} satisfies ScreeningPolicy;
 
 const scoringPolicy = {
   targetFeeToTvlRatio: 0.1,

@@ -16,7 +16,10 @@ import { ActionQueue } from "../../src/app/services/ActionQueue.js";
 import { FileLessonRepository } from "../../src/adapters/storage/LessonRepository.js";
 import { FilePoolMemoryRepository } from "../../src/adapters/storage/PoolMemoryRepository.js";
 import { runManagementWorker } from "../../src/app/workers/managementWorker.js";
-import { type Candidate } from "../../src/domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../src/domain/entities/Candidate.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 import { type ManagementEvaluationResult } from "../../src/domain/rules/managementRules.js";
 import { type ManagementPolicy } from "../../src/domain/rules/managementRules.js";
@@ -45,7 +48,7 @@ function createEmptyLessonPromptService(directory: string) {
 }
 
 function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
-  return {
+  return CandidateSchema.parse({
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "SOL-USDC",
@@ -61,7 +64,7 @@ function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
     decisionReason: "Passed deterministic shortlist",
     createdAt: "2026-04-21T12:00:00.000Z",
     ...overrides,
-  };
+  });
 }
 
 function buildPosition(overrides: Partial<Position> = {}): Position {

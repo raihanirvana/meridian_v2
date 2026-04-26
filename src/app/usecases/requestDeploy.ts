@@ -9,7 +9,7 @@ import {
   evaluatePortfolioRisk,
   type PortfolioRiskPolicy,
 } from "../../domain/rules/riskRules.js";
-import type { Actor } from "../../domain/types/enums.js";
+import { StrategySchema, type Actor } from "../../domain/types/enums.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
 
@@ -23,7 +23,7 @@ export const DeployActionRequestPayloadSchema = z
     amountBase: z.number().nonnegative(),
     amountQuote: z.number().nonnegative(),
     slippageBps: z.number().int().positive().max(10_000).optional(),
-    strategy: z.string().min(1),
+    strategy: StrategySchema,
     rangeLowerBin: z.number().int(),
     rangeUpperBin: z.number().int(),
     initialActiveBin: z.number().int().nullable(),

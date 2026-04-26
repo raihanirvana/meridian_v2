@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.typecheck.json",
+  "include": ["../src/**/*.ts", "**/*.ts"],
+  "exclude": ["../dist", "../node_modules", "../coverage"]
+}

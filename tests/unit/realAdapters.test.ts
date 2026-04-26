@@ -14,6 +14,7 @@ import { JupiterSolPriceGateway } from "../../src/adapters/pricing/JupiterSolPri
 import { HttpScreeningGateway } from "../../src/adapters/screening/HttpScreeningGateway.js";
 import { MeteoraPoolDiscoveryScreeningGateway } from "../../src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
 import { HttpTelegramOperatorGateway } from "../../src/adapters/telegram/HttpTelegramOperatorGateway.js";
+import { CandidateSchema } from "../../src/domain/entities/Candidate.js";
 import { SolanaRpcWalletGateway } from "../../src/adapters/wallet/SolanaRpcWalletGateway.js";
 
 function createFetchFromResponse(response: Response) {
@@ -99,9 +100,9 @@ describe("real adapters", () => {
       ),
     });
 
-    await expect(screening.listCandidates({ limit: 1 })).resolves.toHaveLength(
-      1,
-    );
+    await expect(
+      screening.listCandidates({ limit: 1, timeframe: "5m" }),
+    ).resolves.toHaveLength(1);
 
     const priceGateway = new JupiterSolPriceGateway({
       fetchFn: createFetchFromResponse(
@@ -270,7 +271,7 @@ describe("real adapters", () => {
 
     await expect(
       strategyReviewer.reviewCandidateStrategy({
-        candidate: {
+        candidate: CandidateSchema.parse({
           candidateId: "cand_001",
           poolAddress: "pool_001",
           symbolPair: "SOL-USDC",
@@ -283,7 +284,7 @@ describe("real adapters", () => {
           decision: "SHORTLISTED",
           decisionReason: "Passed deterministic shortlist",
           createdAt: "2026-04-21T12:00:00.000Z",
-        },
+        }),
         systemPrompt: "review strategy",
       }),
     ).resolves.toMatchObject({
@@ -300,9 +301,9 @@ describe("real adapters", () => {
       ),
     });
 
-    await expect(screening.listCandidates({ limit: 5 })).rejects.toBeInstanceOf(
-      AdapterHttpStatusError,
-    );
+    await expect(
+      screening.listCandidates({ limit: 5, timeframe: "5m" }),
+    ).rejects.toBeInstanceOf(AdapterHttpStatusError);
   });
 
   it("maps invalid JSON/schema responses into AdapterResponseValidationError", async () => {
@@ -370,7 +371,7 @@ describe("real adapters", () => {
 
     await expect(
       strategyReviewer.reviewCandidateStrategy({
-        candidate: {
+        candidate: CandidateSchema.parse({
           candidateId: "cand_001",
           poolAddress: "pool_001",
           symbolPair: "SOL-USDC",
@@ -383,7 +384,7 @@ describe("real adapters", () => {
           decision: "SHORTLISTED",
           decisionReason: "Passed deterministic shortlist",
           createdAt: "2026-04-21T12:00:00.000Z",
-        },
+        }),
         systemPrompt: "review strategy",
       }),
     ).rejects.toBeInstanceOf(AdapterResponseValidationError);
@@ -446,9 +447,9 @@ describe("real adapters", () => {
         }),
     });
 
-    await expect(screening.listCandidates({ limit: 5 })).rejects.toBeInstanceOf(
-      AdapterTransportError,
-    );
+    await expect(
+      screening.listCandidates({ limit: 5, timeframe: "5m" }),
+    ).rejects.toBeInstanceOf(AdapterTransportError);
   });
 
   it("forwards screening timeframe to the HTTP query boundary", async () => {

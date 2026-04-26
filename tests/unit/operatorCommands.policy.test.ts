@@ -16,6 +16,7 @@ import {
   executeOperatorCommand,
   parseOperatorCommand,
 } from "../../src/app/usecases/operatorCommands.js";
+import { type ScreeningPolicy } from "../../src/domain/rules/screeningRules.js";
 
 const tempDirs: string[] = [];
 
@@ -49,7 +50,7 @@ const basePolicy = {
   rejectDuplicatePoolExposure: true,
   rejectDuplicateTokenExposure: true,
   shortlistLimit: 2,
-} as const;
+} satisfies ScreeningPolicy;
 
 afterEach(async () => {
   await Promise.all(

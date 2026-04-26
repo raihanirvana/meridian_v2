@@ -16,7 +16,10 @@ import { JournalRepository } from "../../src/adapters/storage/JournalRepository.
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockTokenIntelGateway } from "../../src/adapters/analytics/TokenIntelGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
-import { type Candidate } from "../../src/domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../src/domain/entities/Candidate.js";
 import {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
@@ -76,7 +79,7 @@ function buildPolicy(
 }
 
 function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
-  return {
+  return CandidateSchema.parse({
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "ABC-SOL",
@@ -142,7 +145,7 @@ function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
     decisionReason: "selected upstream",
     createdAt: now,
     ...overrides,
-  };
+  });
 }
 
 function buildRiskPolicy(
@@ -497,13 +500,15 @@ describe("screening worker", () => {
       now: () => "2026-04-22T10:00:00.000Z",
     });
 
-    expect(seenRankingInput?.systemPrompt).toContain("### LESSONS LEARNED");
+    expect(seenRankingInput).not.toBeNull();
+    const rankingInput = seenRankingInput as unknown as CandidateRankingInput;
+
+    expect(rankingInput.systemPrompt).toContain("### LESSONS LEARNED");
     expect(
-      seenRankingInput?.candidates[0]?.smartMoneySnapshot.narrativeSummary,
+      rankingInput.candidates[0]?.smartMoneySnapshot.narrativeSummary,
     ).toBe("Narrative attached");
     expect(
-      seenRankingInput?.candidates[0]?.smartMoneySnapshot
-        .holderDistributionSummary,
+      rankingInput.candidates[0]?.smartMoneySnapshot.holderDistributionSummary,
     ).toBe("Holder spread attached");
   });
 

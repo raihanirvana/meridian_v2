@@ -126,6 +126,9 @@ describe("maybeRecalibrateSignalWeights", () => {
     });
 
     expect(result.skipped).not.toBe(true);
+    if (result.skipped) {
+      throw new Error("expected signal weights recalibration to run");
+    }
     expect(result.changes.feeToTvl?.weight).toBeGreaterThan(1);
     expect((await signalWeightsStore.load()).feeToTvl.weight).toBeGreaterThan(
       1,

@@ -951,12 +951,14 @@ describe("management worker", () => {
     });
 
     expect(result.positionResults[0]?.status).toBe("DRY_RUN");
-    expect(capturedReview?.position.activeBinAtEntry).toBe(15);
-    expect(capturedReview?.position.currentActiveBin).toBe(30);
-    expect(capturedReview?.pool.currentActiveBin).toBe(33);
-    expect(capturedReview?.pool.tvlUsd).toBe(180_000);
-    expect(capturedReview?.pool.volume24hUsd).toBe(950_000);
-    expect(capturedReview?.pool.fees1hUsd).toBe(1_100);
+    expect(capturedReview).not.toBeNull();
+    const review = capturedReview as unknown as RebalanceReviewInput;
+    expect(review.position.activeBinAtEntry).toBe(15);
+    expect(review.position.currentActiveBin).toBe(30);
+    expect(review.pool.currentActiveBin).toBe(33);
+    expect(review.pool.tvlUsd).toBe(180_000);
+    expect(review.pool.volume24hUsd).toBe(950_000);
+    expect(review.pool.fees1hUsd).toBe(1_100);
   });
 
   it("blocks constrained AI rebalance when redeploy simulation fails", async () => {

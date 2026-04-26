@@ -919,7 +919,7 @@ async function main() {
 
     screeningTimer = setTimeout(() => {
       void supervisor
-        .runScreeningTick("cron")
+        .runScreeningTick("cron", nextIntervalSec)
         .then((result) => {
           if (result !== null) {
             logger.info(

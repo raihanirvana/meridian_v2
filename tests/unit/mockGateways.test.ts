@@ -149,6 +149,14 @@ describe("mock gateways", () => {
           confidenceScore: 81,
         },
       },
+      getTokenNarrativeSnapshot: {
+        type: "success",
+        value: {
+          tokenMint: "mint_001",
+          narrativeSummary: "steady narrative",
+          holderDistributionSummary: "healthy holder distribution",
+        },
+      },
     });
 
     const llm = new MockLlmGateway({
@@ -225,7 +233,9 @@ describe("mock gateways", () => {
       }),
     ).resolves.toMatchObject({ expectedOutputAmount: 95 });
 
-    await expect(screening.listCandidates({ limit: 5 })).resolves.toEqual([]);
+    await expect(
+      screening.listCandidates({ limit: 5, timeframe: "5m" }),
+    ).resolves.toEqual([]);
     await expect(
       analytics.getTokenRiskSnapshot("mint_001"),
     ).resolves.toMatchObject({ riskScore: 12 });
@@ -415,6 +425,14 @@ describe("mock gateways", () => {
           confidenceScore: 81,
         },
       },
+      getTokenNarrativeSnapshot: {
+        type: "success",
+        value: {
+          tokenMint: "mint_001",
+          narrativeSummary: "steady narrative",
+          holderDistributionSummary: "healthy holder distribution",
+        },
+      },
     });
 
     const invalidSwap = new MockSwapGateway({
@@ -457,7 +475,7 @@ describe("mock gateways", () => {
         type: "success",
         value: {
           delivered: true,
-          channel: "email",
+          channel: "email" as unknown as "telegram",
           recipient: "chat_001",
         },
       },
@@ -497,6 +515,7 @@ describe("mock gateways", () => {
           openedAt: null,
         },
         triggerReasons: ["still in range"],
+        systemPrompt: null,
       }),
     ).rejects.toThrow();
 

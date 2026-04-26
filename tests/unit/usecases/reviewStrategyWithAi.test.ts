@@ -4,12 +4,18 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AiStrategyReviewer } from "../../../src/adapters/llm/AiStrategyReviewer.js";
+import type {
+  AiStrategyReviewer,
+  StrategyReviewResult,
+} from "../../../src/adapters/llm/AiStrategyReviewer.js";
 import { MockAiStrategyReviewer } from "../../../src/adapters/llm/AiStrategyReviewer.js";
 import { JournalRepository } from "../../../src/adapters/storage/JournalRepository.js";
 import type { LessonPromptService } from "../../../src/app/services/LessonPromptService.js";
 import { reviewStrategyWithAi } from "../../../src/app/usecases/reviewStrategyWithAi.js";
-import type { Candidate } from "../../../src/domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../../src/domain/entities/Candidate.js";
 import {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
@@ -74,7 +80,7 @@ function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
     dataFreshnessSnapshot,
   });
 
-  return {
+  return CandidateSchema.parse({
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "ABC-SOL",
@@ -125,10 +131,12 @@ function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
     decisionReason: "Selected into deterministic shortlist",
     createdAt: now,
     ...overrides,
-  };
+  });
 }
 
-function buildAiReview(overrides = {}) {
+function buildAiReview(
+  overrides: Partial<StrategyReviewResult> = {},
+): StrategyReviewResult {
   return {
     poolAddress: "pool_001",
     decision: "deploy",
@@ -265,7 +273,7 @@ describe("reviewStrategyWithAi", () => {
           value: {
             ...buildAiReview(),
             recommendedStrategy: "grid",
-          },
+          } as unknown as StrategyReviewResult,
         },
       }),
       now: () => now,
@@ -298,6 +306,31 @@ describe("reviewStrategyWithAi", () => {
     expect(result.reviews[0]?.review.rejectIf).toContain(
       "confidence_below_minimum",
     );
+  });
+
+  it("rejects high-risk AI deploy recommendations even when confidence is high", async () => {
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
+      minConfidence: 0.7,
+      reviewer: new MockAiStrategyReviewer({
+        reviewCandidateStrategy: {
+          type: "success",
+          value: buildAiReview({
+            confidence: 0.95,
+            riskLevel: "high",
+          }),
+        },
+      }),
+      now: () => now,
+    });
+
+    expect(result.reviews[0]?.source).toBe("AI");
+    expect(result.reviews[0]?.review.decision).toBe("reject");
+    expect(result.reviews[0]?.review.recommendedStrategy).toBe("none");
+    expect(result.reviews[0]?.review.rejectIf).toContain("risk_level_high");
   });
 
   it("times out AI review and falls back deterministically", async () => {
@@ -358,7 +391,7 @@ describe("reviewStrategyWithAi", () => {
     const seenPrompts: string[] = [];
     const reviewer: AiStrategyReviewer = {
       async reviewCandidateStrategy(input) {
-        seenPrompts.push(input.systemPrompt);
+        seenPrompts.push(input.systemPrompt ?? "");
         return buildAiReview();
       },
     };
@@ -417,9 +450,7 @@ describe("reviewStrategyWithAi", () => {
     expect(result.reviews[0]?.aiError).toBe("AI_LESSON_INJECTION_FAILED");
     const journal = await journalRepository.list();
     expect(
-      journal.some(
-        (event) => event.eventType === "AI_LESSON_INJECTION_FAILED",
-      ),
+      journal.some((event) => event.eventType === "AI_LESSON_INJECTION_FAILED"),
     ).toBe(true);
   });
 

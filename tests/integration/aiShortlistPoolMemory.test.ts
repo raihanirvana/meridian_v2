@@ -8,7 +8,10 @@ import { FileLessonRepository } from "../../src/adapters/storage/LessonRepositor
 import { FilePoolMemoryRepository } from "../../src/adapters/storage/PoolMemoryRepository.js";
 import { rankShortlistWithAi } from "../../src/app/services/AiAdvisoryService.js";
 import { DefaultLessonPromptService } from "../../src/app/services/LessonPromptService.js";
-import { type Candidate } from "../../src/domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../src/domain/entities/Candidate.js";
 
 const tempDirs: string[] = [];
 
@@ -29,7 +32,7 @@ afterEach(async () => {
 });
 
 function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
-  return {
+  return CandidateSchema.parse({
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "SOL-USDC",
@@ -45,7 +48,7 @@ function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
     decisionReason: "Passed deterministic shortlist",
     createdAt: "2026-04-21T12:00:00.000Z",
     ...overrides,
-  };
+  });
 }
 
 describe("AI shortlist pool memory", () => {

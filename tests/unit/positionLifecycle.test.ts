@@ -5,11 +5,14 @@ import {
   transitionRebalancePositionStatus,
   transitionPositionStatus,
 } from "../../src/domain/stateMachines/positionLifecycle.js";
-import { PositionSchema } from "../../src/domain/entities/Position.js";
+import {
+  PositionSchema,
+  type Position,
+} from "../../src/domain/entities/Position.js";
 
 describe("positionLifecycle", () => {
   it("supports the close path from OPEN to CLOSED", () => {
-    let status = "OPEN" as const;
+    let status: Position["status"] = "OPEN";
 
     status = transitionPositionStatus(status, "MANAGEMENT_REVIEW");
     status = transitionPositionStatus(status, "CLOSE_REQUESTED");
@@ -29,7 +32,7 @@ describe("positionLifecycle", () => {
   });
 
   it("supports the rebalance path", () => {
-    let status = "OPEN" as const;
+    let status: Position["status"] = "OPEN";
 
     status = transitionPositionStatus(status, "MANAGEMENT_REVIEW");
     status = transitionPositionStatus(status, "REBALANCE_REQUESTED");

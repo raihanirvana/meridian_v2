@@ -45,7 +45,11 @@ async function runScenarioPack(pack: SimulationScenarioPack) {
   const journalRepository = new JournalRepository({
     filePath: path.join(directory, "journal.jsonl"),
   });
-  const fakeClock = new FakeClock(fixture.steps[0].timestamp);
+  const firstStep = fixture.steps[0];
+  if (firstStep === undefined) {
+    throw new Error("scenario fixture must contain at least one step");
+  }
+  const fakeClock = new FakeClock(firstStep.timestamp);
   const actionQueue = new ActionQueue({
     actionRepository,
     journalRepository,

@@ -128,7 +128,7 @@ export type CapitalUsageSnapshot = z.infer<typeof CapitalUsageSnapshotSchema>;
 export type PortfolioRiskStateSnapshot = z.infer<
   typeof PortfolioRiskStateSnapshotSchema
 >;
-export type PortfolioRiskEvaluationInput = z.infer<
+export type PortfolioRiskEvaluationInput = z.input<
   typeof PortfolioRiskEvaluationInputSchema
 >;
 export type PortfolioRiskEvaluationResult = z.infer<

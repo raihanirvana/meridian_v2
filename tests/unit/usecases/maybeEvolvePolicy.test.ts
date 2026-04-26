@@ -191,6 +191,9 @@ describe("maybeEvolvePolicy", () => {
     expect(result).toMatchObject({
       positionsAtEvolution: 5,
     });
+    if (result.skipped) {
+      throw new Error("expected policy evolution to run");
+    }
     expect(Object.keys(result.changes)).not.toHaveLength(0);
     expect((await runtimePolicyStore.snapshot()).overrides).toMatchObject(
       result.changes,

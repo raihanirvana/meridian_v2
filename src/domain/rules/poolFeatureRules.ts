@@ -118,13 +118,15 @@ export function buildDlmmMicrostructureSnapshot(input: {
   estimatedSlippageBpsForDefaultSize?: number;
   outOfRangeRiskScore?: number;
   rangeStabilityScore?: number;
-  now?: string;
+  now: string;
 }): DlmmMicrostructureSnapshot {
   const observedAt = input.activeBinObservedAt ?? input.now ?? null;
-  const nowMs =
-    input.now === undefined || !Number.isFinite(Date.parse(input.now))
-      ? Date.now()
-      : Date.parse(input.now);
+  const nowMs = Date.parse(input.now);
+  if (!Number.isFinite(nowMs)) {
+    throw new Error(
+      "buildDlmmMicrostructureSnapshot requires a valid ISO timestamp in now",
+    );
+  }
   const activeBinAgeMs =
     observedAt === null ? MissingSnapshotAgeMs : ageMs(observedAt, nowMs);
   const depthWithin25BinsUsd =

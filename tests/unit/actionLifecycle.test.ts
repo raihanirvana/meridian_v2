@@ -4,11 +4,11 @@ import {
   canTransitionActionStatus,
   transitionActionStatus,
 } from "../../src/domain/stateMachines/actionLifecycle.js";
-import { ActionSchema } from "../../src/domain/entities/Action.js";
+import { ActionSchema, type Action } from "../../src/domain/entities/Action.js";
 
 describe("actionLifecycle", () => {
   it("supports the happy path from QUEUED to DONE", () => {
-    let status = "QUEUED" as const;
+    let status: Action["status"] = "QUEUED";
 
     status = transitionActionStatus(status, "RUNNING");
     status = transitionActionStatus(status, "WAITING_CONFIRMATION");
@@ -19,7 +19,7 @@ describe("actionLifecycle", () => {
   });
 
   it("supports retry after failure", () => {
-    let status = "RUNNING" as const;
+    let status: Action["status"] = "RUNNING";
 
     status = transitionActionStatus(status, "FAILED");
     status = transitionActionStatus(status, "RETRY_QUEUED");

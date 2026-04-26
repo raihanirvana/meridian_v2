@@ -9,12 +9,16 @@ import { MockAiStrategyReviewer } from "../../src/adapters/llm/AiStrategyReviewe
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { MockScreeningGateway } from "../../src/adapters/screening/ScreeningGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
-import type { Candidate } from "../../src/domain/entities/Candidate.js";
+import {
+  CandidateSchema,
+  type Candidate,
+} from "../../src/domain/entities/Candidate.js";
 import {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
   buildMarketFeatureSnapshot,
 } from "../../src/domain/rules/poolFeatureRules.js";
+import type { ScreeningPolicy } from "../../src/domain/rules/screeningRules.js";
 import type { UserConfig } from "../../src/infra/config/configSchema.js";
 import { createRuntimeStores } from "../../src/runtime/createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "../../src/runtime/createRuntimeSupervisor.js";
@@ -38,7 +42,7 @@ afterEach(async () => {
   );
 });
 
-function buildScreeningPolicy() {
+function buildScreeningPolicy(): ScreeningPolicy {
   return {
     timeframe: "5m",
     minMarketCapUsd: 100_000,
@@ -61,11 +65,15 @@ function buildScreeningPolicy() {
     rejectDuplicatePoolExposure: true,
     rejectDuplicateTokenExposure: true,
     shortlistLimit: 5,
-  } as const;
+  };
 }
 
-function buildUserConfig(overrides: Partial<UserConfig> = {}): UserConfig {
-  return {
+type UserConfigOverrides = {
+  [K in keyof UserConfig]?: Partial<UserConfig[K]>;
+};
+
+function buildUserConfig(overrides: UserConfigOverrides = {}): UserConfig {
+  const base: UserConfig = {
     risk: {
       maxConcurrentPositions: 3,
       maxCapitalUsagePct: 70,
@@ -91,6 +99,11 @@ function buildUserConfig(overrides: Partial<UserConfig> = {}): UserConfig {
       blockedLaunchpads: [],
       intervalTimezone: "UTC",
       peakHours: [],
+      requireFreshSnapshot: true,
+      maxEstimatedSlippageBps: 300,
+      maxStrategySnapshotAgeMs: 120_000,
+      aiReviewPoolSize: 30,
+      enrichmentConcurrency: 10,
     },
     management: {
       stopLossUsd: 50,
@@ -103,6 +116,11 @@ function buildUserConfig(overrides: Partial<UserConfig> = {}): UserConfig {
     },
     ai: {
       mode: "disabled",
+      strategyReviewEnabled: false,
+      strategyReviewMode: "recommendation_only",
+      allowAiStrategyForDeploy: false,
+      minAiStrategyConfidence: 0.7,
+      walletRiskMode: "small",
     },
     deploy: {
       defaultAmountSol: 0.25,
@@ -114,6 +132,11 @@ function buildUserConfig(overrides: Partial<UserConfig> = {}): UserConfig {
       binsAbove: 0,
       slippageBps: 300,
       maxActiveBinDrift: 3,
+      maxBinsBelow: 120,
+      maxBinsAbove: 120,
+      maxSlippageBps: 300,
+      requireFreshSnapshot: true,
+      strategyFallbackMode: "config_static",
     },
     poolMemory: {
       snapshotsEnabled: false,
@@ -146,12 +169,27 @@ function buildUserConfig(overrides: Partial<UserConfig> = {}): UserConfig {
       logLevel: "info",
       operatorStdinEnabled: true,
     },
-    ...overrides,
+  };
+
+  return {
+    ...base,
+    risk: { ...base.risk, ...overrides.risk },
+    screening: { ...base.screening, ...overrides.screening },
+    management: { ...base.management, ...overrides.management },
+    ai: { ...base.ai, ...overrides.ai },
+    deploy: { ...base.deploy, ...overrides.deploy },
+    poolMemory: { ...base.poolMemory, ...overrides.poolMemory },
+    schedule: { ...base.schedule, ...overrides.schedule },
+    darwin: { ...base.darwin, ...overrides.darwin },
+    notifications: { ...base.notifications, ...overrides.notifications },
+    reporting: { ...base.reporting, ...overrides.reporting },
+    claim: { ...base.claim, ...overrides.claim },
+    runtime: { ...base.runtime, ...overrides.runtime },
   };
 }
 
 function buildCandidate(): Candidate {
-  return {
+  return CandidateSchema.parse({
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "ABC-SOL",
@@ -216,7 +254,7 @@ function buildCandidate(): Candidate {
     decision: "SHORTLISTED",
     decisionReason: "selected upstream",
     createdAt: now,
-  };
+  });
 }
 
 describe("runtime supervisor", () => {
@@ -230,75 +268,7 @@ describe("runtime supervisor", () => {
 
     const supervisor = createRuntimeSupervisorFromUserConfig({
       wallet: "wallet_001",
-      userConfig: {
-        risk: {
-          maxConcurrentPositions: 3,
-          maxCapitalUsagePct: 70,
-          minReserveUsd: 0.5,
-          maxTokenExposurePct: 35,
-          maxPoolExposurePct: 40,
-          maxRebalancesPerPosition: 2,
-          dailyLossLimitPct: 8,
-          circuitBreakerCooldownMin: 180,
-          maxNewDeploysPerHour: 2,
-        },
-        screening: {
-          timeframe: "5m",
-          minMarketCapUsd: 100_000,
-          maxMarketCapUsd: 10_000_000,
-          minTvlUsd: 10_000,
-          minVolumeUsd: 500,
-          minFeeActiveTvlRatio: 0.05,
-          minFeePerTvl24h: 0.01,
-          minOrganic: 60,
-          minHolderCount: 500,
-          allowedBinSteps: [80],
-          blockedLaunchpads: [],
-          intervalTimezone: "UTC",
-          peakHours: [],
-        },
-        management: {
-          stopLossUsd: 50,
-          maxHoldMinutes: 1440,
-          maxOutOfRangeMinutes: 240,
-          claimFeesThresholdUsd: 20,
-          partialCloseEnabled: false,
-          partialCloseProfitTargetUsd: 100,
-          rebalanceEnabled: true,
-        },
-        ai: {
-          mode: "disabled",
-        },
-        poolMemory: {
-          snapshotsEnabled: false,
-        },
-        schedule: {
-          screeningIntervalSec: 1800,
-          managementIntervalSec: 600,
-          reconciliationIntervalSec: 300,
-          reportingIntervalSec: 3600,
-        },
-        darwin: {
-          enabled: false,
-        },
-        notifications: {
-          telegramEnabled: false,
-        },
-        reporting: {
-          solMode: false,
-          briefingEmoji: false,
-        },
-        claim: {
-          autoSwapAfterClaim: false,
-          swapOutputMint: "So11111111111111111111111111111111111111112",
-          autoCompoundFees: false,
-          compoundToSide: "quote",
-        },
-        runtime: {
-          dryRun: true,
-          logLevel: "info",
-        },
-      },
+      userConfig: buildUserConfig(),
       stores,
       gateways: {
         dlmmGateway: new MockDlmmGateway({
@@ -441,93 +411,25 @@ describe("runtime supervisor", () => {
 
     const supervisor = createRuntimeSupervisorFromUserConfig({
       wallet: "wallet_001",
-      userConfig: {
-        risk: {
-          maxConcurrentPositions: 3,
-          maxCapitalUsagePct: 70,
-          minReserveUsd: 0.5,
-          maxTokenExposurePct: 35,
-          maxPoolExposurePct: 40,
-          maxRebalancesPerPosition: 2,
-          dailyLossLimitPct: 8,
-          circuitBreakerCooldownMin: 180,
-          maxNewDeploysPerHour: 2,
-        },
-        screening: {
-          timeframe: "5m",
-          minMarketCapUsd: 100_000,
-          maxMarketCapUsd: 10_000_000,
-          minTvlUsd: 10_000,
-          minVolumeUsd: 500,
-          minFeeActiveTvlRatio: 0.05,
-          minFeePerTvl24h: 0.01,
-          minOrganic: 60,
-          minHolderCount: 500,
-          allowedBinSteps: [80],
-          blockedLaunchpads: [],
-          intervalTimezone: "UTC",
-          peakHours: [],
-        },
-        management: {
-          stopLossUsd: 50,
-          maxHoldMinutes: 1440,
-          maxOutOfRangeMinutes: 240,
-          claimFeesThresholdUsd: 20,
-          partialCloseEnabled: false,
-          partialCloseProfitTargetUsd: 100,
-          rebalanceEnabled: true,
-        },
-        ai: {
-          mode: "disabled",
-        },
-        poolMemory: {
-          snapshotsEnabled: false,
-        },
-        schedule: {
-          screeningIntervalSec: 1800,
-          managementIntervalSec: 600,
-          reconciliationIntervalSec: 300,
-          reportingIntervalSec: 3600,
-        },
-        darwin: {
-          enabled: false,
-        },
-        notifications: {
-          telegramEnabled: false,
-        },
-        reporting: {
-          solMode: false,
-          briefingEmoji: false,
-        },
-        claim: {
-          autoSwapAfterClaim: false,
-          swapOutputMint: "So11111111111111111111111111111111111111112",
-          autoCompoundFees: false,
-          compoundToSide: "quote",
-        },
-        runtime: {
-          dryRun: true,
-          logLevel: "info",
-        },
-      },
+      userConfig: buildUserConfig(),
       stores,
       gateways: {
         dlmmGateway: new MockDlmmGateway({
           getPosition: { type: "success", value: null },
           deployLiquidity: {
-            type: "error",
+            type: "fail",
             error: new Error("deploy should not run in dry run"),
           },
           closePosition: {
-            type: "error",
+            type: "fail",
             error: new Error("close should not run in dry run"),
           },
           claimFees: {
-            type: "error",
+            type: "fail",
             error: new Error("claim should not run in dry run"),
           },
           partialClosePosition: {
-            type: "error",
+            type: "fail",
             error: new Error("partial close should not run in dry run"),
           },
           listPositionsForWallet: {
@@ -726,11 +628,16 @@ describe("runtime supervisor", () => {
       now: () => "2026-04-22T10:00:00.000Z",
     });
 
-    await supervisor.runScreeningTick("manual");
+    await supervisor.runScreeningTick("manual", 45);
 
     const queuedActions = await stores.actionRepository.listByStatuses([
       "QUEUED",
     ]);
+    const screeningWorker =
+      await stores.schedulerMetadataStore.get("screening");
+
+    expect(screeningWorker.intervalSec).toBe(45);
+    expect(screeningWorker.nextDueAt).toBe("2026-04-22T10:00:45.000Z");
     expect(queuedActions).toHaveLength(1);
     expect(queuedActions[0]?.type).toBe("DEPLOY");
     expect(queuedActions[0]?.requestedBy).toBe("system");
@@ -811,7 +718,7 @@ describe("runtime supervisor", () => {
         dlmmGateway: new MockDlmmGateway({
           getPosition: { type: "success", value: null },
           deployLiquidity: {
-            type: "error",
+            type: "fail",
             error: new Error("deploy should not run when risk guard blocks"),
           },
           closePosition: {
@@ -947,7 +854,7 @@ describe("runtime supervisor", () => {
         dlmmGateway: new MockDlmmGateway({
           getPosition: { type: "success", value: null },
           deployLiquidity: {
-            type: "error",
+            type: "fail",
             error: new Error("deploy should not run during screening dry-run"),
           },
           closePosition: {
@@ -1124,7 +1031,7 @@ describe("runtime supervisor", () => {
         dlmmGateway: new MockDlmmGateway({
           getPosition: { type: "success", value: null },
           deployLiquidity: {
-            type: "error",
+            type: "fail",
             error: new Error("deploy should not run during dry-run"),
           },
           closePosition: {
@@ -1311,7 +1218,7 @@ describe("runtime supervisor", () => {
         dlmmGateway: new MockDlmmGateway({
           getPosition: { type: "success", value: null },
           deployLiquidity: {
-            type: "error",
+            type: "fail",
             error: new Error("deploy should not run during screening"),
           },
           closePosition: {

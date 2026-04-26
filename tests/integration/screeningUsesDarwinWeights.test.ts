@@ -12,7 +12,10 @@ import {
   buildDlmmMicrostructureSnapshot,
   buildMarketFeatureSnapshot,
 } from "../../src/domain/rules/poolFeatureRules.js";
-import { screenAndScoreCandidates } from "../../src/domain/rules/screeningRules.js";
+import {
+  screenAndScoreCandidates,
+  type ScreeningPolicy,
+} from "../../src/domain/rules/screeningRules.js";
 import { type ScreeningCandidateInput } from "../../src/domain/scoring/candidateScore.js";
 
 const tempDirs: string[] = [];
@@ -61,7 +64,7 @@ const screeningPolicy = {
   rejectDuplicatePoolExposure: true,
   rejectDuplicateTokenExposure: true,
   shortlistLimit: 2,
-} as const;
+} satisfies ScreeningPolicy;
 
 const scoringPolicy = {
   targetFeeToTvlRatio: 0.1,

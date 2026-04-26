@@ -611,7 +611,7 @@ describe("reconciliation worker", () => {
       stateRepository,
       dlmmGateway: buildGateway({
         getPosition: {
-          type: "error",
+          type: "fail",
           error: new Error("dry-run recovery should not query confirmation"),
         },
         listPositionsForWallet: {

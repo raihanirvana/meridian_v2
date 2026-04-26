@@ -9,14 +9,20 @@ const {
   keypairFromSecretKeyMock,
   getParsedAccountInfoMock,
 } = vi.hoisted(() => ({
-  sendAndConfirmTransactionMock: vi.fn(async () => "tx_001"),
-  simulateTransactionMock: vi.fn(async () => ({
-    value: {
-      err: null,
-      logs: [],
-    },
-  })),
-  getParsedTransactionMock: vi.fn(async () => null),
+  sendAndConfirmTransactionMock: vi.fn(
+    async (..._args: unknown[]): Promise<string> => "tx_001",
+  ),
+  simulateTransactionMock: vi.fn(
+    async (..._args: unknown[]): Promise<unknown> => ({
+      value: {
+        err: null,
+        logs: [],
+      },
+    }),
+  ),
+  getParsedTransactionMock: vi.fn(
+    async (..._args: unknown[]): Promise<unknown> => null,
+  ),
   poolCreateMock: vi.fn(),
   getAllLbPairPositionsByUserMock: vi.fn(),
   keypairFromSecretKeyMock: vi.fn(() => ({
@@ -24,17 +30,19 @@ const {
       toBase58: () => "wallet_001",
     },
   })),
-  getParsedAccountInfoMock: vi.fn(async () => ({
-    value: {
-      data: {
-        parsed: {
-          info: {
-            decimals: 9,
+  getParsedAccountInfoMock: vi.fn(
+    async (..._args: unknown[]): Promise<unknown> => ({
+      value: {
+        data: {
+          parsed: {
+            info: {
+              decimals: 9,
+            },
           },
         },
       },
-    },
-  })),
+    }),
+  ),
 }));
 
 vi.mock("@solana/web3.js", () => ({

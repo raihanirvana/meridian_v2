@@ -108,6 +108,7 @@ export interface RuntimeSupervisor {
   runStartupRecovery(): ReturnType<typeof runStartupRecoveryChecklist>;
   runScreeningTick(
     triggerSource?: "cron" | "manual" | "startup",
+    intervalSecOverride?: number,
   ): Promise<RunScreeningCycleResult | null>;
   runActionQueueTick(): Promise<Action[]>;
   runReconciliationTick(
@@ -1025,7 +1026,7 @@ export function createRuntimeSupervisor(
       });
     },
 
-    async runScreeningTick(triggerSource = "cron") {
+    async runScreeningTick(triggerSource = "cron", intervalSecOverride) {
       if (input.gateways.screeningGateway === undefined) {
         return null;
       }
@@ -1057,7 +1058,8 @@ export function createRuntimeSupervisor(
         poolMemoryRepository: input.stores.poolMemoryRepository,
         enrichmentConcurrency: input.config.screening.enrichmentConcurrency,
         schedulerMetadataStore: input.stores.schedulerMetadataStore,
-        intervalSec: input.config.schedule.screeningIntervalSec,
+        intervalSec:
+          intervalSecOverride ?? input.config.schedule.screeningIntervalSec,
         triggerSource,
         ...(input.now === undefined ? {} : { now: input.now }),
       });

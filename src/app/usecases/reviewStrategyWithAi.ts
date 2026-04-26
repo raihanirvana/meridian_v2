@@ -173,6 +173,28 @@ function enforceLowConfidencePolicy(input: {
   });
 }
 
+function enforceStrategyReviewSafety(input: {
+  review: StrategyReviewResult;
+  minConfidence: number;
+}): StrategyReviewResult {
+  let review = input.review;
+
+  if (review.decision === "deploy" && review.riskLevel === "high") {
+    review = StrategyReviewResultSchema.parse({
+      ...review,
+      decision: "reject",
+      recommendedStrategy: "none",
+      reasons: [...review.reasons, "rejected_because_risk_level_high"],
+      rejectIf: [...review.rejectIf, "risk_level_high"],
+    });
+  }
+
+  return enforceLowConfidencePolicy({
+    review,
+    minConfidence: input.minConfidence,
+  });
+}
+
 function buildSystemPrompt(lessonsPrompt: string | null): string {
   const lines = [
     "You are an AI strategy reviewer for Meteora DLMM candidates.",
@@ -366,7 +388,9 @@ export async function reviewStrategyWithAi(
       reviewedAt,
       reviews: candidates
         .map((candidate) =>
-          reviews.find((review) => review.candidateId === candidate.candidateId),
+          reviews.find(
+            (review) => review.candidateId === candidate.candidateId,
+          ),
         )
         .filter(
           (review): review is StrategyReviewWithAiItem => review !== undefined,
@@ -418,7 +442,7 @@ export async function reviewStrategyWithAi(
             candidateId: candidate.candidateId,
             poolAddress: candidate.poolAddress,
             source: "AI",
-            review: enforceLowConfidencePolicy({
+            review: enforceStrategyReviewSafety({
               review: StrategyReviewResultSchema.parse(aiReview),
               minConfidence,
             }),
@@ -501,7 +525,7 @@ export async function reviewStrategyWithAi(
         candidateId: candidate.candidateId,
         poolAddress: candidate.poolAddress,
         source: "AI",
-        review: enforceLowConfidencePolicy({
+        review: enforceStrategyReviewSafety({
           review: aiReview,
           minConfidence,
         }),

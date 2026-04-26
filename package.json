@@ -15,6 +15,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck:all": "tsc -p tsconfig.typecheck.json",
     "live": "npm run build && node dist/runtime/runLive.js",
     "backfill:lessons": "node scripts/backfillPerformanceLessons.js",
     "postinstall": "node scripts/patch-anchor.js",

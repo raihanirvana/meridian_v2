@@ -5,7 +5,7 @@ import { HttpTelegramNotifierGateway } from "../../src/adapters/telegram/HttpTel
 
 describe("http telegram notifier gateway", () => {
   it("sends sendMessage to Telegram bot API", async () => {
-    const fetchFn = vi.fn(
+    const fetchFn = vi.fn<typeof fetch>(
       async () =>
         new Response(
           JSON.stringify({
@@ -53,7 +53,7 @@ describe("http telegram notifier gateway", () => {
   });
 
   it("formats sendAlert as title plus body", async () => {
-    const fetchFn = vi.fn(
+    const fetchFn = vi.fn<typeof fetch>(
       async () =>
         new Response(
           JSON.stringify({
