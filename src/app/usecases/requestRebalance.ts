@@ -4,6 +4,11 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Position } from "../../domain/entities/Position.js";
+import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
+import {
+  evaluatePortfolioRisk,
+  type PortfolioRiskPolicy,
+} from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
@@ -33,6 +38,11 @@ export interface RequestRebalanceInput {
   idempotencyKey?: string;
   journalRepository?: JournalRepository;
   runtimeControlStore?: RuntimeControlStore;
+  riskGuard?: {
+    portfolio: PortfolioState;
+    policy: PortfolioRiskPolicy;
+    solPriceUsd?: number;
+  };
 }
 
 const REBALANCE_REQUESTABLE_STATUSES = new Set<Position["status"]>([
@@ -97,6 +107,50 @@ export async function requestRebalance(input: RequestRebalanceInput) {
     throw new Error(
       "manual circuit breaker is active; rebalance requests are blocked",
     );
+  }
+
+  if (input.riskGuard !== undefined) {
+    const riskResult = evaluatePortfolioRisk({
+      action: "REBALANCE",
+      portfolio: input.riskGuard.portfolio,
+      policy: input.riskGuard.policy,
+      proposedAllocationUsd: payload.redeploy.estimatedValueUsd,
+      proposedPoolAddress: payload.redeploy.poolAddress,
+      proposedTokenMints: [
+        ...new Set([payload.redeploy.tokenXMint, payload.redeploy.tokenYMint]),
+      ],
+      recentNewDeploys: 0,
+      position,
+      ...(input.riskGuard.solPriceUsd === undefined
+        ? {}
+        : { solPriceUsd: input.riskGuard.solPriceUsd }),
+    });
+
+    if (!riskResult.allowed) {
+      if (input.journalRepository !== undefined) {
+        await input.journalRepository.append({
+          timestamp: journalTimestamp,
+          eventType: "REBALANCE_REQUEST_BLOCKED_BY_RISK",
+          actor: input.requestedBy,
+          wallet: input.wallet,
+          positionId: input.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            requestPayload: payload,
+            riskDecision: riskResult.decision,
+            blockingRules: riskResult.blockingRules,
+            projectedExposureByPool: riskResult.projectedExposureByPool,
+            projectedExposureByToken: riskResult.projectedExposureByToken,
+          },
+          txIds: [],
+          resultStatus: "BLOCKED",
+          error: riskResult.reason,
+        });
+      }
+
+      throw new Error(`rebalance blocked by risk guard: ${riskResult.reason}`);
+    }
   }
 
   const idempotencyKey =

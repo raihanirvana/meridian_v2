@@ -135,11 +135,14 @@ export type PortfolioRiskEvaluationResult = z.infer<
   typeof PortfolioRiskEvaluationResultSchema
 >;
 
-const RISK_REDUCING_ACTIONS = new Set<PortfolioRiskAction>([
-  "CLOSE",
-  "CLAIM_FEES",
-  "PARTIAL_CLOSE",
+const RISK_REDUCING_NON_WRITE_ACTIONS = new Set<PortfolioRiskAction>([
   "RECONCILE_ONLY",
+]);
+
+const RISK_REDUCING_WRITE_ACTIONS = new Set<PortfolioRiskAction>([
+  "CLAIM_FEES",
+  "CLOSE",
+  "PARTIAL_CLOSE",
 ]);
 
 function uniqueTokenMints(tokenMints: string[]): string[] {
@@ -470,13 +473,33 @@ export function evaluatePortfolioRisk(
 
   const blockingRules: string[] = [];
 
-  if (RISK_REDUCING_ACTIONS.has(input.action)) {
+  if (RISK_REDUCING_NON_WRITE_ACTIONS.has(input.action)) {
     return PortfolioRiskEvaluationResultSchema.parse({
       action: input.action,
       allowed: true,
       decision: "ALLOW",
       reason:
-        "Risk-reducing action remains allowed under global portfolio guardrails",
+        "Risk-reducing non-write action remains allowed under global portfolio guardrails",
+      blockingRules,
+      state,
+      projectedExposureByToken,
+      projectedExposureByPool,
+    });
+  }
+
+  if (input.portfolio.pendingActions >= 1) {
+    blockingRules.push("wallet already has an active write action");
+  }
+
+  if (RISK_REDUCING_WRITE_ACTIONS.has(input.action)) {
+    const allowed = blockingRules.length === 0;
+    return PortfolioRiskEvaluationResultSchema.parse({
+      action: input.action,
+      allowed,
+      decision: allowed ? "ALLOW" : "BLOCK",
+      reason: allowed
+        ? "Risk-reducing write action is allowed because no active write action is pending"
+        : (blockingRules[0] ?? "Portfolio write guardrail blocked this action"),
       blockingRules,
       state,
       projectedExposureByToken,
@@ -511,10 +534,6 @@ export function evaluatePortfolioRisk(
     blockingRules.push(
       `daily realized loss reached ${state.dailyLossSol.toFixed(4)} SOL`,
     );
-  }
-
-  if (input.portfolio.pendingActions >= 1) {
-    blockingRules.push("wallet already has an active write action");
   }
 
   if (

@@ -339,7 +339,7 @@ describe("operator commands", () => {
     expect(actions[0]?.requestedBy).toBe("operator");
   });
 
-  it("manual deploy and rebalance requests enqueue work instead of bypassing the queue", async () => {
+  it("manual deploy requests enqueue work instead of bypassing the queue", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
       filePath: path.join(directory, "positions.json"),
@@ -394,22 +394,70 @@ describe("operator commands", () => {
     });
     expect(deployResult.command).toBe("REQUEST_DEPLOY");
 
-    const rebalanceResult = await handleCliOperatorCommand({
-      ...baseInput,
+    const actions = await actionRepository.list();
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.type).toBe("DEPLOY");
+    expect(actions.every((action) => action.status === "QUEUED")).toBe(true);
+  });
+
+  it("manual rebalance requests pass through portfolio risk guard before queueing", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition());
+
+    const result = await handleCliOperatorCommand({
       rawCommand: `rebalance pos_001 ${JSON.stringify({
         reason: "operator rebalance",
         redeploy: buildDeployPayload(),
       })}`,
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:00:00.000Z",
     });
-    expect(rebalanceResult.command).toBe("REQUEST_REBALANCE");
 
+    expect(result.command).toBe("REQUEST_REBALANCE");
     const actions = await actionRepository.list();
-    expect(actions).toHaveLength(2);
-    expect(actions.map((action) => action.type).sort()).toEqual([
-      "DEPLOY",
-      "REBALANCE",
-    ]);
-    expect(actions.every((action) => action.status === "QUEUED")).toBe(true);
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.type).toBe("REBALANCE");
+    expect(actions[0]?.status).toBe("QUEUED");
   });
 
   it("blocks manual deploy requests that violate portfolio risk guardrails", async () => {
@@ -468,6 +516,73 @@ describe("operator commands", () => {
     expect(
       (await journalRepository.list()).map((event) => event.eventType),
     ).toContain("DEPLOY_REQUEST_BLOCKED_BY_RISK");
+  });
+
+  it("blocks manual rebalance requests that violate portfolio risk guardrails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(
+      buildPosition({
+        rebalanceCount: 2,
+      }),
+    );
+
+    await expect(
+      handleCliOperatorCommand({
+        rawCommand: `rebalance pos_001 ${JSON.stringify({
+          reason: "operator rebalance",
+          redeploy: buildDeployPayload(),
+        })}`,
+        wallet: "wallet_001",
+        actionQueue,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 5,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        riskPolicy: buildRiskPolicy({
+          maxRebalancesPerPosition: 2,
+        }),
+        requestedBy: "operator",
+        requestedAt: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toThrow(/rebalance blocked by risk guard/i);
+
+    expect(await actionRepository.list()).toEqual([]);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("REBALANCE_REQUEST_BLOCKED_BY_RISK");
   });
 
   it("telegram handler replies with the rendered result after queue-safe execution", async () => {

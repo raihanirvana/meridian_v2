@@ -16,6 +16,21 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 
 ## Deferred
 
+- `N72` Telegram operator polling offset masih in-memory di `runLive.ts`
+  Status: deferred
+  Kenapa ditunda: action-queue commands sudah punya idempotency key, tetapi mutable operator commands seperti `policy reset`, `lessons add/remove`, dan `pool cooldown` bisa diproses ulang setelah restart bila Telegram backlog mengirim update lama. Ini bukan core trading path, tetapi perlu runtime persistence untuk operator UX yang benar-benar production-grade.
+  Revisit: sebelum Telegram inbound command dipakai sebagai control plane utama; simpan `lastTelegramUpdateId` di runtime control atau scheduler metadata store.
+
+- `N73` LLM timeout belum meng-abort underlying HTTP request
+  Status: deferred
+  Kenapa ditunda: service sudah tidak menunggu LLM setelah timeout dan fallback deterministic tetap aman, tetapi live HTTP request bisa tetap berjalan di background karena `LlmGateway` belum menerima `AbortSignal`.
+  Revisit: sebelum AI mode dipakai intensif live; tambahkan `options?: { signal?: AbortSignal }` ke `LlmGateway` + `JsonHttpClient.request()`.
+
+- `N74` scheduler metadata belum enforce `nextDueAt` untuk trigger `cron`
+  Status: deferred
+  Kenapa ditunda: runtime loop saat ini tetap menjadi pemilik cadence interval, sementara metadata store mencegah overlap dan menyimpan `nextDueAt` untuk reporting. Ini cukup untuk single-runtime supervisor, tetapi belum menjadi due-time gate yang mandiri.
+  Revisit: jika worker mulai dipanggil dari beberapa cron eksternal/manual surface; tambah skip `SKIPPED_NOT_DUE` untuk `triggerSource="cron"`.
+
 - `N71` Batch 25 AI rebalance pool snapshot sudah memakai metadata entry + fresh pool active-bin, tetapi belum enrichment market pool live penuh
   Status: deferred
   Kenapa ditunda: planner/validator/queue boundary sudah tersedia, dan snapshot AI sekarang tidak lagi memakai value posisi sebagai TVL pool serta memakai `getPoolInfo()` untuk fresh active bin. Namun `runManagementCycle()` masih belum punya feed live penuh untuk fee velocity, trend direction/mean reversion real-time, dan depth rich snapshot setelah posisi berjalan.
@@ -331,6 +346,14 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 
 ## Design Decisions
 
+- Batch 13+ memisahkan `screeningWorker` sebagai producer shortlist dan `runtime supervisor` sebagai owner autonomous deploy orchestration
+  Rationale: `runScreeningCycle()` tetap read/scoring/report oriented dan tidak langsung membuat action deploy. Saat `deploy.autoDeployFromShortlist=true`, supervisor membaca shortlist result lalu memanggil `requestDeploy()` resmi dengan risk guard, active-bin/range builder, dry-run boundary, dan queue idempotency.
+  Tradeoff: PRD literal “screening worker menghasilkan request deploy” dipenuhi secara end-to-end runtime, bukan seluruhnya di file `screeningWorker.ts`. Ini menjaga worker tetap mudah dites dan mencegah deploy side-effect tersembunyi dari screening usecase.
+
+- Management worker boleh melakukan metadata/state-observability writes selama tidak bypass action queue untuk trading lifecycle
+  Rationale: refresh `peakPnlPct` dan `recordPoolSnapshot()` adalah telemetry/metadata state yang dibutuhkan agar trailing TP, lesson, dan pool memory survive restart. Trading writes (`DEPLOY`, `CLOSE`, `CLAIM_FEES`, `REBALANCE`) tetap harus lewat request/action queue/finalizer path.
+  Tradeoff: interpretasi PRD “worker jangan direct write” tidak dibaca sebagai “no state metadata writes at all”. Mutation ini harus tetap kecil, idempotent, dan tidak mengirim transaksi on-chain.
+
 - Batch 21 memilih `claim succeeded, compound failed` sebagai outcome yang sah; kegagalan swap/enqueue deploy tidak membatalkan finalisasi claim yang sudah confirmed on-chain
   Rationale: setelah claim on-chain confirmed, mencoba memaksa seluruh action menjadi `FAILED` justru mengaburkan fakta bahwa fee sebenarnya sudah berhasil diklaim. V2 lebih memilih claim ditutup `DONE` dengan metadata compound `FAILED` atau `MANUAL_REVIEW_REQUIRED`, lalu follow-up compound ditangani terpisah.
   Tradeoff: operator harus membaca result payload/journal untuk tahu bahwa claim selesai tetapi compound tidak ikut selesai, karena status action induk sendiri tetap `DONE`.
@@ -538,6 +561,8 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `F38` native Meteora gateway sekarang fail-fast bila `PUBLIC_WALLET_ADDRESS` tidak cocok dengan public key hasil decode `WALLET_PRIVATE_KEY`, sehingga dry-run/live tidak bisa diam-diam berjalan memakai signer wallet yang berbeda di [MeteoraSdkDlmmGateway.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/dlmm/MeteoraSdkDlmmGateway.ts:1).
 - `F39` reconciliation snapshot sekarang menyinkronkan posisi lokal `OPEN` / `HOLD` / `MANAGEMENT_REVIEW` dari live DLMM wallet snapshot sebelum management membaca state, sehingga PnL/range/bin tidak stale saat posisi sudah ada on-chain di [reconcilePortfolio.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/reconcilePortfolio.ts:1).
 - `F40` autonomous deploy dari screening shortlist sekarang tersedia lewat `deploy.autoDeployFromShortlist`; runtime hanya meng-enqueue `DEPLOY` resmi via `requestDeploy()` setelah shortlist lolos, active bin/range di-resolve dari DLMM gateway, pending action/risk/circuit-breaker guard dicek, dan `runtime.dryRun=true` hanya mencatat rencana tanpa enqueue di [createRuntimeSupervisor.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/createRuntimeSupervisor.ts:1).
+- `F41` manual/operator rebalance sekarang melewati full portfolio risk guard sebelum enqueue; `requestRebalance()` bisa menerima `riskGuard`, menulis `REBALANCE_REQUEST_BLOCKED_BY_RISK`, dan memblok max capital usage, exposure, pending action, daily loss/circuit breaker, serta max rebalance count.
+- `F42` risk-reducing write actions (`CLOSE`, `CLAIM_FEES`, `PARTIAL_CLOSE`) sekarang tetap kena global pending write guard; hanya `RECONCILE_ONLY` yang benar-benar bypass sebagai non-write action.
 - `F41` screening live sekarang punya adapter native Meteora Pool Discovery; bila `SCREENING_API_BASE_URL` kosong, `runLive.ts` memakai `https://pool-discovery-api.datapi.meteora.ag` langsung, membawa `timeframe` ke query, memetakan pool discovery ke candidate V2, lalu tetap melewatkan semua keputusan ke hard-filter/scoring engine di [MeteoraPoolDiscoveryScreeningGateway.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.ts:1) dan [runLive.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1).
 
 ## Next Review Gate

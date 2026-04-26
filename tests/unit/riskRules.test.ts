@@ -122,6 +122,62 @@ describe("risk rules", () => {
     expect(reconcileResult.allowed).toBe(true);
   });
 
+  it("blocks risk-reducing write actions while another write action is pending", () => {
+    const portfolio = buildPortfolio({
+      pendingActions: 1,
+      circuitBreakerState: "ON",
+      dailyRealizedPnl: -5,
+    });
+    const policy = buildPolicy({
+      dailyLossLimitPct: 10,
+    });
+
+    const closeResult = evaluatePortfolioRisk({
+      action: "CLOSE",
+      portfolio,
+      policy,
+    });
+    const claimResult = evaluatePortfolioRisk({
+      action: "CLAIM_FEES",
+      portfolio,
+      policy,
+    });
+    const partialCloseResult = evaluatePortfolioRisk({
+      action: "PARTIAL_CLOSE",
+      portfolio,
+      policy,
+    });
+    const reconcileResult = evaluatePortfolioRisk({
+      action: "RECONCILE_ONLY",
+      portfolio,
+      policy,
+    });
+
+    expect(closeResult.allowed).toBe(false);
+    expect(claimResult.allowed).toBe(false);
+    expect(partialCloseResult.allowed).toBe(false);
+    expect(closeResult.blockingRules).toContain(
+      "wallet already has an active write action",
+    );
+    expect(reconcileResult.allowed).toBe(true);
+  });
+
+  it("allows risk-reducing write actions through circuit breaker when no write action is pending", () => {
+    const result = evaluatePortfolioRisk({
+      action: "CLAIM_FEES",
+      portfolio: buildPortfolio({
+        circuitBreakerState: "ON",
+        dailyRealizedPnl: -5,
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 10,
+      }),
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.blockingRules).toEqual([]);
+  });
+
   it("blocks deploy when projected pool exposure exceeds the maximum", () => {
     const result = evaluatePortfolioRisk({
       action: "DEPLOY",

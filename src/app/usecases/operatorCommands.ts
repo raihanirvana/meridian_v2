@@ -709,6 +709,22 @@ export async function executeOperatorCommand(
           "manual circuit breaker is active; rebalance requests are blocked",
         );
       }
+      const [portfolio, solPriceQuote] = await Promise.all([
+        buildPortfolioState({
+          wallet: input.wallet,
+          minReserveUsd: input.riskPolicy.minReserveUsd,
+          dailyLossLimitPct: input.riskPolicy.dailyLossLimitPct,
+          circuitBreakerCooldownMin: input.riskPolicy.circuitBreakerCooldownMin,
+          stateRepository: input.stateRepository,
+          actionRepository: input.actionRepository,
+          journalRepository: input.journalRepository,
+          walletGateway: input.walletGateway,
+          priceGateway: input.priceGateway,
+          previousPortfolioState: input.previousPortfolioState ?? null,
+          now: requestedAt,
+        }),
+        input.priceGateway.getSolPriceUsd(),
+      ]);
       const action = await requestRebalance({
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
@@ -719,6 +735,11 @@ export async function executeOperatorCommand(
         requestedAt,
         journalRepository: input.journalRepository,
         ...(runtimeControlStore === undefined ? {} : { runtimeControlStore }),
+        riskGuard: {
+          portfolio,
+          policy: input.riskPolicy,
+          solPriceUsd: solPriceQuote.priceUsd,
+        },
       });
 
       return {

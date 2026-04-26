@@ -755,4 +755,8 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - screening exposure reject mempertahankan hard-filter reasons lain; pool cooldown sekarang muncul sebagai `REJECTED_COOLDOWN`, bukan hilang diam-diam dari `result.candidates`
   - `launchpadPenaltyByName[""]` tidak lagi berlaku untuk kandidat `launchpad=null`
   - rebalance redeploy leg sekarang punya `REDEPLOY_SUBMITTING` intent marker, ambiguous redeploy submit recovery, dan validation eksplisit bahwa confirmed redeploy position cocok dengan wallet/pool/token request
-- `npm test` terakhir hijau dengan total `348` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 12-15 hardening follow-up sekarang masuk:
+  - manual/operator rebalance tidak lagi bypass risk engine; `requestRebalance()` mendukung `riskGuard` dan operator command membangun portfolio snapshot + SOL price sebelum enqueue
+  - risk-reducing write action (`CLOSE`, `CLAIM_FEES`, `PARTIAL_CLOSE`) tetap boleh melewati circuit/daily-loss blocker, tetapi tidak boleh berjalan bila wallet sudah punya active write action
+  - ownership screening/autodeploy dan worker metadata writes dicatat sebagai design decision eksplisit agar audit berikutnya membedakan queue bypass vs telemetry write
+- `npm test` terakhir hijau dengan total `352` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
