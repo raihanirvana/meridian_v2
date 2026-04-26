@@ -114,7 +114,9 @@ export function buildPerformanceRecordFromClosedPosition(input: {
   const rawMinutesInRange = input.minutesInRange ?? minutesHeld;
   const minutesInRange = clamp(Math.floor(rawMinutesInRange), 0, minutesHeld);
   const rangeEfficiencyPct =
-    minutesHeld === 0 ? 100 : clamp((minutesInRange / minutesHeld) * 100, 0, 100);
+    minutesHeld === 0
+      ? 100
+      : clamp((minutesInRange / minutesHeld) * 100, 0, 100);
   const pnlPct = (input.pnlUsd / initialValueUsd) * 100;
   const entryMetadata = input.position.entryMetadata ?? {};
   const deployedAt = input.position.openedAt ?? input.closedAction.requestedAt;

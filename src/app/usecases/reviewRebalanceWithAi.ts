@@ -144,8 +144,8 @@ export async function reviewRebalanceWithAi(
     source = "DETERMINISTIC";
   } else {
     try {
-      const lessonsPrompt =
-        await input.lessonPromptService?.buildLessonsPrompt({
+      const lessonsPrompt = await input.lessonPromptService?.buildLessonsPrompt(
+        {
           role: "MANAGER",
           includePoolMemory: {
             candidates: [
@@ -154,7 +154,8 @@ export async function reviewRebalanceWithAi(
               },
             ],
           },
-        });
+        },
+      );
       if (input.lessonPromptService === undefined) {
         throw new Error("LessonPromptService is required for AI rebalance");
       }

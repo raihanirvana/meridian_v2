@@ -10,9 +10,7 @@ import {
   type PositionEntryMetadata,
 } from "../../domain/entities/Position.js";
 import { createUlid } from "../../infra/id/createUlid.js";
-import {
-  buildPerformanceRecordFromClosedPosition,
-} from "../../domain/rules/performanceRecordRules.js";
+import { buildPerformanceRecordFromClosedPosition } from "../../domain/rules/performanceRecordRules.js";
 import type { Action } from "../../domain/entities/Action.js";
 
 import { recordPositionPerformance } from "../usecases/recordPositionPerformance.js";
@@ -153,9 +151,7 @@ export function buildPerformanceRecordFromClose(input: {
   });
 
   if (result.skipped) {
-    throw new Error(
-      `Performance record build skipped: ${result.reason}`,
-    );
+    throw new Error(`Performance record build skipped: ${result.reason}`);
   }
 
   return result.record;
@@ -190,14 +186,18 @@ export function createRecordPositionPerformanceLessonHook(
       pnlPct:
         snapshotPosition.currentValueUsd <= 0
           ? 0
-          : (snapshotPosition.realizedPnlUsd / snapshotPosition.currentValueUsd) *
+          : (snapshotPosition.realizedPnlUsd /
+              snapshotPosition.currentValueUsd) *
             100,
       minutesHeld: diffMinutes(
         snapshotPosition.openedAt,
         hookInput.position.closedAt ?? hookInput.now,
       ),
       minutesInRange: Math.max(
-        diffMinutes(snapshotPosition.openedAt, hookInput.position.closedAt ?? hookInput.now) -
+        diffMinutes(
+          snapshotPosition.openedAt,
+          hookInput.position.closedAt ?? hookInput.now,
+        ) -
           diffMinutes(
             snapshotPosition.outOfRangeSince,
             hookInput.position.closedAt ?? hookInput.now,

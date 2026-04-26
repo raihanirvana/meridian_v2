@@ -755,17 +755,18 @@ export function createRuntimeSupervisor(
             : requestedStrategyMode;
         const shouldPreQueueSimulate =
           strategyMode === "guarded_auto" || strategyMode === "dry_run_payload";
-        const strategyValidationPolicy: Partial<StrategyDecisionValidationPolicy> = {
-          minCandidateScore: 55,
-          minAiStrategyConfidence: input.config.ai.minAiStrategyConfidence,
-          allowedStrategies: ["spot", "curve", "bid_ask"],
-          maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
-          maxBinsBelow: input.config.deploy.maxBinsBelow,
-          maxBinsAbove: input.config.deploy.maxBinsAbove,
-          maxSlippageBps: input.config.deploy.maxSlippageBps,
-          requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
-          strategyFallbackMode: input.config.deploy.strategyFallbackMode,
-        };
+        const strategyValidationPolicy: Partial<StrategyDecisionValidationPolicy> =
+          {
+            minCandidateScore: 55,
+            minAiStrategyConfidence: input.config.ai.minAiStrategyConfidence,
+            allowedStrategies: ["spot", "curve", "bid_ask"],
+            maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
+            maxBinsBelow: input.config.deploy.maxBinsBelow,
+            maxBinsAbove: input.config.deploy.maxBinsAbove,
+            maxSlippageBps: input.config.deploy.maxSlippageBps,
+            requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
+            strategyFallbackMode: input.config.deploy.strategyFallbackMode,
+          };
         const configStrategy = {
           strategy: input.config.deploy.strategy,
           binsBelow: input.config.deploy.binsBelow,
@@ -779,7 +780,9 @@ export function createRuntimeSupervisor(
           configStrategy,
           policy: strategyValidationPolicy,
           simulationPassed: true,
-          ...(shouldPreQueueSimulate ? { freshActiveBin: poolInfo.activeBin } : {}),
+          ...(shouldPreQueueSimulate
+            ? { freshActiveBin: poolInfo.activeBin }
+            : {}),
         });
         const simulation =
           shouldPreQueueSimulate && !tentativeStrategyDecision.rejected

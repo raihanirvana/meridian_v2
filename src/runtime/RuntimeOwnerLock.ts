@@ -168,9 +168,9 @@ export async function acquireRuntimeOwnerLock(input: {
     lockFilePath,
     ownerId,
     async heartbeat() {
-      const existingRaw = await fs.readFile(lockFilePath, "utf8").catch(
-        () => null,
-      );
+      const existingRaw = await fs
+        .readFile(lockFilePath, "utf8")
+        .catch(() => null);
       const existingRecord =
         existingRaw === null ? null : parseLockRecord(existingRaw);
       if (existingRecord?.ownerId !== ownerId) {
@@ -191,9 +191,9 @@ export async function acquireRuntimeOwnerLock(input: {
       });
     },
     async release() {
-      const existingRaw = await fs.readFile(lockFilePath, "utf8").catch(
-        () => null,
-      );
+      const existingRaw = await fs
+        .readFile(lockFilePath, "utf8")
+        .catch(() => null);
       const existingRecord =
         existingRaw === null ? null : parseLockRecord(existingRaw);
       if (existingRecord?.ownerId === ownerId) {

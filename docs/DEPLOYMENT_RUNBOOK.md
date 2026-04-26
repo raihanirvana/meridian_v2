@@ -6,8 +6,9 @@ This runbook explains how to boot `meridian_v2` in supervised runtime mode using
 
 This repo is ready for supervised live operation, but the current bootstrap still has a few intentional constraints:
 
-- `runLive.ts` wires a conservative `signalProvider`
-- `rebalancePlanner` is currently `null`
+- `runLive.ts` wires a conservative management signal provider; it only opens rebalance evaluation for clear out-of-range / near-edge cases.
+- AI same-pool rebalance is still disabled by default via `management.aiRebalanceEnabled=false`.
+- Rich live pool analytics for management AI is still deferred; see `N71`.
 
 Because of those constraints, this runbook is best used for:
 
@@ -24,7 +25,11 @@ Because of those constraints, this runbook is best used for:
 - valid `user-config.json`
 - one dedicated process only for a given `MERIDIAN_DATA_DIR`
 
-Do not run two runtime supervisors against the same data directory.
+Do not run two runtime supervisors against the same data directory. `runLive.ts`
+acquires `meridian.lock` before starting queue ticks, and boot fails when a
+fresh owner lock already exists. This lock is the production single-writer
+guard; in-memory wallet/position locks only protect work inside one Node
+process.
 
 ## Required Files
 
@@ -125,6 +130,12 @@ Operator command surface:
   - `pending-actions`
   - `circuit_breaker_trip panic`
   - `circuit_breaker_clear`
+
+Queue pause semantics:
+
+- Pause stops the queue from claiming new actions.
+- Pause does not kill an action that has already been claimed or is already inside a wallet/position lock.
+- Use circuit breaker commands for deployment panic, and let already-running actions settle into confirmation/reconciliation instead of force-killing the process.
 
 ## Boot Commands
 

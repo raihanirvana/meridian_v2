@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  AmbiguousSubmissionError,
   MockDlmmGateway,
   type MockDlmmGatewayBehaviors,
 } from "../../src/adapters/dlmm/DlmmGateway.js";
@@ -342,12 +343,180 @@ describe("close flow", () => {
       (
         persistedAction?.resultPayload?.accounting as {
           postCloseSwap?: { txId?: string };
+          sourceConfidence?: string;
         }
       )?.postCloseSwap?.txId,
     ).toBe("swap_close_001");
+    expect(
+      (
+        persistedAction?.resultPayload?.accounting as {
+          sourceConfidence?: string;
+        }
+      )?.sourceConfidence,
+    ).toBe("unavailable");
     expect(persistedPosition?.status).toBe("CLOSED");
     expect(journalEvents.map((event) => event.eventType)).toContain(
       "CLOSE_FINALIZED",
+    );
+  });
+
+  it("includes close proceeds and stable swap intent in final close accounting", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    let capturedSwapIntentId: string | null = null;
+
+    await stateRepository.upsert(buildOpenPosition("pos_proceeds"));
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_proceeds",
+      payload: { reason: "capture proceeds" },
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_proceeds",
+              txIds: ["tx_close_proceeds"],
+              preCloseFeesClaimed: true,
+              releasedAmountBase: 1.25,
+              releasedAmountQuote: 0.75,
+              estimatedReleasedValueUsd: 128,
+              releasedAmountSource: "post_tx",
+            },
+          },
+        }),
+        stateRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_proceeds"),
+        },
+      }),
+      postCloseSwapHook: async (input) => {
+        capturedSwapIntentId = input.swapIntentId;
+        return {
+          swapIntentId: input.swapIntentId,
+          status: "SKIPPED",
+        };
+      },
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const accounting = persistedAction?.resultPayload?.accounting as {
+      releasedAmountBase?: number;
+      releasedAmountQuote?: number;
+      estimatedReleasedValueUsd?: number;
+      releasedAmountSource?: string;
+      preCloseFeesClaimed?: boolean;
+      sourceConfidence?: string;
+      postCloseSwap?: { swapIntentId?: string };
+    };
+
+    expect(capturedSwapIntentId).toBe(`${action.actionId}:POST_CLOSE_SWAP`);
+    expect(accounting.releasedAmountBase).toBe(1.25);
+    expect(accounting.releasedAmountQuote).toBe(0.75);
+    expect(accounting.estimatedReleasedValueUsd).toBe(128);
+    expect(accounting.releasedAmountSource).toBe("post_tx");
+    expect(accounting.sourceConfidence).toBe("post_tx");
+    expect(accounting.preCloseFeesClaimed).toBe(true);
+    expect(accounting.postCloseSwap?.swapIntentId).toBe(
+      `${action.actionId}:POST_CLOSE_SWAP`,
+    );
+  });
+
+  it("routes ambiguous close submission to WAITING_CONFIRMATION + reconciliation instead of FAILED", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_001"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    const ambiguousError = new AmbiguousSubmissionError(
+      "rpc submit timed out after broadcast",
+      {
+        operation: "CLOSE",
+        positionId: "pos_001",
+        txIds: ["tx_close_maybe_sent"],
+      },
+    );
+
+    const queuedResult = await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: { type: "fail", error: ambiguousError },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get("pos_001");
+    const events = await journalRepository.list();
+
+    expect(queuedResult?.status).toBe("WAITING_CONFIRMATION");
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(
+      (persistedAction?.resultPayload as { submissionAmbiguous?: boolean })
+        ?.submissionAmbiguous,
+    ).toBe(true);
+    expect(persistedAction?.txIds).toEqual(["tx_close_maybe_sent"]);
+    expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(persistedPosition?.needsReconciliation).toBe(true);
+    expect(events.map((event) => event.eventType)).toContain(
+      "CLOSE_SUBMISSION_AMBIGUOUS",
+    );
+    expect(events.map((event) => event.eventType)).not.toContain(
+      "CLOSE_SUBMISSION_FAILED",
     );
   });
 

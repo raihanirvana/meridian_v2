@@ -69,10 +69,8 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Revisit: sebelum reconciliation worker dijadwalkan periodik atau saat Batch 13 observability/reporting mulai membaca hasil reconciliation lebih detail.
 
 - `N14` asimetri submit-path `processCloseAction` vs post-submit persist di [processCloseAction.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processCloseAction.ts:139)
-  Status: deferred
-  Kenapa ditunda: kalau `ClosePositionResultSchema.parse()` gagal atau `closedPositionId` mismatch, action langsung dijatuhkan ke `FAILED` lewat jurnal `CLOSE_SUBMISSION_FAILED`. Padahal analog di Batch 6 (deploy) memilih reconcile-safe untuk scenario "on-chain mungkin sukses tapi response tidak bisa dipercaya". Mock sekarang well-formed jadi tidak memblokir Batch 8, tapi real adapter bisa menghasilkan orphan on-chain close tanpa jejak lokal.
-  Revisit: wajib sebelum atau saat Batch 16 real DLMM adapter, atau saat reconciliation path mulai mencari signal untuk recover action `FAILED` yang sebenarnya sukses on-chain.
-  Dependency note: Batch 8 reconciliation worker sekarang masih bisa menurunkan action `RECONCILING` menjadi `FAILED` saat recovery startup konservatif, jadi semantik "action FAILED padahal close on-chain sukses" masih satu keluarga risiko dengan item ini.
+  Status: closed
+  Kenapa ditutup: `DlmmGateway` sekarang punya `AmbiguousSubmissionError`; `processCloseAction()` menangkap error ini dan mengarahkan action ke `WAITING_CONFIRMATION` + posisi `RECONCILIATION_REQUIRED`, bukan terminal `FAILED`. Regression test `closeFlow.test.ts` mengunci path ini.
 
 - `N15` fase snapshot reconciliation belum memakai `positionLock` di [reconcilePortfolio.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/reconcilePortfolio.ts:400)
   Status: deferred
@@ -129,9 +127,8 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Revisit: sebelum Batch 13/14 saat screening output mulai dipakai lebih luas oleh worker/advisory layer.
 
 - `N21` asimetri submit-path `processRebalanceAction` saat close leg pertama gagal parse/mismatch/throw di [processRebalanceAction.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/processRebalanceAction.ts:159)
-  Status: deferred
-  Kenapa ditunda: polanya sama dengan `N14`; jika adapter real mengembalikan response buruk setelah close on-chain sebenarnya sukses, action bisa jatuh ke `FAILED` dan meninggalkan orphan close leg tanpa jalur reconcile-safe.
-  Revisit: wajib bersama `N14` sebelum atau saat Batch 16 real DLMM adapter.
+  Status: closed
+  Kenapa ditutup: close leg rebalance sekarang mengikuti pola `N14`; `AmbiguousSubmissionError` dipetakan ke `WAITING_CONFIRMATION`, posisi lama masuk `RECONCILIATION_REQUIRED`, dan journal menulis `REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS`. Regression test ada di `rebalanceFlow.test.ts`.
 
 - `N22` crash gap antara `deployLiquidity()` sukses dan persist phase `REDEPLOY_SUBMITTED` action di [finalizeRebalance.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/finalizeRebalance.ts:694)
   Status: deferred

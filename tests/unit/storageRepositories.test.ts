@@ -346,7 +346,11 @@ describe("storage repositories", () => {
   it("throws StateStoreCorruptError when positions.json fails schema validation", async () => {
     const directory = await makeTempDir();
     const positionsPath = path.join(directory, "positions.json");
-    await fs.writeFile(positionsPath, JSON.stringify([{ wrong: true }]), "utf8");
+    await fs.writeFile(
+      positionsPath,
+      JSON.stringify([{ wrong: true }]),
+      "utf8",
+    );
 
     const stateRepository = new StateRepository({ filePath: positionsPath });
 

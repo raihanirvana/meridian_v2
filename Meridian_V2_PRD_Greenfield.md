@@ -1354,7 +1354,8 @@ Menutup posisi secara resmi dan tuntas.
 
 - `requestClose.ts`
 - `finalizeClose.ts`
-- action states CLOSING -> CLOSE_CONFIRMED -> RECONCILING -> DONE
+- action lifecycle stays `QUEUED -> RUNNING -> WAITING_CONFIRMATION -> RECONCILING -> DONE`
+- position lifecycle for close is `CLOSE_REQUESTED -> CLOSING -> CLOSE_CONFIRMED -> RECONCILING -> CLOSED`
 - accounting update
 - performance record update
 - optional post-close swap hook interface
@@ -2817,7 +2818,7 @@ export function createPerformanceLessonHook(input: {
   config: AppConfig;
   now: () => string;
   idGen: () => string;
-}): LessonHook
+}): LessonHook;
 ```
 
 Tugas hook:
@@ -2899,6 +2900,7 @@ Jika lesson list kosong tetapi repository sehat, boleh panggil LLM dengan header
 
 ```md
 ### LESSONS LEARNED
+
 No historical lessons recorded yet.
 ```
 
@@ -2909,13 +2911,13 @@ Yang tidak boleh adalah repository error lalu LLM tetap dipanggil tanpa konteks 
 Untuk management advisory:
 
 ```ts
-buildLessonsPrompt({ role: "MANAGER" })
+buildLessonsPrompt({ role: "MANAGER" });
 ```
 
 Untuk rebalance planner:
 
 ```ts
-buildLessonsPrompt({ role: "MANAGER" })
+buildLessonsPrompt({ role: "MANAGER" });
 ```
 
 Kalau ada AI rebalance planner dari Batch 25, prompt wajib membawa:
@@ -2934,7 +2936,7 @@ Kalau lesson load error dan `aiRebalanceMode` adalah `advisory`, `dry_run`, atau
 Setelah performance record sukses:
 
 ```ts
-recordPoolDeploy(performance)
+recordPoolDeploy(performance);
 ```
 
 Update:

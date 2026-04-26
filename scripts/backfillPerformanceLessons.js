@@ -103,7 +103,9 @@ function buildRecord(position, action, now) {
   );
   const minutesInRange = Math.max(minutesHeld - minutesOutOfRange, 0);
   const rangeEfficiencyPct =
-    minutesHeld === 0 ? 100 : Math.min((minutesInRange / minutesHeld) * 100, 100);
+    minutesHeld === 0
+      ? 100
+      : Math.min((minutesInRange / minutesHeld) * 100, 100);
   const pnlUsd = Number(position.realizedPnlUsd ?? 0);
   const pnlPct = (pnlUsd / initialValueUsd) * 100;
   const metadata = position.entryMetadata ?? {};

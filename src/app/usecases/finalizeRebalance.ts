@@ -574,8 +574,7 @@ async function finalizeCloseLeg(input: {
     input.latestAction.actionId,
     input.now,
   );
-  const recordedPerformanceSnapshot =
-    input.closeSubmitted.performanceSnapshot;
+  const recordedPerformanceSnapshot = input.closeSubmitted.performanceSnapshot;
 
   if (closingPosition !== null && closingPosition.status === "CLOSED") {
     const closeConfirmedPosition =
@@ -901,13 +900,14 @@ export async function finalizeRebalance(
           };
         }
 
-        const closeFinalizedPayload = RebalanceCloseSubmittedPayloadSchema.parse({
-          ...latestPayload,
-          closeAccounting: closeLeg.closeAccounting,
-          closedPositionId: closeLeg.closedPosition.positionId,
-          availableCapitalUsd: closeLeg.availableCapitalUsd,
-          performanceSnapshot: closeLeg.closeConfirmedPosition,
-        });
+        const closeFinalizedPayload =
+          RebalanceCloseSubmittedPayloadSchema.parse({
+            ...latestPayload,
+            closeAccounting: closeLeg.closeAccounting,
+            closedPositionId: closeLeg.closedPosition.positionId,
+            availableCapitalUsd: closeLeg.availableCapitalUsd,
+            performanceSnapshot: closeLeg.closeConfirmedPosition,
+          });
         const actionAfterCloseFinalized = {
           ...latestAction,
           resultPayload: toJournalRecord(closeFinalizedPayload),
@@ -948,11 +948,10 @@ export async function finalizeRebalance(
           now,
         });
 
-        const settlementValidationError =
-          validatePostCloseRedeploySettlement(
-            closeFinalizedPayload.closeResult,
-            requestPayload.redeploy,
-          );
+        const settlementValidationError = validatePostCloseRedeploySettlement(
+          closeFinalizedPayload.closeResult,
+          requestPayload.redeploy,
+        );
         let postCloseRedeployPayload: DeployActionRequestPayload | null = null;
         let validationError = settlementValidationError;
         if (validationError === null) {
@@ -1273,10 +1272,7 @@ export async function finalizeRebalance(
 
           const timedOutAction = {
             ...waitingAction,
-            status: transitionActionStatus(
-              waitingAction.status,
-              "TIMED_OUT",
-            ),
+            status: transitionActionStatus(waitingAction.status, "TIMED_OUT"),
             error: `Rebalance redeploy submitted but local persistence requires reconciliation: ${errorMessage(
               error,
               "unknown local persistence error",

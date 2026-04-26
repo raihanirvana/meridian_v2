@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   ClosePositionResultSchema,
+  isAmbiguousSubmissionError,
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
@@ -167,6 +168,53 @@ export async function processCloseAction(
       );
     }
   } catch (error) {
+    if (isAmbiguousSubmissionError(error)) {
+      const reconciliationPosition = buildReconciliationRequiredPosition(
+        currentPosition,
+        input.action.actionId,
+        now,
+      );
+
+      try {
+        await input.stateRepository.upsert(reconciliationPosition);
+      } catch {
+        // Best effort; reconciliation worker will rediscover via wallet snapshot.
+      }
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "CLOSE_SUBMISSION_AMBIGUOUS",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
+        actionId: input.action.actionId,
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+          position: currentPosition,
+        }),
+        after: toJournalRecord({ position: reconciliationPosition }),
+        txIds: error.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "close submission ambiguous"),
+      });
+
+      return {
+        nextStatus: "WAITING_CONFIRMATION",
+        txIds: error.txIds,
+        resultPayload: toJournalRecord({
+          actionType: "CLOSE",
+          closedPositionId: input.action.positionId,
+          txIds: error.txIds,
+          submissionAmbiguous: true,
+        }),
+        error: `Close submission ambiguous; reconciliation required: ${errorMessage(
+          error,
+          "ambiguous close submission",
+        )}`,
+      };
+    }
+
     await appendJournalEvent(input.journalRepository, {
       timestamp: now,
       eventType: "CLOSE_SUBMISSION_FAILED",

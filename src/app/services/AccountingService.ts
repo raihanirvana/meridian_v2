@@ -21,6 +21,15 @@ export const CloseAccountingSummarySchema = z
     currentValueBase: z.number().nonnegative(),
     currentValueQuote: z.number().nonnegative().optional(),
     currentValueUsd: z.number().nonnegative(),
+    releasedAmountBase: z.number().nonnegative().nullable(),
+    releasedAmountQuote: z.number().nonnegative().nullable(),
+    estimatedReleasedValueUsd: z.number().nonnegative().nullable(),
+    releasedAmountSource: z
+      .enum(["post_tx", "position_snapshot", "unavailable"])
+      .default("unavailable"),
+    preCloseFeesClaimed: z.boolean().nullable(),
+    preCloseFeesClaimError: z.string().min(1).nullable(),
+    sourceConfidence: z.enum(["post_tx", "snapshot", "unavailable"]),
     postCloseSwap: z.record(z.string(), z.unknown()).nullable(),
   })
   .strict();
@@ -50,7 +59,18 @@ export function resolveOutOfRangeSince(
 export function buildCloseAccountingSummary(
   position: Position,
   postCloseSwap: Record<string, unknown> | null,
+  closeProceeds?: {
+    releasedAmountBase?: number;
+    releasedAmountQuote?: number;
+    estimatedReleasedValueUsd?: number;
+    releasedAmountSource?: "post_tx" | "position_snapshot" | "unavailable";
+    preCloseFeesClaimed?: boolean;
+    preCloseFeesClaimError?: string | null;
+  },
 ): CloseAccountingSummary {
+  const releasedAmountSource =
+    closeProceeds?.releasedAmountSource ?? "unavailable";
+
   return CloseAccountingSummarySchema.parse({
     positionId: position.positionId,
     closedAt: position.closedAt,
@@ -63,6 +83,18 @@ export function buildCloseAccountingSummary(
       ? {}
       : { currentValueQuote: position.currentValueQuote }),
     currentValueUsd: position.currentValueUsd,
+    releasedAmountBase: closeProceeds?.releasedAmountBase ?? null,
+    releasedAmountQuote: closeProceeds?.releasedAmountQuote ?? null,
+    estimatedReleasedValueUsd: closeProceeds?.estimatedReleasedValueUsd ?? null,
+    releasedAmountSource,
+    preCloseFeesClaimed: closeProceeds?.preCloseFeesClaimed ?? null,
+    preCloseFeesClaimError: closeProceeds?.preCloseFeesClaimError ?? null,
+    sourceConfidence:
+      releasedAmountSource === "post_tx"
+        ? "post_tx"
+        : releasedAmountSource === "position_snapshot"
+          ? "snapshot"
+          : "unavailable",
     postCloseSwap,
   });
 }

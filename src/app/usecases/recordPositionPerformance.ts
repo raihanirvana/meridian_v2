@@ -36,8 +36,7 @@ function isSameDerivedLesson(input: {
     input.existing.pool === input.candidate.pool &&
     input.existing.context === input.candidate.context &&
     input.existing.pnlPct === input.candidate.pnlPct &&
-    input.existing.rangeEfficiencyPct ===
-      input.candidate.rangeEfficiencyPct &&
+    input.existing.rangeEfficiencyPct === input.candidate.rangeEfficiencyPct &&
     input.existing.outcome === input.candidate.outcome
   );
 }
@@ -45,9 +44,7 @@ function isSameDerivedLesson(input: {
 export async function recordPositionPerformance(
   input: RecordPositionPerformanceInput,
 ): Promise<RecordPositionPerformanceResult> {
-  const requestedPerformance = PerformanceRecordSchema.parse(
-    input.performance,
-  );
+  const requestedPerformance = PerformanceRecordSchema.parse(input.performance);
   const existingPerformance = (await input.performanceRepository.list()).find(
     (record) => record.positionId === requestedPerformance.positionId,
   );

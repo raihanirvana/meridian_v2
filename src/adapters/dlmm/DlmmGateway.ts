@@ -6,6 +6,51 @@ import {
 } from "../../domain/entities/Position.js";
 import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
+export type AmbiguousSubmissionOperation =
+  | "DEPLOY"
+  | "CLOSE"
+  | "PARTIAL_CLOSE"
+  | "CLAIM_FEES";
+
+export interface AmbiguousSubmissionDetails {
+  operation: AmbiguousSubmissionOperation;
+  positionId: string;
+  txIds?: string[];
+}
+
+/**
+ * Thrown by adapters when a transaction may have been broadcast on-chain but
+ * the response was lost (network timeout after submit, malformed/partial
+ * response, etc.). Callers MUST NOT mark the action FAILED — the position may
+ * have changed on-chain and reconciliation is required.
+ *
+ * positionId is required: for Meteora DLMM, position addresses are PDA-derived
+ * from instruction params and are always known to the adapter before submit.
+ */
+export class AmbiguousSubmissionError extends Error {
+  public readonly operation: AmbiguousSubmissionOperation;
+  public readonly positionId: string;
+  public readonly txIds: string[];
+
+  public constructor(
+    message: string,
+    details: AmbiguousSubmissionDetails,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "AmbiguousSubmissionError";
+    this.operation = details.operation;
+    this.positionId = details.positionId;
+    this.txIds = details.txIds ?? [];
+  }
+}
+
+export function isAmbiguousSubmissionError(
+  error: unknown,
+): error is AmbiguousSubmissionError {
+  return error instanceof AmbiguousSubmissionError;
+}
+
 export const DeployLiquidityRequestSchema = z.object({
   wallet: z.string().min(1),
   poolAddress: z.string().min(1),
@@ -26,6 +71,7 @@ export const DeployLiquidityResultSchema = z.object({
   actionType: z.literal("DEPLOY"),
   positionId: z.string().min(1),
   txIds: z.array(z.string().min(1)),
+  submissionAmbiguous: z.boolean().optional(),
 });
 
 export const ClosePositionRequestSchema = z.object({
@@ -46,6 +92,7 @@ export const ClosePositionResultSchema = z.object({
   releasedAmountSource: z
     .enum(["post_tx", "position_snapshot", "unavailable"])
     .optional(),
+  submissionAmbiguous: z.boolean().optional(),
 });
 
 export const ClaimFeesRequestSchema = z.object({

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   RuntimeOwnerLockActiveError,
+  RuntimeOwnerLockLostError,
   acquireRuntimeOwnerLock,
 } from "../../src/runtime/RuntimeOwnerLock.js";
 
@@ -62,6 +63,34 @@ describe("RuntimeOwnerLock", () => {
       now: () => "2026-04-26T00:01:00.000Z",
       staleAfterMs: 30_000,
     });
+
+    const lockFile = JSON.parse(
+      await fs.readFile(path.join(directory, "meridian.lock"), "utf8"),
+    ) as { ownerId: string };
+    expect(lockFile.ownerId).toBe("owner_b");
+
+    await second.release();
+  });
+
+  it("does not let a stale owner heartbeat overwrite the new owner", async () => {
+    const directory = await makeTempDir();
+    const first = await acquireRuntimeOwnerLock({
+      dataDir: directory,
+      ownerId: "owner_a",
+      now: () => "2026-04-26T00:00:00.000Z",
+      staleAfterMs: 30_000,
+    });
+
+    const second = await acquireRuntimeOwnerLock({
+      dataDir: directory,
+      ownerId: "owner_b",
+      now: () => "2026-04-26T00:01:00.000Z",
+      staleAfterMs: 30_000,
+    });
+
+    await expect(first.heartbeat()).rejects.toBeInstanceOf(
+      RuntimeOwnerLockLostError,
+    );
 
     const lockFile = JSON.parse(
       await fs.readFile(path.join(directory, "meridian.lock"), "utf8"),

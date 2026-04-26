@@ -33,6 +33,7 @@ const CloseActionResultPayloadSchema = ClosePositionResultSchema;
 // close candidate that is ready for post-close accounting/swap work.
 export const PostCloseSwapInputSchema = z.object({
   actionId: z.string().min(1),
+  swapIntentId: z.string().min(1),
   wallet: z.string().min(1),
   reason: z.string().min(1),
   position: PositionSchema,
@@ -91,6 +92,31 @@ function toJournalRecord(value: unknown): Record<string, unknown> {
   return z
     .record(z.string(), z.unknown())
     .parse(JSON.parse(JSON.stringify(value)));
+}
+
+function closeProceedsFromResult(
+  closeResult: z.infer<typeof CloseActionResultPayloadSchema>,
+): Parameters<typeof buildCloseAccountingSummary>[2] | undefined {
+  return {
+    ...(closeResult.releasedAmountBase === undefined
+      ? {}
+      : { releasedAmountBase: closeResult.releasedAmountBase }),
+    ...(closeResult.releasedAmountQuote === undefined
+      ? {}
+      : { releasedAmountQuote: closeResult.releasedAmountQuote }),
+    ...(closeResult.estimatedReleasedValueUsd === undefined
+      ? {}
+      : { estimatedReleasedValueUsd: closeResult.estimatedReleasedValueUsd }),
+    ...(closeResult.releasedAmountSource === undefined
+      ? {}
+      : { releasedAmountSource: closeResult.releasedAmountSource }),
+    ...(closeResult.preCloseFeesClaimed === undefined
+      ? {}
+      : { preCloseFeesClaimed: closeResult.preCloseFeesClaimed }),
+    ...(closeResult.preCloseFeesClaimError === undefined
+      ? {}
+      : { preCloseFeesClaimError: closeResult.preCloseFeesClaimError }),
+  };
 }
 
 function readPerformanceSnapshot(action: Action): Position | undefined {
@@ -454,7 +480,11 @@ export async function finalizeClose(
         closingPosition.status === "CLOSED" &&
         closeConfirmedPositionLike !== null
       ) {
-        const accounting = buildCloseAccountingSummary(closingPosition, null);
+        const accounting = buildCloseAccountingSummary(
+          closingPosition,
+          null,
+          closeProceedsFromResult(closeResult),
+        );
         const reconcilingAction = {
           ...latestAction,
           status: transitionActionStatus(latestAction.status, "RECONCILING"),
@@ -625,6 +655,7 @@ export async function finalizeClose(
           (await input.postCloseSwapHook?.(
             PostCloseSwapInputSchema.parse({
               actionId: reconcilingAction.actionId,
+              swapIntentId: `${reconcilingAction.actionId}:POST_CLOSE_SWAP`,
               wallet: reconcilingAction.wallet,
               reason: payload.reason,
               position: reconcilingPosition,
@@ -639,6 +670,7 @@ export async function finalizeClose(
         const accounting = buildCloseAccountingSummary(
           closedPosition,
           postCloseSwap,
+          closeProceedsFromResult(closeResult),
         );
         await input.stateRepository.upsert(closedPosition);
 

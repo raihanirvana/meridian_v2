@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
+import {
+  AmbiguousSubmissionError,
+  MockDlmmGateway,
+} from "../../src/adapters/dlmm/DlmmGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import { FileRuntimeControlStore } from "../../src/adapters/storage/RuntimeControlStore.js";
@@ -1221,6 +1224,110 @@ describe("deploy flow", () => {
     expect(persistedAction?.status).toBe("FAILED");
     expect(positions).toHaveLength(0);
     expect(events.map((event) => event.eventType)).toContain(
+      "DEPLOY_SUBMISSION_FAILED",
+    );
+  });
+
+  it("routes ambiguous deploy submission to WAITING_CONFIRMATION + reconciliation instead of FAILED", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const ambiguousError = new AmbiguousSubmissionError(
+      "rpc submit timed out after broadcast",
+      {
+        operation: "DEPLOY",
+        positionId: "pos_ambiguous_001",
+        txIds: ["tx_maybe_sent_001"],
+      },
+    );
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: { type: "fail", error: ambiguousError },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: { wallet: "wallet_001", positions: [] },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    const processed = await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+      }),
+    );
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get("pos_ambiguous_001");
+    const events = await journalRepository.list();
+
+    expect(processed?.status).toBe("WAITING_CONFIRMATION");
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(
+      (persistedAction?.resultPayload as { submissionAmbiguous?: boolean })
+        ?.submissionAmbiguous,
+    ).toBe(true);
+    expect(persistedAction?.txIds).toEqual(["tx_maybe_sent_001"]);
+    expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(persistedPosition?.needsReconciliation).toBe(true);
+    expect(events.map((event) => event.eventType)).toContain(
+      "DEPLOY_SUBMISSION_AMBIGUOUS",
+    );
+    expect(events.map((event) => event.eventType)).not.toContain(
       "DEPLOY_SUBMISSION_FAILED",
     );
   });

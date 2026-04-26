@@ -282,6 +282,10 @@ export {
   type RuntimeDeployControl,
 } from "./adapters/storage/RuntimeControlStore.js";
 export {
+  AmbiguousSubmissionError,
+  isAmbiguousSubmissionError,
+  type AmbiguousSubmissionDetails,
+  type AmbiguousSubmissionOperation,
   MockDlmmGateway,
   ClaimFeesRequestSchema,
   ClaimFeesResultSchema,

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   ClosePositionResultSchema,
+  isAmbiguousSubmissionError,
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
@@ -215,6 +216,60 @@ export async function processRebalanceAction(
       );
     }
   } catch (error) {
+    if (isAmbiguousSubmissionError(error)) {
+      closeResult = CloseActionResultPayloadSchema.parse({
+        actionType: "CLOSE",
+        closedPositionId: input.action.positionId,
+        txIds: error.txIds,
+        submissionAmbiguous: true,
+      });
+      const reconciliationPosition = buildReconciliationRequiredPosition(
+        currentPosition,
+        input.action.actionId,
+        now,
+      );
+
+      try {
+        await input.stateRepository.upsert(reconciliationPosition);
+      } catch {
+        // Best effort; reconciliation can still rediscover the close leg.
+      }
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
+        actionId: input.action.actionId,
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+          position: currentPosition,
+        }),
+        after: toJournalRecord({
+          position: reconciliationPosition,
+          closeResult,
+        }),
+        txIds: error.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "rebalance close submission ambiguous"),
+      });
+
+      return {
+        nextStatus: "WAITING_CONFIRMATION",
+        txIds: error.txIds,
+        resultPayload: toJournalRecord({
+          phase: "CLOSE_SUBMITTED",
+          closeResult,
+        }),
+        error: `Rebalance close submission ambiguous; reconciliation required: ${errorMessage(
+          error,
+          "ambiguous rebalance close submission",
+        )}`,
+      };
+    }
+
     await appendJournalEvent(input.journalRepository, {
       timestamp: now,
       eventType: "REBALANCE_CLOSE_SUBMISSION_FAILED",

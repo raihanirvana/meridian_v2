@@ -393,13 +393,13 @@ export async function runScreeningCycle(
             return null;
           },
         }
-      : input.lessonPromptService ?? {
+      : (input.lessonPromptService ?? {
           async buildLessonsPrompt(): Promise<string | null> {
             throw new Error(
               "LessonPromptService is required for AI shortlist ranking",
             );
           },
-        };
+        });
   const aiShortlist = await rankShortlistWithAi({
     shortlist: deterministic.shortlist.map(
       (candidate) =>

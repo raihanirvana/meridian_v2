@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  AmbiguousSubmissionError,
   type ClaimFeesResult,
   type ClosePositionRequest,
   type ClosePositionResult,
@@ -169,6 +170,8 @@ class RebalanceTestGateway implements DlmmGateway {
 
   public readonly deployRequests: DeployLiquidityRequest[] = [];
 
+  public closeError: Error | null = null;
+
   public deployError: Error | null = null;
 
   public async getPosition(positionId: string): Promise<Position | null> {
@@ -193,6 +196,10 @@ class RebalanceTestGateway implements DlmmGateway {
   public async closePosition(
     _request: ClosePositionRequest,
   ): Promise<ClosePositionResult> {
+    if (this.closeError !== null) {
+      throw this.closeError;
+    }
+
     return this.closeResult;
   }
 
@@ -257,6 +264,78 @@ afterEach(async () => {
 });
 
 describe("rebalance flow", () => {
+  it("routes ambiguous rebalance close submission to WAITING_CONFIRMATION + reconciliation", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+    gateway.closeError = new AmbiguousSubmissionError(
+      "rebalance close submit timed out after broadcast",
+      {
+        operation: "CLOSE",
+        positionId: "pos_old",
+        txIds: ["tx_rebalance_close_maybe_sent"],
+      },
+    );
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    const queuedResult = await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get("pos_old");
+    const events = await journalRepository.list();
+
+    expect(queuedResult?.status).toBe("WAITING_CONFIRMATION");
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+    expect(persistedAction?.txIds).toEqual(["tx_rebalance_close_maybe_sent"]);
+    expect(
+      (
+        persistedAction?.resultPayload as {
+          closeResult?: { submissionAmbiguous?: boolean };
+        }
+      )?.closeResult?.submissionAmbiguous,
+    ).toBe(true);
+    expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(persistedPosition?.needsReconciliation).toBe(true);
+    expect(events.map((event) => event.eventType)).toContain(
+      "REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS",
+    );
+    expect(events.map((event) => event.eventType)).not.toContain(
+      "REBALANCE_CLOSE_SUBMISSION_FAILED",
+    );
+  });
+
   it("processes rebalance as close-finalize-redeploy and opens the new leg only after old leg is closed", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -682,7 +761,9 @@ describe("rebalance flow", () => {
     });
 
     expect(finalized.outcome).toBe("REBALANCE_ABORTED");
-    expect(finalized.action.error).toMatch(/quote token settlement amount is missing/i);
+    expect(finalized.action.error).toMatch(
+      /quote token settlement amount is missing/i,
+    );
     expect(gateway.deployRequests).toHaveLength(0);
   });
 
@@ -739,7 +820,9 @@ describe("rebalance flow", () => {
 
     expect(finalized.outcome).toBe("REBALANCE_ABORTED");
     expect(finalized.action.status).toBe("FAILED");
-    expect(finalized.action.error).toMatch(/settlement amounts are unavailable/i);
+    expect(finalized.action.error).toMatch(
+      /settlement amounts are unavailable/i,
+    );
     expect(gateway.deployRequests).toHaveLength(0);
     expect(finalized.newPosition).toBeNull();
   });
@@ -1023,13 +1106,10 @@ describe("rebalance flow", () => {
       }),
     );
 
-    gateway.positions.set(
-      "pos_low_capital",
-      {
-        ...buildCloseConfirmedPosition("pos_low_capital", 0),
-        currentValueBase: 0,
-      },
-    );
+    gateway.positions.set("pos_low_capital", {
+      ...buildCloseConfirmedPosition("pos_low_capital", 0),
+      currentValueBase: 0,
+    });
 
     const finalized = await finalizeRebalance({
       actionId: action.actionId,

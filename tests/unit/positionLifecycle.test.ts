@@ -176,9 +176,9 @@ describe("positionLifecycle", () => {
   });
 
   it("still allows direct RECONCILIATION_REQUIRED escalation without a reason", () => {
-    expect(
-      canTransitionPositionStatus("OPEN", "RECONCILIATION_REQUIRED"),
-    ).toBe(true);
+    expect(canTransitionPositionStatus("OPEN", "RECONCILIATION_REQUIRED")).toBe(
+      true,
+    );
   });
 
   it("does not require escalation reason for transitions allowed by the base table", () => {

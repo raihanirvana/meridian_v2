@@ -111,9 +111,8 @@ export class FileSignalWeightsStore implements SignalWeightsStore {
     metadata: Partial<SignalWeightsStoreFile["metadata"]> = {},
   ): Promise<SignalWeights> {
     const validated = SignalWeightsSchema.parse(weights);
-    const validatedMetadata = SignalWeightsMetadataSchema.partial().parse(
-      metadata,
-    );
+    const validatedMetadata =
+      SignalWeightsMetadataSchema.partial().parse(metadata);
     await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
       const current = parseStore(raw, this.filePath);
       return JSON.stringify(

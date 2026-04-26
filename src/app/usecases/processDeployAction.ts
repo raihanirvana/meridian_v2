@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   DeployLiquidityResultSchema,
+  isAmbiguousSubmissionError,
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlStore.js";
@@ -296,6 +297,54 @@ export async function processDeployAction(
       }),
     );
   } catch (error) {
+    if (isAmbiguousSubmissionError(error)) {
+      const reconciliationPosition =
+        buildReconciliationRequiredPositionFromDeployData({
+          action: input.action,
+          payload,
+          positionId: error.positionId,
+          now,
+        });
+
+      try {
+        await input.stateRepository.upsert(reconciliationPosition);
+      } catch {
+        // Best effort; reconciliation worker will rediscover via wallet snapshot.
+      }
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "DEPLOY_SUBMISSION_AMBIGUOUS",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: error.positionId,
+        actionId: input.action.actionId,
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: toJournalRecord({ position: reconciliationPosition }),
+        txIds: error.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "deploy submission ambiguous"),
+      });
+
+      return {
+        nextStatus: "WAITING_CONFIRMATION",
+        txIds: error.txIds,
+        resultPayload: toJournalRecord({
+          actionType: "DEPLOY",
+          positionId: error.positionId,
+          txIds: error.txIds,
+          submissionAmbiguous: true,
+        }),
+        error: `Deploy submission ambiguous; reconciliation required: ${errorMessage(
+          error,
+          "ambiguous deploy submission",
+        )}`,
+      };
+    }
+
     await appendJournalEvent(input.journalRepository, {
       timestamp: now,
       eventType: "DEPLOY_SUBMISSION_FAILED",

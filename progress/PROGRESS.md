@@ -749,4 +749,4 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - rekomendasi AI `watch` / `reject`, high risk, low confidence, bins/slippage di luar policy, atau deploy dengan slippage tidak positif sekarang menjadi reject deterministic, bukan fallback deploy
   - deploy-mode AI juga sekarang wajib memberi `maxPositionAgeMinutes`, `stopLossPct`, dan `takeProfitPct` positif; `walletRiskMode` dipindahkan ke config AI agar prompt risk profile tidak hardcoded
   - enrichment screening sekarang punya `screening.enrichmentConcurrency` default `10`, jadi top-30 AI review tidak lagi memicu enrichment request paralel tak terbatas ke screening/token-intel API
-- `npm test` terakhir hijau dengan total `293` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- `npm test` terakhir hijau dengan total `342` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
