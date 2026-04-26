@@ -13,6 +13,7 @@ export interface MeridianPaths {
   signalWeightsFilePath: string;
   schedulerMetadataFilePath: string;
   runtimeControlsFilePath: string;
+  meteoraRateLimitStateFilePath: string;
 }
 
 export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
@@ -40,6 +41,10 @@ export function resolveMeridianPaths(dataDir?: string): MeridianPaths {
     runtimeControlsFilePath: path.join(
       resolvedDataDir,
       "runtime-controls.json",
+    ),
+    meteoraRateLimitStateFilePath: path.join(
+      resolvedDataDir,
+      "meteora-rate-limit-state.json",
     ),
   };
 }

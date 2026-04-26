@@ -276,7 +276,6 @@ export interface RunScreeningCycleInput {
   aiTimeoutMs?: number;
   poolMemoryRepository?: PoolMemoryRepository;
   candidateLimit?: number;
-  enrichmentConcurrency?: number;
   detailEnrichmentTopN?: number;
   maxDetailRequestsPerCycle?: number;
   detailCooldownAfter429Ms?: number;
@@ -373,7 +372,7 @@ export async function runScreeningCycle(
     screeningPolicy.maxDetailRequestsPerCycle ??
     detailTopN;
   const endpointCooldownUntil =
-    input.detailRateLimiter?.getCooldownUntil() ?? null;
+    (await input.detailRateLimiter?.getCooldownUntil()) ?? null;
   const enrichmentPlan = buildEnrichmentPlan({
     candidates: coarse.candidates.filter(
       (candidate) => candidate.hardFilterPassed,
@@ -451,10 +450,10 @@ export async function runScreeningCycle(
     }
 
     const limiterDecision =
-      input.detailRateLimiter?.beforeRequest(detailRequestNow);
+      await input.detailRateLimiter?.beforeRequest(detailRequestNow);
     if (limiterDecision !== undefined && !limiterDecision.allowed) {
       rateLimitCooldownUntil =
-        input.detailRateLimiter?.getCooldownUntil() ?? null;
+        (await input.detailRateLimiter?.getCooldownUntil()) ?? null;
       const remainingDetailsSkipped =
         enrichmentPlan.selectedForDetail.length - index;
       await input.journalRepository.append({
@@ -484,6 +483,7 @@ export async function runScreeningCycle(
     }
 
     try {
+      await input.detailRateLimiter?.recordAttempt(detailRequestNow);
       const tokenMint = asString(
         candidate.tokenRiskSnapshot.tokenXMint,
         "tokenXMint",
@@ -504,7 +504,7 @@ export async function runScreeningCycle(
         input.screeningGateway.getCandidateDetails(candidate.poolAddress),
         narrativePromise,
       ]);
-      input.detailRateLimiter?.recordSuccess(detailRequestNow);
+      await input.detailRateLimiter?.recordSuccess(detailRequestNow);
 
       let narrativeSummary = details?.narrativeSummary ?? null;
       let holderDistributionSummary =
@@ -542,17 +542,42 @@ export async function runScreeningCycle(
           ? {}
           : { holderDistributionSummary }),
       });
+      await input.journalRepository.append({
+        timestamp: now,
+        eventType: "METEORA_DETAIL_FETCHED",
+        actor: "system",
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: toJournalRecord({
+          candidateId: candidate.candidateId,
+          poolAddress: candidate.poolAddress,
+          detailFetchedAt: detailRequestNow,
+          hasMarketFeatureSnapshot:
+            details?.marketFeatureSnapshot !== undefined,
+          hasDlmmMicrostructureSnapshot:
+            details?.dlmmMicrostructureSnapshot !== undefined,
+          hasDataFreshnessSnapshot:
+            details?.dataFreshnessSnapshot !== undefined,
+          hasNarrative:
+            narrativeSummary !== null || holderDistributionSummary !== null,
+        }),
+        txIds: [],
+        resultStatus: "OK",
+        error: null,
+      });
     } catch (error) {
       const rateLimit = isRateLimitedDetailError(error);
       if (rateLimit !== null) {
-        input.detailRateLimiter?.recordRateLimited({
+        await input.detailRateLimiter?.recordRateLimited({
           now: detailRequestNow,
           ...(rateLimit.retryAfterMs === undefined
             ? {}
             : { retryAfterMs: rateLimit.retryAfterMs }),
         });
         rateLimitCooldownUntil =
-          input.detailRateLimiter?.getCooldownUntil() ??
+          (await input.detailRateLimiter?.getCooldownUntil()) ??
           addMs(
             detailRequestNow,
             input.detailCooldownAfter429Ms ??
@@ -604,6 +629,7 @@ export async function runScreeningCycle(
         { err: error, poolAddress: candidate.poolAddress },
         "candidate detail enrichment failed; continuing with gateway candidate snapshot",
       );
+      await input.detailRateLimiter?.recordFailure(detailRequestNow);
     }
   }
 

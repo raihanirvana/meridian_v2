@@ -783,4 +783,9 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - `runScreeningCycle()` menulis journal `ENRICHMENT_PLAN_BUILT`, `METEORA_DETAIL_REQUEST_SKIPPED`, `METEORA_DETAIL_RATE_LIMITED`, dan `METEORA_DETAIL_COOLDOWN_STARTED`, plus `enrichmentSummary` di hasil screening
   - kandidat tanpa detail fresh tetap bisa muncul sebagai watch/report-only, tetapi `StrategyDecisionValidator` memblok auto-deploy dengan `DETAIL_NOT_FRESH_OR_MISSING`
   - `user-config.json` dan example menambah knob detail budget/cooldown; default concurrency enrichment diturunkan ke `1` agar aman untuk provider Meteora
-- `npm test` terakhir hijau dengan total `379` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 27.1 hardening follow-up juga sudah masuk:
+  - detail limiter sekarang menghitung setiap attempt, bukan hanya request sukses; timeout/500 tetap menghabiskan rolling budget karena sudah hit endpoint Meteora
+  - cooldown dan recent request timestamps disimpan ke `meteora-rate-limit-state.json` di data dir runtime, sehingga restart tidak langsung melupakan cooldown 429
+  - detail sukses sekarang diaudit lewat journal `METEORA_DETAIL_FETCHED`, sehingga cycle bisa dibaca sebagai selected/fetched/failed/rate-limited secara eksplisit
+  - detail enrichment runtime dibuat serial-budgeted eksplisit; `enrichmentConcurrency` tidak lagi dipass sebagai control detail request agar tidak memberi kesan request detail masih paralel
+- `npm test` terakhir hijau dengan total `381` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

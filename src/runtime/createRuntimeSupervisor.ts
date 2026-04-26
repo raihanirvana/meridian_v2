@@ -53,7 +53,7 @@ import { DefaultSignalWeightsProvider } from "../app/services/SignalWeightsProvi
 import { createPostClaimSwapHook } from "../app/usecases/executePostClaimSwap.js";
 import { reviewStrategyWithAi } from "../app/usecases/reviewStrategyWithAi.js";
 import { createPerformanceLessonHook } from "../app/services/createPerformanceLessonHook.js";
-import { InMemoryMeteoraDetailRateLimiter } from "../app/services/MeteoraDetailRateLimiter.js";
+import { FileMeteoraDetailRateLimiter } from "../app/services/MeteoraDetailRateLimiter.js";
 import { createUlid } from "../infra/id/createUlid.js";
 
 export interface RuntimeSupervisorInput {
@@ -358,7 +358,8 @@ export function createRuntimeSupervisor(
 ): RuntimeSupervisor {
   const logger = createLogger(input.config.runtime.logLevel);
   let previousPortfolioState: PortfolioState | null = null;
-  const detailRateLimiter = new InMemoryMeteoraDetailRateLimiter({
+  const detailRateLimiter = new FileMeteoraDetailRateLimiter({
+    filePath: input.stores.paths.meteoraRateLimitStateFilePath,
     detailRequestIntervalMs: input.config.screening.detailRequestIntervalMs,
     maxDetailRequestsPerWindow:
       input.config.screening.maxDetailRequestsPerWindow,
@@ -1148,7 +1149,6 @@ export function createRuntimeSupervisor(
           ? {}
           : { aiTimeoutMs: input.aiTimeoutMs }),
         poolMemoryRepository: input.stores.poolMemoryRepository,
-        enrichmentConcurrency: input.config.screening.enrichmentConcurrency,
         detailEnrichmentTopN: input.config.screening.detailEnrichmentTopN,
         maxDetailRequestsPerCycle:
           input.config.screening.maxDetailRequestsPerCycle,
