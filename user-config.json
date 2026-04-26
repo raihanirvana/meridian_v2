@@ -24,14 +24,14 @@
     "requireFreshSnapshot": true,
     "maxEstimatedSlippageBps": 400,
     "maxStrategySnapshotAgeMs": 180000,
-    "aiReviewPoolSize": 25,
+    "aiReviewPoolSize": 15,
     "detailEnrichmentTopN": 8,
-    "enrichmentConcurrency": 2,
-    "detailRequestIntervalMs": 3500,
+    "enrichmentConcurrency": 1,
+    "detailRequestIntervalMs": 5000,
     "maxDetailRequestsPerCycle": 8,
-    "maxDetailRequestsPerWindow": 30,
+    "maxDetailRequestsPerWindow": 24,
     "detailRequestWindowMs": 900000,
-    "detailCooldownAfter429Ms": 900000,
+    "detailCooldownAfter429Ms": 1200000,
     "requireDetailForDeploy": true,
     "allowSnapshotOnlyWatch": true,
     "allowedBinSteps": [80, 100, 125, 200],
@@ -41,17 +41,17 @@
       {
         "start": "08:00",
         "end": "14:00",
-        "intervalSec": 600
+        "intervalSec": 300
       },
       {
         "start": "20:00",
         "end": "23:59",
-        "intervalSec": 900
+        "intervalSec": 300
       }
     ]
   },
   "schedule": {
-    "screeningIntervalSec": 1800,
+    "screeningIntervalSec": 300,
     "managementIntervalSec": 300,
     "reconciliationIntervalSec": 180,
     "reportingIntervalSec": 1800
