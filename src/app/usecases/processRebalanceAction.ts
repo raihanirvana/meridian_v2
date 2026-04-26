@@ -221,6 +221,7 @@ export async function processRebalanceAction(
         actionType: "CLOSE",
         closedPositionId: input.action.positionId,
         txIds: error.txIds,
+        submissionStatus: "maybe_submitted",
         submissionAmbiguous: true,
       });
       const reconciliationPosition = buildReconciliationRequiredPosition(

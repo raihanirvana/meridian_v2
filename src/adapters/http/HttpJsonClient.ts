@@ -158,7 +158,12 @@ export class JsonHttpClient {
       }
     }
 
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      throw new AdapterTransportError(this.adapterName, error);
+    }
     if (!response.ok) {
       throw new AdapterHttpStatusError({
         adapterName: this.adapterName,

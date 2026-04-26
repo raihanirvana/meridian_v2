@@ -270,6 +270,7 @@ describe("maybeEvolvePolicy", () => {
       rationale: {},
     });
     expect((await runtimePolicyStore.snapshot()).overrides).toEqual({});
+    expect((await runtimePolicyStore.snapshot()).positionsAtEvolution).toBe(5);
     expect(await lessonRepository.list()).toHaveLength(0);
     expect(await journalRepository.list()).toHaveLength(0);
   });

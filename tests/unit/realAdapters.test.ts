@@ -48,6 +48,7 @@ describe("real adapters", () => {
     ).resolves.toEqual({
       actionType: "DEPLOY",
       positionId: "pos_001",
+      submissionStatus: "submitted",
       txIds: ["tx_001"],
     });
 
@@ -445,6 +446,24 @@ describe("real adapters", () => {
             reject(new Error("request aborted"));
           });
         }),
+    });
+
+    await expect(
+      screening.listCandidates({ limit: 5, timeframe: "5m" }),
+    ).rejects.toBeInstanceOf(AdapterTransportError);
+  });
+
+  it("maps response body read failures into AdapterTransportError", async () => {
+    const screening = new HttpScreeningGateway({
+      baseUrl: "https://screening.example.com/v1/",
+      fetchFn: async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => {
+            throw new Error("body stream failed");
+          },
+        }) as Response,
     });
 
     await expect(

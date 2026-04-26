@@ -336,6 +336,7 @@ export async function processDeployAction(
           actionType: "DEPLOY",
           positionId: error.positionId,
           txIds: error.txIds,
+          submissionStatus: "maybe_submitted",
           submissionAmbiguous: true,
         }),
         error: `Deploy submission ambiguous; reconciliation required: ${errorMessage(

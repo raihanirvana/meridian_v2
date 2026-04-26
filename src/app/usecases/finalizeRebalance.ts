@@ -1254,6 +1254,7 @@ export async function finalizeRebalance(
               actionType: "DEPLOY",
               positionId: error.positionId,
               txIds: error.txIds,
+              submissionStatus: "maybe_submitted",
               submissionAmbiguous: true,
             });
             const pendingRedeployPosition = buildPendingRedeployPosition({

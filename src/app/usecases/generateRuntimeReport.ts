@@ -107,10 +107,22 @@ export async function generateRuntimeReport(
     input.poolMemoryRepository === undefined
       ? null
       : await input.poolMemoryRepository.listAll();
-  const solPriceQuote =
-    input.priceGateway === undefined
-      ? null
-      : await input.priceGateway.getSolPriceUsd();
+  let solPriceQuote: { priceUsd: number } | null = null;
+  let priceWarning: RuntimeAlert | null = null;
+  if (input.priceGateway !== undefined) {
+    try {
+      solPriceQuote = await input.priceGateway.getSolPriceUsd();
+    } catch (error) {
+      priceWarning = {
+        kind: "PRICE_UNAVAILABLE",
+        severity: "WARN",
+        title: "SOL price unavailable",
+        body:
+          "Runtime report generated without SOL conversion because price gateway failed: " +
+          (error instanceof Error ? error.message : "unknown price error"),
+      };
+    }
+  }
   const scheduler =
     input.schedulerMetadataStore === undefined
       ? null
@@ -175,8 +187,10 @@ export async function generateRuntimeReport(
           `${pendingReconciliationPositions} position(s) still need reconciliation`,
         ]
       : []),
-    ...(alerts.length > 0
-      ? alerts.map((alert) => `${alert.kind}: ${alert.title}`)
+    ...([...(priceWarning === null ? [] : [priceWarning]), ...alerts].length > 0
+      ? [...(priceWarning === null ? [] : [priceWarning]), ...alerts].map(
+          (alert) => `${alert.kind}: ${alert.title}`,
+        )
       : []),
   ];
 
@@ -202,6 +216,10 @@ export async function generateRuntimeReport(
     dailyProfitTargetReached,
     scheduler,
     issues,
-    alerts: [...alerts, ...profitTargetAlerts],
+    alerts: [
+      ...(priceWarning === null ? [] : [priceWarning]),
+      ...alerts,
+      ...profitTargetAlerts,
+    ],
   };
 }

@@ -1318,9 +1318,21 @@ describe("deploy flow", () => {
     expect(processed?.status).toBe("WAITING_CONFIRMATION");
     expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
     expect(
-      (persistedAction?.resultPayload as { submissionAmbiguous?: boolean })
-        ?.submissionAmbiguous,
+      (
+        persistedAction?.resultPayload as {
+          submissionAmbiguous?: boolean;
+          submissionStatus?: string;
+        }
+      )?.submissionAmbiguous,
     ).toBe(true);
+    expect(
+      (
+        persistedAction?.resultPayload as {
+          submissionAmbiguous?: boolean;
+          submissionStatus?: string;
+        }
+      )?.submissionStatus,
+    ).toBe("maybe_submitted");
     expect(persistedAction?.txIds).toEqual(["tx_maybe_sent_001"]);
     expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
     expect(persistedPosition?.needsReconciliation).toBe(true);

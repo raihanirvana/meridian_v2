@@ -250,6 +250,47 @@ describe("reporting worker", () => {
     );
   });
 
+  it("degrades reporting when SOL price is unavailable", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: path.join(directory, "lessons.json"),
+    });
+    await performanceRepository.append(buildPerformanceRecord());
+
+    const result = await runReportingWorker({
+      wallet: "wallet_001",
+      stateRepository,
+      actionRepository,
+      performanceRepository,
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "fail",
+          error: new Error("price api unavailable"),
+        },
+      }),
+      dailyProfitTargetSol: 0.4,
+      solMode: true,
+      now: () => "2026-04-22T09:00:00.000Z",
+    });
+
+    expect(result.report.solPriceUsd).toBeNull();
+    expect(result.report.dailyPnlUsd).toBe(25);
+    expect(result.report.dailyPnlSol).toBeNull();
+    expect(result.report.dailyProfitTargetReached).toBe(false);
+    expect(result.report.alerts.map((alert) => alert.kind)).toContain(
+      "PRICE_UNAVAILABLE",
+    );
+    expect(result.report.issues).toContain(
+      "PRICE_UNAVAILABLE: SOL price unavailable",
+    );
+  });
+
   it("continues delivering later alerts when one notification fails", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({

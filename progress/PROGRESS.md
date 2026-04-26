@@ -759,4 +759,9 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - manual/operator rebalance tidak lagi bypass risk engine; `requestRebalance()` mendukung `riskGuard` dan operator command membangun portfolio snapshot + SOL price sebelum enqueue
   - risk-reducing write action (`CLOSE`, `CLAIM_FEES`, `PARTIAL_CLOSE`) tetap boleh melewati circuit/daily-loss blocker, tetapi tidak boleh berjalan bila wallet sudah punya active write action
   - ownership screening/autodeploy dan worker metadata writes dicatat sebagai design decision eksplisit agar audit berikutnya membedakan queue bypass vs telemetry write
-- `npm test` terakhir hijau dengan total `352` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 16-19 hardening follow-up sekarang masuk:
+  - deploy/close/rebalance submit ambiguity sekarang membawa `submissionStatus` eksplisit (`submitted` / `maybe_submitted`) di result payload selain typed `AmbiguousSubmissionError`
+  - `JsonHttpClient` sekarang menormalisasi error saat membaca response body menjadi `AdapterTransportError`
+  - runtime report tetap degrade saat price gateway gagal, dengan alert `PRICE_UNAVAILABLE` dan SOL conversion dilewati
+  - adaptive policy evolution no-change tetap menulis metadata milestone agar tidak re-evaluate no-op berulang pada count yang sama
+- `npm test` terakhir hijau dengan total `354` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

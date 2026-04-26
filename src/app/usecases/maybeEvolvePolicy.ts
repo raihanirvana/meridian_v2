@@ -73,6 +73,14 @@ export async function maybeEvolvePolicy(
   });
 
   if (evolved === null) {
+    await input.runtimePolicyStore.applyOverrides(
+      {},
+      {
+        lastEvolvedAt: input.now(),
+        positionsAtEvolution,
+        rationale: {},
+      },
+    );
     return {
       positionsAtEvolution,
       changes: {},
@@ -81,6 +89,14 @@ export async function maybeEvolvePolicy(
   }
 
   if (Object.keys(evolved.changes).length === 0) {
+    await input.runtimePolicyStore.applyOverrides(
+      {},
+      {
+        lastEvolvedAt: input.now(),
+        positionsAtEvolution,
+        rationale: evolved.rationale,
+      },
+    );
     return {
       positionsAtEvolution,
       changes: {},

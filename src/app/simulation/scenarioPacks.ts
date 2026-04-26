@@ -329,6 +329,7 @@ export function createRebalanceScenarioPack(): SimulationScenarioPack {
           actionType: "DEPLOY",
           positionId: newPositionId,
           txIds: ["tx_redeploy_001"],
+          submissionStatus: "submitted",
         }),
       ],
       closeResponses: [
@@ -336,6 +337,7 @@ export function createRebalanceScenarioPack(): SimulationScenarioPack {
           actionType: "CLOSE",
           closedPositionId: oldPositionId,
           txIds: ["tx_rebalance_close_001"],
+          submissionStatus: "submitted",
           releasedAmountBase: 1,
           releasedAmountQuote: 0.5,
           estimatedReleasedValueUsd: 120,
@@ -387,6 +389,7 @@ export function createTimeoutReconciliationScenarioPack(): SimulationScenarioPac
           actionType: "DEPLOY",
           positionId: "pos_timeout_001",
           txIds: ["tx_timeout_001"],
+          submissionStatus: "submitted",
         }),
       ],
       closeResponses: [],

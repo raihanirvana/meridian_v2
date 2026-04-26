@@ -234,6 +234,7 @@ export class ReplaySimulationGateway
           actionType: "DEPLOY",
           positionId: `sim_deploy_${this.generatedDeployCount + 1}`,
           txIds: [`tx_deploy_${this.generatedDeployCount + 1}`],
+          submissionStatus: "submitted",
         },
       } satisfies ReplaySuccess<DeployLiquidityResult>);
     const result = await resolveReplayResult(replay);
@@ -264,6 +265,7 @@ export class ReplaySimulationGateway
           actionType: "CLOSE",
           closedPositionId: parsedRequest.positionId,
           txIds: [`tx_close_${this.generatedCloseCount + 1}`],
+          submissionStatus: "submitted",
         },
       } satisfies ReplaySuccess<ClosePositionResult>);
     const result = await resolveReplayResult(replay);

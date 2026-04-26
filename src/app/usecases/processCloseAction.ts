@@ -206,6 +206,7 @@ export async function processCloseAction(
           actionType: "CLOSE",
           closedPositionId: input.action.positionId,
           txIds: error.txIds,
+          submissionStatus: "maybe_submitted",
           submissionAmbiguous: true,
         }),
         error: `Close submission ambiguous; reconciliation required: ${errorMessage(

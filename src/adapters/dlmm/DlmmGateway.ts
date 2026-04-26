@@ -71,6 +71,9 @@ export const DeployLiquidityResultSchema = z.object({
   actionType: z.literal("DEPLOY"),
   positionId: z.string().min(1),
   txIds: z.array(z.string().min(1)),
+  submissionStatus: z
+    .enum(["not_submitted", "maybe_submitted", "submitted"])
+    .default("submitted"),
   submissionAmbiguous: z.boolean().optional(),
 });
 
@@ -84,6 +87,9 @@ export const ClosePositionResultSchema = z.object({
   actionType: z.literal("CLOSE"),
   closedPositionId: z.string().min(1),
   txIds: z.array(z.string().min(1)),
+  submissionStatus: z
+    .enum(["not_submitted", "maybe_submitted", "submitted"])
+    .default("submitted"),
   preCloseFeesClaimed: z.boolean().optional(),
   preCloseFeesClaimError: z.string().min(1).nullable().optional(),
   releasedAmountBase: z.number().nonnegative().optional(),

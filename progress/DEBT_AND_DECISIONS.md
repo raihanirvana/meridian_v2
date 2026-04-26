@@ -31,6 +31,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: runtime loop saat ini tetap menjadi pemilik cadence interval, sementara metadata store mencegah overlap dan menyimpan `nextDueAt` untuk reporting. Ini cukup untuk single-runtime supervisor, tetapi belum menjadi due-time gate yang mandiri.
   Revisit: jika worker mulai dipanggil dari beberapa cron eksternal/manual surface; tambah skip `SKIPPED_NOT_DUE` untuk `triggerSource="cron"`.
 
+- `N75` legacy migration dari format repo lama/snake_case belum punya migrator eksplisit
+  Status: deferred
+  Kenapa ditunda: runtime V2 saat ini memakai store/schema baru dan tidak otomatis membaca file state lama. Selama deploy dimulai dari data dir V2 fresh, ini bukan risk live trading. Kalau operator ingin membawa state lama dari `meredian_fixed`, perlu one-way migration tool agar tidak salah map lifecycle/action/lesson fields.
+  Revisit: sebelum import data lama ke production data dir V2; buat script migration dry-run + backup.
+
 - `N71` Batch 25 AI rebalance pool snapshot sudah memakai metadata entry + fresh pool active-bin, tetapi belum enrichment market pool live penuh
   Status: deferred
   Kenapa ditunda: planner/validator/queue boundary sudah tersedia, dan snapshot AI sekarang tidak lagi memakai value posisi sebagai TVL pool serta memakai `getPoolInfo()` untuk fresh active bin. Namun `runManagementCycle()` masih belum punya feed live penuh untuk fee velocity, trend direction/mean reversion real-time, dan depth rich snapshot setelah posisi berjalan.
@@ -216,6 +221,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: body ringkas cukup untuk sekarang dan mencegah log/error terlalu bising, tetapi beberapa upstream bisa menyimpan kode error penting di payload yang lebih panjang.
   Revisit: saat real adapter observability mulai dipakai operator dan perlu richer vendor error context.
 
+- `N76` HTTP body stream read error sekarang dinormalisasi menjadi `AdapterTransportError`
+  Status: closed
+  Kenapa ditutup: `JsonHttpClient.request()` sekarang membungkus `response.text()` dalam try/catch, sehingga connection reset/body stream failure tidak lagi bocor sebagai raw error. Regression ada di `realAdapters.test.ts`.
+
 - `N43` simulation seeding belum idempotent penuh karena `runDryRunSimulation()` masih melakukan append journal fixture tanpa dedup/replace di [runDryRunSimulation.ts](c:/Users/PC/Desktop/meridian_v2/src/app/usecases/runDryRunSimulation.ts:69)
   Status: deferred
   Kenapa ditunda: untuk test harness saat ini setiap run memakai temp workspace baru, jadi duplicate seed belum mengganggu correctness. Tetapi jika simulator nanti dipakai di persistent dev environment yang sama, replay fixture yang dijalankan dua kali bisa menggandakan initial journal events.
@@ -373,6 +382,10 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - AI advisory tidak boleh memanggil LLM tanpa hasil konsultasi lesson; jika `LessonPromptService` gagal, sistem harus log `ai_lesson_injection_failed` lalu fallback ke deterministic
   Rationale: PRD Batch 17.1 menegaskan bahwa AI harus belajar dulu sebelum entry/management reasoning. Safety yang dipilih adalah “no lessons -> no LLM”, bukan “LLM jalan tanpa konteks”.
   Tradeoff: jika lesson store unavailable, kualitas advisory turun ke deterministic penuh sampai store pulih, tetapi boundary keselamatan dan auditability tetap jelas.
+
+- Lesson prompt yang berhasil dibangun tetapi berisi “No historical lessons recorded yet.” tetap dihitung sebagai konsultasi lesson yang valid
+  Rationale: empty knowledge base berbeda dari lesson store failure. Fresh install harus tetap bisa memakai AI dengan konteks eksplisit bahwa belum ada histori, sementara store corrupt/unavailable tetap fallback deterministic.
+  Tradeoff: AI bisa berjalan sebelum ada lesson historis aktual, tetapi prompt-nya tidak diam-diam kosong dan learning context tetap auditable.
 
 - Batch 17.4 memperlakukan `signalWeights` sebagai multiplier di atas `scoringPolicy.weights`, bukan mengganti policy base weight mentah, di [candidateScore.ts](c:/Users/PC/Desktop/meridian_v2/src/domain/scoring/candidateScore.ts:1)
   Rationale: policy base tetap source of truth yang bisa diaudit operator, sementara Darwin menjadi lapisan adaptif kecil yang menggeser sensitivitas scorer secara perlahan.
@@ -563,6 +576,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `F40` autonomous deploy dari screening shortlist sekarang tersedia lewat `deploy.autoDeployFromShortlist`; runtime hanya meng-enqueue `DEPLOY` resmi via `requestDeploy()` setelah shortlist lolos, active bin/range di-resolve dari DLMM gateway, pending action/risk/circuit-breaker guard dicek, dan `runtime.dryRun=true` hanya mencatat rencana tanpa enqueue di [createRuntimeSupervisor.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/createRuntimeSupervisor.ts:1).
 - `F41` manual/operator rebalance sekarang melewati full portfolio risk guard sebelum enqueue; `requestRebalance()` bisa menerima `riskGuard`, menulis `REBALANCE_REQUEST_BLOCKED_BY_RISK`, dan memblok max capital usage, exposure, pending action, daily loss/circuit breaker, serta max rebalance count.
 - `F42` risk-reducing write actions (`CLOSE`, `CLAIM_FEES`, `PARTIAL_CLOSE`) sekarang tetap kena global pending write guard; hanya `RECONCILE_ONLY` yang benar-benar bypass sebagai non-write action.
+- `F43` submit ambiguity sekarang membawa status eksplisit di result payload: `submissionStatus="submitted"` untuk response normal dan `submissionStatus="maybe_submitted"` untuk `AmbiguousSubmissionError` pada deploy, close, rebalance close, dan rebalance redeploy.
+- `F44` reporting worker sekarang degrade saat price gateway gagal; report tetap keluar dengan `dailyPnlUsd`, `dailyPnlSol=null`, alert `PRICE_UNAVAILABLE`, dan issue yang jelas.
+- `F45` no-change adaptive policy evolution sekarang tetap menandai `positionsAtEvolution`, sehingga milestone tanpa threshold change tidak dievaluasi ulang terus pada count yang sama.
 - `F41` screening live sekarang punya adapter native Meteora Pool Discovery; bila `SCREENING_API_BASE_URL` kosong, `runLive.ts` memakai `https://pool-discovery-api.datapi.meteora.ag` langsung, membawa `timeframe` ke query, memetakan pool discovery ke candidate V2, lalu tetap melewatkan semua keputusan ke hard-filter/scoring engine di [MeteoraPoolDiscoveryScreeningGateway.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.ts:1) dan [runLive.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1).
 
 ## Next Review Gate

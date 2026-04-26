@@ -322,10 +322,23 @@ describe("rebalance flow", () => {
     expect(
       (
         persistedAction?.resultPayload as {
-          closeResult?: { submissionAmbiguous?: boolean };
+          closeResult?: {
+            submissionAmbiguous?: boolean;
+            submissionStatus?: string;
+          };
         }
       )?.closeResult?.submissionAmbiguous,
     ).toBe(true);
+    expect(
+      (
+        persistedAction?.resultPayload as {
+          closeResult?: {
+            submissionAmbiguous?: boolean;
+            submissionStatus?: string;
+          };
+        }
+      )?.closeResult?.submissionStatus,
+    ).toBe("maybe_submitted");
     expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
     expect(persistedPosition?.needsReconciliation).toBe(true);
     expect(events.map((event) => event.eventType)).toContain(
