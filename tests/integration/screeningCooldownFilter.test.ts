@@ -124,6 +124,10 @@ function buildCandidate(
     }),
     dataFreshnessSnapshot: buildDataFreshnessSnapshot({
       now,
+      screeningSnapshotAt: now,
+      poolDetailFetchedAt: now,
+      tokenIntelFetchedAt: now,
+      chainSnapshotFetchedAt: now,
       hasActiveBin: true,
     }),
     ...overrides,

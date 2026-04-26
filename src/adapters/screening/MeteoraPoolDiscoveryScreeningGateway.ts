@@ -495,6 +495,10 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     });
     const dataFreshnessSnapshot = buildDataFreshnessSnapshot({
       now,
+      screeningSnapshotAt: now,
+      poolDetailFetchedAt: now,
+      tokenIntelFetchedAt: now,
+      chainSnapshotFetchedAt: now,
       hasActiveBin: activeBin !== undefined,
     });
     const strategySuitability = scoreStrategySuitability({

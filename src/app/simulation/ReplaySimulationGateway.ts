@@ -294,6 +294,7 @@ export class ReplaySimulationGateway
           actionType: "CLAIM_FEES",
           claimedBaseAmount: 0,
           txIds: ["tx_claim_1"],
+          submissionStatus: "submitted",
         },
       } satisfies ReplaySuccess<ClaimFeesResult>);
     return ClaimFeesResultSchema.parse(await resolveReplayResult(replay));

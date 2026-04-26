@@ -27,11 +27,25 @@ function baseDlmm(overrides = {}) {
 function fresh() {
   return buildDataFreshnessSnapshot({
     now,
+    screeningSnapshotAt: now,
+    poolDetailFetchedAt: now,
+    tokenIntelFetchedAt: now,
+    chainSnapshotFetchedAt: now,
     hasActiveBin: true,
   });
 }
 
 describe("strategy suitability scoring", () => {
+  it("marks snapshots with missing source timestamps as not fresh enough for deploy", () => {
+    const result = buildDataFreshnessSnapshot({
+      now,
+      hasActiveBin: true,
+    });
+
+    expect(result.isFreshEnoughForDeploy).toBe(false);
+    expect(result.oldestRequiredSnapshotAgeMs).toBeGreaterThan(120_000);
+  });
+
   it("prefers curve for low-volatility sideways pools", () => {
     const result = scoreStrategySuitability({
       marketFeatureSnapshot: buildMarketFeatureSnapshot({

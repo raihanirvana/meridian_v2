@@ -310,12 +310,21 @@ export async function runScreeningCycle(
                 return null;
               });
       const [details, narrative] = await Promise.all([
-        input.screeningGateway.getCandidateDetails(candidate.poolAddress),
+        input.screeningGateway
+          .getCandidateDetails(candidate.poolAddress)
+          .catch((error) => {
+            logger.warn(
+              { err: error, poolAddress: candidate.poolAddress },
+              "candidate detail enrichment failed; continuing with gateway candidate snapshot",
+            );
+            return null;
+          }),
         narrativePromise,
       ]);
 
-      let narrativeSummary = details.narrativeSummary ?? null;
-      let holderDistributionSummary = details.holderDistributionSummary ?? null;
+      let narrativeSummary = details?.narrativeSummary ?? null;
+      let holderDistributionSummary =
+        details?.holderDistributionSummary ?? null;
       if (narrative !== null) {
         narrativeSummary = narrative.narrativeSummary ?? narrativeSummary;
         holderDistributionSummary =
@@ -323,16 +332,16 @@ export async function runScreeningCycle(
       }
 
       const screeningInput = toScreeningInput(candidate, {
-        ...(details.feePerTvl24h === undefined
+        ...(details?.feePerTvl24h === undefined
           ? {}
           : { feePerTvl24h: details.feePerTvl24h }),
-        ...(details.tokenAgeHours === undefined
+        ...(details?.tokenAgeHours === undefined
           ? {}
           : { tokenAgeHours: details.tokenAgeHours }),
-        ...(details.athDistancePct === undefined
+        ...(details?.athDistancePct === undefined
           ? {}
           : { athDistancePct: details.athDistancePct }),
-        ...(details.volumeTrendPct === undefined
+        ...(details?.volumeTrendPct === undefined
           ? {}
           : { volumeTrendPct: details.volumeTrendPct }),
         ...(narrativeSummary === null ? {} : { narrativeSummary }),

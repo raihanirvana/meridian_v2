@@ -136,6 +136,10 @@ function buildGatewayCandidate(overrides: Partial<Candidate> = {}): Candidate {
     },
     dataFreshnessSnapshot: buildDataFreshnessSnapshot({
       now,
+      screeningSnapshotAt: now,
+      poolDetailFetchedAt: now,
+      tokenIntelFetchedAt: now,
+      chainSnapshotFetchedAt: now,
       hasActiveBin: true,
     }),
     hardFilterPassed: true,
@@ -640,6 +644,89 @@ describe("screening worker", () => {
 
     const result = await runPromise;
     expect(result.candidates).toHaveLength(2);
+  });
+
+  it("continues screening when one candidate detail request fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: {
+        async listCandidates() {
+          return [
+            buildGatewayCandidate({
+              candidateId: "cand_001",
+              poolAddress: "pool_001",
+            }),
+            buildGatewayCandidate({
+              candidateId: "cand_002",
+              poolAddress: "pool_002",
+              symbolPair: "XYZ-SOL",
+            }),
+          ];
+        },
+        async getCandidateDetails(poolAddress) {
+          if (poolAddress === "pool_001") {
+            throw new Error("details API unavailable");
+          }
+
+          return {
+            poolAddress,
+            pairLabel: poolAddress,
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+          };
+        },
+      },
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: now,
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: now,
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy({ shortlistLimit: 2 });
+        },
+      },
+      aiMode: "disabled",
+      now: () => now,
+    });
+
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates.map((candidate) => candidate.poolAddress)).toEqual(
+      ["pool_001", "pool_002"],
+    );
   });
 
   it("caps candidate enrichment concurrency to protect upstream rate limits", async () => {

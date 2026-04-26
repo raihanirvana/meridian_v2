@@ -59,6 +59,21 @@ const ClaimAutoCompoundStateSchema = z
   })
   .strict();
 
+const ClaimAutoSwapStateSchema = z
+  .object({
+    outputMint: z.string().min(1),
+    phase: z.enum([
+      "PENDING_SWAP",
+      "SWAP_IN_PROGRESS",
+      "SWAP_DONE",
+      "FAILED",
+      "MANUAL_REVIEW_REQUIRED",
+    ]),
+    swap: z.record(z.string(), z.unknown()).nullable().optional(),
+    error: z.string().min(1).nullable().optional(),
+  })
+  .strict();
+
 const ClaimConfirmationPayloadSchema = z
   .object({
     actionType: z.literal("CLAIM_FEES"),
@@ -67,8 +82,13 @@ const ClaimConfirmationPayloadSchema = z
       .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])
       .optional(),
     txIds: z.array(z.string().min(1)),
+    submissionStatus: z
+      .enum(["not_submitted", "maybe_submitted", "submitted"])
+      .default("submitted"),
+    submissionAmbiguous: z.boolean().optional(),
     reason: z.string().min(1),
     autoSwapOutputMint: z.string().min(1).nullable().optional(),
+    autoSwap: ClaimAutoSwapStateSchema.nullable().optional(),
     autoCompound: ClaimAutoCompoundStateSchema.nullable().optional(),
     swap: z.record(z.string(), z.unknown()).nullable().optional(),
   })
@@ -341,18 +361,44 @@ async function runClaimPostProcessing(input: {
   let workingAction = input.latestAction;
   let claimResult = input.claimResult;
 
-  let simpleSwapResult = claimResult.swap ?? null;
   if (
     claimResult.autoCompound === null ||
     claimResult.autoCompound === undefined
   ) {
+    let autoSwap =
+      claimResult.autoSwap ??
+      (claimResult.autoSwapOutputMint === null ||
+      claimResult.autoSwapOutputMint === undefined
+        ? null
+        : ClaimAutoSwapStateSchema.parse({
+            outputMint: claimResult.autoSwapOutputMint,
+            phase:
+              claimResult.swap === undefined ? "PENDING_SWAP" : "SWAP_DONE",
+            swap: claimResult.swap ?? null,
+            error: null,
+          }));
+
     if (
       input.postClaimSwapHook !== undefined &&
-      claimResult.autoSwapOutputMint !== null &&
-      claimResult.autoSwapOutputMint !== undefined &&
+      autoSwap !== null &&
       claimResult.claimedBaseAmount > 0 &&
-      simpleSwapResult === null
+      autoSwap.phase === "PENDING_SWAP"
     ) {
+      autoSwap = ClaimAutoSwapStateSchema.parse({
+        ...autoSwap,
+        phase: "SWAP_IN_PROGRESS",
+        error: null,
+      });
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        autoSwap,
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+
       if (claimResult.claimedBaseAmountSource === "unavailable") {
         await appendJournalEvent(input.journalRepository, {
           timestamp: input.now,
@@ -368,22 +414,30 @@ async function runClaimPostProcessing(input: {
           error:
             "claimed base amount unavailable after claim; auto swap skipped",
         });
-        simpleSwapResult = {
-          status: "FAILED",
+        autoSwap = ClaimAutoSwapStateSchema.parse({
+          ...autoSwap,
+          phase: "FAILED",
+          swap: null,
           error:
             "claimed base amount unavailable after claim; auto swap skipped",
-        };
+        });
       } else {
         try {
-          simpleSwapResult = await input.postClaimSwapHook(
+          const simpleSwapResult = await input.postClaimSwapHook(
             PostClaimSwapInputSchema.parse({
               actionId: workingAction.actionId,
               wallet: workingAction.wallet,
               position: input.reconcilingPosition,
               claimedBaseAmount: claimResult.claimedBaseAmount,
-              outputMint: claimResult.autoSwapOutputMint,
+              outputMint: autoSwap.outputMint,
             }),
           );
+          autoSwap = ClaimAutoSwapStateSchema.parse({
+            ...autoSwap,
+            phase: "SWAP_DONE",
+            swap: simpleSwapResult,
+            error: null,
+          });
         } catch (error) {
           await appendJournalEvent(input.journalRepository, {
             timestamp: input.now,
@@ -398,16 +452,42 @@ async function runClaimPostProcessing(input: {
             resultStatus: "FAILED",
             error: errorMessage(error, "claim auto swap failed"),
           });
-          simpleSwapResult = {
-            status: "FAILED",
+          autoSwap = ClaimAutoSwapStateSchema.parse({
+            ...autoSwap,
+            phase: "FAILED",
+            swap: null,
             error: errorMessage(error, "claim auto swap failed"),
-          };
+          });
         }
       }
 
       claimResult = ClaimConfirmationPayloadSchema.parse({
         ...claimResult,
-        swap: simpleSwapResult,
+        autoSwap,
+        swap: autoSwap.swap ?? {
+          status: "FAILED",
+          error: autoSwap.error ?? "claim auto swap failed",
+        },
+      });
+      workingAction = await persistReconcilingAction({
+        actionRepository: input.actionRepository,
+        action: workingAction,
+        resultPayload: claimResult,
+      });
+    } else if (autoSwap?.phase === "SWAP_IN_PROGRESS") {
+      autoSwap = ClaimAutoSwapStateSchema.parse({
+        ...autoSwap,
+        phase: "MANUAL_REVIEW_REQUIRED",
+        error:
+          "simple claim swap status was left in progress after interruption",
+      });
+      claimResult = ClaimConfirmationPayloadSchema.parse({
+        ...claimResult,
+        autoSwap,
+        swap: {
+          status: "MANUAL_REVIEW_REQUIRED",
+          error: autoSwap.error,
+        },
       });
       workingAction = await persistReconcilingAction({
         actionRepository: input.actionRepository,

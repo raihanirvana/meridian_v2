@@ -72,6 +72,10 @@ function buildCandidate(overrides: Partial<Candidate> = {}): Candidate {
   });
   const dataFreshnessSnapshot = buildDataFreshnessSnapshot({
     now,
+    screeningSnapshotAt: now,
+    poolDetailFetchedAt: now,
+    tokenIntelFetchedAt: now,
+    chainSnapshotFetchedAt: now,
     hasActiveBin: true,
   });
   const strategySuitability = scoreStrategySuitability({
@@ -281,6 +285,92 @@ describe("reviewStrategyWithAi", () => {
 
     expect(result.reviews[0]?.source).toBe("FALLBACK");
     expect(result.reviews[0]?.review.recommendedStrategy).toBe("bid_ask");
+  });
+
+  it("falls back when AI returns deploy with no concrete strategy", async () => {
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
+      reviewer: new MockAiStrategyReviewer({
+        reviewCandidateStrategy: {
+          type: "success",
+          value: buildAiReview({
+            decision: "deploy",
+            recommendedStrategy: "none",
+          }),
+        },
+      }),
+      now: () => now,
+    });
+
+    expect(result.reviews[0]?.source).toBe("FALLBACK");
+    expect(result.reviews[0]?.aiError).toContain(
+      "deploy decisions must recommend a concrete strategy",
+    );
+  });
+
+  it("falls back when batch AI returns duplicate pool reviews", async () => {
+    const candidateA = buildCandidate({
+      candidateId: "cand_a",
+      poolAddress: "pool_a",
+      symbolPair: "AAA-SOL",
+    });
+    const candidateB = buildCandidate({
+      candidateId: "cand_b",
+      poolAddress: "pool_b",
+      symbolPair: "BBB-SOL",
+    });
+
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [candidateA, candidateB],
+      aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
+      reviewer: {
+        async reviewCandidateStrategy() {
+          throw new Error("single review should not run");
+        },
+        async reviewCandidateStrategies() {
+          return [
+            buildAiReview({ poolAddress: "pool_a" }),
+            buildAiReview({ poolAddress: "pool_a" }),
+          ];
+        },
+      },
+      now: () => now,
+    });
+
+    expect(result.reviews).toHaveLength(2);
+    expect(result.reviews.every((review) => review.source === "FALLBACK")).toBe(
+      true,
+    );
+    expect(result.reviews[0]?.aiError).toContain("duplicate poolAddress");
+  });
+
+  it("falls back when batch AI returns an extra pool review", async () => {
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
+      reviewer: {
+        async reviewCandidateStrategy() {
+          throw new Error("single review should not run");
+        },
+        async reviewCandidateStrategies() {
+          return [
+            buildAiReview(),
+            buildAiReview({ poolAddress: "pool_extra" }),
+          ];
+        },
+      },
+      now: () => now,
+    });
+
+    expect(result.reviews[0]?.source).toBe("FALLBACK");
+    expect(result.reviews[0]?.aiError).toContain("unexpected poolAddress");
   });
 
   it("downgrades low-confidence AI deploy recommendations to watch", async () => {

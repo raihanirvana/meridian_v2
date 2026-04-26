@@ -114,6 +114,10 @@ export const ClaimFeesResultSchema = z.object({
     .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])
     .optional(),
   txIds: z.array(z.string().min(1)),
+  submissionStatus: z
+    .enum(["not_submitted", "maybe_submitted", "submitted"])
+    .default("submitted"),
+  submissionAmbiguous: z.boolean().optional(),
 });
 
 export const PartialClosePositionRequestSchema = z.object({

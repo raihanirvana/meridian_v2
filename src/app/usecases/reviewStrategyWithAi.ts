@@ -195,6 +195,36 @@ function enforceStrategyReviewSafety(input: {
   });
 }
 
+function validateBatchReviewSet(input: {
+  expectedPools: string[];
+  aiReviews: StrategyReviewResult[];
+}): void {
+  const expected = new Set(input.expectedPools);
+  const seen = new Set<string>();
+
+  for (const review of input.aiReviews) {
+    if (!expected.has(review.poolAddress)) {
+      throw new Error(
+        `AI strategy review returned unexpected poolAddress ${review.poolAddress}`,
+      );
+    }
+
+    if (seen.has(review.poolAddress)) {
+      throw new Error(
+        `AI strategy review returned duplicate poolAddress ${review.poolAddress}`,
+      );
+    }
+
+    seen.add(review.poolAddress);
+  }
+
+  for (const poolAddress of expected) {
+    if (!seen.has(poolAddress)) {
+      throw new Error(`AI strategy review omitted poolAddress ${poolAddress}`);
+    }
+  }
+}
+
 function buildSystemPrompt(lessonsPrompt: string | null): string {
   const lines = [
     "You are an AI strategy reviewer for Meteora DLMM candidates.",
@@ -414,17 +444,12 @@ export async function reviewStrategyWithAi(
         }),
         timeoutMs,
       );
-      const reviewByPool = new Map(
-        aiReviews.map((review) => [review.poolAddress, review] as const),
-      );
-
-      for (const candidate of aiEligibleCandidates) {
-        if (!reviewByPool.has(candidate.poolAddress)) {
-          throw new Error(
-            `AI strategy review omitted poolAddress ${candidate.poolAddress}`,
-          );
-        }
-      }
+      validateBatchReviewSet({
+        expectedPools: aiEligibleCandidates.map(
+          (candidate) => candidate.poolAddress,
+        ),
+        aiReviews,
+      });
 
       const candidateByPool = new Map(
         aiEligibleCandidates.map((candidate) => [

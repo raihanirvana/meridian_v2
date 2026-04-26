@@ -33,7 +33,24 @@ export const StrategyReviewResultSchema = z
     reasons: z.array(z.string().min(1)),
     rejectIf: z.array(z.string().min(1)),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.decision === "deploy" && value.recommendedStrategy === "none") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["recommendedStrategy"],
+        message: "deploy decisions must recommend a concrete strategy",
+      });
+    }
+
+    if (value.decision === "reject" && value.recommendedStrategy !== "none") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["recommendedStrategy"],
+        message: "reject decisions must use recommendedStrategy none",
+      });
+    }
+  });
 
 export const AiStrategyReviewInputSchema = z
   .object({

@@ -764,4 +764,10 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - `JsonHttpClient` sekarang menormalisasi error saat membaca response body menjadi `AdapterTransportError`
   - runtime report tetap degrade saat price gateway gagal, dengan alert `PRICE_UNAVAILABLE` dan SOL conversion dilewati
   - adaptive policy evolution no-change tetap menulis metadata milestone agar tidak re-evaluate no-op berulang pada count yang sama
-- `npm test` terakhir hijau dengan total `354` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 20-23 hardening follow-up sekarang masuk:
+  - `CLAIM_FEES` submit ambiguity sekarang mengikuti contract `submissionStatus`; ambiguous claim tidak lagi menjadi terminal `FAILED`, melainkan `WAITING_CONFIRMATION` + posisi `RECONCILIATION_REQUIRED`
+  - simple `autoSwapAfterClaim` sekarang punya phase persisted (`PENDING_SWAP -> SWAP_IN_PROGRESS -> SWAP_DONE/FAILED/MANUAL_REVIEW_REQUIRED`), sehingga crash saat swap in-flight tidak memanggil hook swap ulang secara otomatis
+  - screening enrichment sekarang catch `getCandidateDetails()` per kandidat; satu pool detail API gagal tidak lagi menjatuhkan seluruh screening cycle
+  - `buildDataFreshnessSnapshot()` tidak lagi menganggap timestamp source yang hilang sebagai `now`; snapshot tanpa timestamp wajib sekarang stale/fail-safe untuk deploy
+  - AI strategy reviewer sekarang menolak cross-field invalid output (`deploy` tanpa strategy konkret, `reject` dengan strategy aktif) dan batch review wajib exact-set: tidak boleh missing, extra, atau duplicate pool
+- `npm test` terakhir hijau dengan total `361` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   ClaimFeesResultSchema,
+  isAmbiguousSubmissionError,
   type DlmmGateway,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
@@ -192,6 +193,75 @@ export async function processClaimFeesAction(
       }),
     );
   } catch (error) {
+    if (isAmbiguousSubmissionError(error)) {
+      const reconciliationPosition = buildReconciliationRequiredPosition(
+        currentPosition,
+        input.action.actionId,
+        now,
+      );
+      await input.stateRepository.upsert(reconciliationPosition);
+
+      claimResult = ClaimFeesActionResultPayloadSchema.parse({
+        actionType: "CLAIM_FEES",
+        claimedBaseAmount: 0,
+        claimedBaseAmountSource: "unavailable",
+        txIds: error.txIds,
+        submissionStatus: "maybe_submitted",
+        submissionAmbiguous: true,
+      });
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "CLAIM_SUBMISSION_AMBIGUOUS",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
+        actionId: input.action.actionId,
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+          position: currentPosition,
+        }),
+        after: toJournalRecord({
+          position: reconciliationPosition,
+          claimResult,
+        }),
+        txIds: claimResult.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "claim submission ambiguous"),
+      });
+
+      return {
+        nextStatus: "WAITING_CONFIRMATION",
+        txIds: claimResult.txIds,
+        resultPayload: toJournalRecord({
+          ...claimResult,
+          reason: payload.reason,
+          autoSwapOutputMint: payload.autoSwapOutputMint ?? null,
+          autoSwap:
+            payload.autoSwapOutputMint === undefined ||
+            payload.autoSwapOutputMint === null
+              ? null
+              : {
+                  outputMint: payload.autoSwapOutputMint,
+                  phase: "PENDING_SWAP",
+                  swap: null,
+                  error: null,
+                },
+          autoCompound:
+            payload.autoCompound === undefined || payload.autoCompound === null
+              ? null
+              : {
+                  outputMint: payload.autoCompound.outputMint,
+                  phase: "PENDING_SWAP",
+                  deployTemplate: buildCompoundDeployTemplate(currentPosition),
+                },
+        }),
+        error:
+          "Claim submission may have reached chain; reconciliation required",
+      };
+    }
+
     await appendJournalEvent(input.journalRepository, {
       timestamp: now,
       eventType: "CLAIM_SUBMISSION_FAILED",
@@ -248,6 +318,16 @@ export async function processClaimFeesAction(
         ...claimResult,
         reason: payload.reason,
         autoSwapOutputMint: payload.autoSwapOutputMint ?? null,
+        autoSwap:
+          payload.autoSwapOutputMint === undefined ||
+          payload.autoSwapOutputMint === null
+            ? null
+            : {
+                outputMint: payload.autoSwapOutputMint,
+                phase: "PENDING_SWAP",
+                swap: null,
+                error: null,
+              },
         autoCompound:
           payload.autoCompound === undefined || payload.autoCompound === null
             ? null
@@ -299,6 +379,16 @@ export async function processClaimFeesAction(
         ...claimResult,
         reason: payload.reason,
         autoSwapOutputMint: payload.autoSwapOutputMint ?? null,
+        autoSwap:
+          payload.autoSwapOutputMint === undefined ||
+          payload.autoSwapOutputMint === null
+            ? null
+            : {
+                outputMint: payload.autoSwapOutputMint,
+                phase: "PENDING_SWAP",
+                swap: null,
+                error: null,
+              },
         autoCompound:
           payload.autoCompound === undefined || payload.autoCompound === null
             ? null

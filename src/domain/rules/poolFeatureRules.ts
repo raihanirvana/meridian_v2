@@ -169,10 +169,15 @@ export function buildDataFreshnessSnapshot(input: {
 }): DataFreshnessSnapshot {
   const nowMs = Date.parse(input.now);
   const safeNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
-  const screeningSnapshotAt = input.screeningSnapshotAt ?? input.now;
-  const poolDetailFetchedAt = input.poolDetailFetchedAt ?? input.now;
-  const tokenIntelFetchedAt = input.tokenIntelFetchedAt ?? input.now;
-  const chainSnapshotFetchedAt = input.chainSnapshotFetchedAt ?? input.now;
+  const screeningSnapshotAt = input.screeningSnapshotAt ?? null;
+  const poolDetailFetchedAt = input.poolDetailFetchedAt ?? null;
+  const tokenIntelFetchedAt = input.tokenIntelFetchedAt ?? null;
+  const chainSnapshotFetchedAt = input.chainSnapshotFetchedAt ?? null;
+  const hasRequiredTimestamps =
+    screeningSnapshotAt !== null &&
+    poolDetailFetchedAt !== null &&
+    tokenIntelFetchedAt !== null &&
+    chainSnapshotFetchedAt !== null;
   const oldestRequiredSnapshotAgeMs = Math.max(
     ageMs(screeningSnapshotAt, safeNowMs),
     ageMs(poolDetailFetchedAt, safeNowMs),
@@ -188,6 +193,8 @@ export function buildDataFreshnessSnapshot(input: {
     chainSnapshotFetchedAt,
     oldestRequiredSnapshotAgeMs,
     isFreshEnoughForDeploy:
-      input.hasActiveBin && oldestRequiredSnapshotAgeMs <= maxAgeMs,
+      input.hasActiveBin &&
+      hasRequiredTimestamps &&
+      oldestRequiredSnapshotAgeMs <= maxAgeMs,
   });
 }

@@ -31,6 +31,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: runtime loop saat ini tetap menjadi pemilik cadence interval, sementara metadata store mencegah overlap dan menyimpan `nextDueAt` untuk reporting. Ini cukup untuk single-runtime supervisor, tetapi belum menjadi due-time gate yang mandiri.
   Revisit: jika worker mulai dipanggil dari beberapa cron eksternal/manual surface; tambah skip `SKIPPED_NOT_DUE` untuk `triggerSource="cron"`.
 
+- `N77` swap gateway belum punya typed ambiguity/idempotency contract penuh untuk semua swap use case
+  Status: deferred
+  Kenapa ditunda: simple auto-swap after claim sekarang sudah crash-safe di action payload (`SWAP_IN_PROGRESS` tidak diulang otomatis), dan auto-compound sudah punya phase state. Namun `SwapGateway.executeSwap()` sendiri belum membawa `submissionStatus` / client idempotency key setara DLMM write gateway, sehingga tx maybe-submitted tetap perlu desain gateway-level sebelum fitur swap otomatis dipakai besar.
+  Revisit: sebelum `claim.autoSwapAfterClaim=true` atau `claim.autoCompoundFees=true` dipakai live dengan nominal signifikan; tambahkan idempotency key + typed `not_submitted | maybe_submitted | submitted` ke swap result.
+
 - `N75` legacy migration dari format repo lama/snake_case belum punya migrator eksplisit
   Status: deferred
   Kenapa ditunda: runtime V2 saat ini memakai store/schema baru dan tidak otomatis membaca file state lama. Selama deploy dimulai dari data dir V2 fresh, ini bukan risk live trading. Kalau operator ingin membawa state lama dari `meredian_fixed`, perlu one-way migration tool agar tidak salah map lifecycle/action/lesson fields.
@@ -579,6 +584,11 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `F43` submit ambiguity sekarang membawa status eksplisit di result payload: `submissionStatus="submitted"` untuk response normal dan `submissionStatus="maybe_submitted"` untuk `AmbiguousSubmissionError` pada deploy, close, rebalance close, dan rebalance redeploy.
 - `F44` reporting worker sekarang degrade saat price gateway gagal; report tetap keluar dengan `dailyPnlUsd`, `dailyPnlSol=null`, alert `PRICE_UNAVAILABLE`, dan issue yang jelas.
 - `F45` no-change adaptive policy evolution sekarang tetap menandai `positionsAtEvolution`, sehingga milestone tanpa threshold change tidak dievaluasi ulang terus pada count yang sama.
+- `F46` claim submit ambiguity sekarang ditangani seperti write gateway lain: `ClaimFeesResult` membawa `submissionStatus`, dan `AmbiguousSubmissionError` pada `CLAIM_FEES` menghasilkan action `WAITING_CONFIRMATION` + posisi `RECONCILIATION_REQUIRED`, bukan terminal `FAILED`.
+- `F47` simple `autoSwapAfterClaim` sekarang crash-safe di level action payload; finalizer menulis `SWAP_IN_PROGRESS` sebelum memanggil hook, dan resume dari phase tersebut masuk `MANUAL_REVIEW_REQUIRED` tanpa memanggil swap ulang.
+- `F48` screening detail enrichment sekarang isolated per kandidat; `getCandidateDetails()` failure hanya membuat kandidat memakai snapshot gateway/listing yang sudah ada dan menulis warning, bukan menggagalkan seluruh cycle.
+- `F49` freshness snapshot tidak lagi false-fresh ketika timestamp source hilang; `buildDataFreshnessSnapshot()` sekarang mensyaratkan timestamp screening/detail/token-intel/chain eksplisit agar `isFreshEnoughForDeploy=true`.
+- `F50` AI strategy reviewer sekarang menolak output batch yang missing/extra/duplicate pool dan menegakkan cross-field schema untuk `deploy`/`reject` strategy consistency.
 - `F41` screening live sekarang punya adapter native Meteora Pool Discovery; bila `SCREENING_API_BASE_URL` kosong, `runLive.ts` memakai `https://pool-discovery-api.datapi.meteora.ag` langsung, membawa `timeframe` ke query, memetakan pool discovery ke candidate V2, lalu tetap melewatkan semua keputusan ke hard-filter/scoring engine di [MeteoraPoolDiscoveryScreeningGateway.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.ts:1) dan [runLive.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1).
 
 ## Next Review Gate
