@@ -770,4 +770,10 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - screening enrichment sekarang catch `getCandidateDetails()` per kandidat; satu pool detail API gagal tidak lagi menjatuhkan seluruh screening cycle
   - `buildDataFreshnessSnapshot()` tidak lagi menganggap timestamp source yang hilang sebagai `now`; snapshot tanpa timestamp wajib sekarang stale/fail-safe untuk deploy
   - AI strategy reviewer sekarang menolak cross-field invalid output (`deploy` tanpa strategy konkret, `reject` dengan strategy aktif) dan batch review wajib exact-set: tidak boleh missing, extra, atau duplicate pool
-- `npm test` terakhir hijau dengan total `361` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 24-26 hardening follow-up sekarang masuk:
+  - `dry_run_payload` mode sudah dikunci fail-safe: ketika `runtime.dryRun=false`, supervisor menulis `AUTO_DEPLOY_FROM_SHORTLIST/BLOCKED` dan tidak meng-queue deploy live walaupun AI strategy valid
+  - manual/operator rebalance sudah melewati portfolio risk guard yang sama seperti deploy sebelum enqueue, sehingga exposure/capital/pending-action guard tidak bisa dibypass lewat operator command
+  - `AiAdvisoryService` sekarang bisa menulis journal `AI_LESSON_INJECTION_FAILED` untuk shortlist ranking dan management advisory bila lesson/pool-memory injection gagal; LLM tidak dipanggil pada error lesson context
+  - semantics lesson kosong tetap dipertahankan sebagai konteks valid (`No historical lessons recorded yet.`), bukan skip LLM; yang dianggap failure hanya lesson service/repository error
+  - Batch 26 integration coverage sekarang ada di `tests/integration/batch26LearningLoop.test.ts`: close finalized -> performance/lesson exactly once, rebalance old-leg performance once, bad-pool close -> cooldown, corrupt lesson store -> LLM not called + journal failure, dan backfill dry-run no mutation
+- `npm test` terakhir hijau dengan total `369` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

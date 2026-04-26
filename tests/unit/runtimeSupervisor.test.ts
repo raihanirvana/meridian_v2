@@ -1157,6 +1157,156 @@ describe("runtime supervisor", () => {
     });
   });
 
+  it("blocks dry_run_payload mode from queueing live deploys when runtime dryRun is false", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => now,
+    });
+    const userConfig = buildUserConfig({
+      ai: {
+        mode: "advisory",
+        strategyReviewEnabled: true,
+        strategyReviewMode: "dry_run_payload",
+        allowAiStrategyForDeploy: true,
+      },
+      deploy: {
+        autoDeployFromShortlist: true,
+      },
+      runtime: {
+        dryRun: false,
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig,
+      stores,
+      gateways: {
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [buildCandidate()],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "fail",
+            error: new Error("deploy should not run in dry_run_payload"),
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              binStep: 80,
+              activeBin: 1000,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: now,
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: now,
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
+      now: () => now,
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    const queuedActions = await stores.actionRepository.listByStatuses([
+      "QUEUED",
+    ]);
+    const journal = await stores.journalRepository.list();
+    expect(queuedActions).toHaveLength(0);
+    expect(journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "AUTO_DEPLOY_FROM_SHORTLIST",
+          resultStatus: "BLOCKED",
+          error: "dry_run_payload mode requires runtime.dryRun=true",
+        }),
+      ]),
+    );
+  });
+
   it("blocks guarded auto deploy when pre-queue DLMM simulation fails", async () => {
     const directory = await makeTempDir();
     const stores = createRuntimeStores({

@@ -36,6 +36,21 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
   Kenapa ditunda: simple auto-swap after claim sekarang sudah crash-safe di action payload (`SWAP_IN_PROGRESS` tidak diulang otomatis), dan auto-compound sudah punya phase state. Namun `SwapGateway.executeSwap()` sendiri belum membawa `submissionStatus` / client idempotency key setara DLMM write gateway, sehingga tx maybe-submitted tetap perlu desain gateway-level sebelum fitur swap otomatis dipakai besar.
   Revisit: sebelum `claim.autoSwapAfterClaim=true` atau `claim.autoCompoundFees=true` dipakai live dengan nominal signifikan; tambahkan idempotency key + typed `not_submitted | maybe_submitted | submitted` ke swap result.
 
+- `N78` AI rebalance expected-improvement-vs-cost guard belum memakai estimasi numerik runtime
+  Status: deferred
+  Kenapa ditunda: validator sudah punya field `expectedFeeImprovementUsd`, `estimatedCloseCostUsd`, `estimatedRedeployCostUsd`, dan `safetyMarginUsd`, tetapi signal provider live belum menyuplai estimasi numerik yang reliable. Saat ini safety tetap konservatif melalui trigger deterministic, risk guard, simulation, cooldown, dan `aiRebalanceEnabled=false` default.
+  Revisit: sebelum `management.aiRebalanceEnabled=true` dipakai live; tambahkan feed fee velocity/cost estimator dan pass field numerik itu ke validator.
+
+- `N79` Batch 26 backfill learning script masih JS/manual-builder dan belum atomic lintas store
+  Status: deferred
+  Kenapa ditunda: backfill bukan runtime trading path dan tidak dipakai saat bot live normal. Namun script sebaiknya pindah ke TypeScript atau memakai compiled domain builder resmi agar tidak drift dari `buildPerformanceRecordFromClosedPosition()`, serta apply mode perlu backup/atomicity lintas lessons + pool memory.
+  Revisit: sebelum menjalankan backfill pada data production; lakukan dry-run, backup, dan migrasi script ke builder resmi.
+
+- `N80` AI shortlist ranking saat lesson repo kosong sengaja tidak emit `AI_SHORTLIST_RANKING_SKIPPED_NO_LESSONS`
+  Status: design-deferred
+  Kenapa ditunda: semantics V2 saat ini adalah "lesson consultation wajib", bukan "lesson harus ada". Repo sehat tapi kosong menghasilkan prompt eksplisit `No historical lessons recorded yet.` dan LLM tetap boleh dipanggil. Event skip hanya relevan jika produk memutuskan no-lessons harus memblok AI ranking.
+  Revisit: jika PRD Batch 26 dipertegas bahwa no historical lessons harus mematikan AI ranking; saat itu tambahkan event exact `AI_SHORTLIST_RANKING_SKIPPED_NO_LESSONS`.
+
 - `N75` legacy migration dari format repo lama/snake_case belum punya migrator eksplisit
   Status: deferred
   Kenapa ditunda: runtime V2 saat ini memakai store/schema baru dan tidak otomatis membaca file state lama. Selama deploy dimulai dari data dir V2 fresh, ini bukan risk live trading. Kalau operator ingin membawa state lama dari `meredian_fixed`, perlu one-way migration tool agar tidak salah map lifecycle/action/lesson fields.
@@ -589,6 +604,9 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `F48` screening detail enrichment sekarang isolated per kandidat; `getCandidateDetails()` failure hanya membuat kandidat memakai snapshot gateway/listing yang sudah ada dan menulis warning, bukan menggagalkan seluruh cycle.
 - `F49` freshness snapshot tidak lagi false-fresh ketika timestamp source hilang; `buildDataFreshnessSnapshot()` sekarang mensyaratkan timestamp screening/detail/token-intel/chain eksplisit agar `isFreshEnoughForDeploy=true`.
 - `F50` AI strategy reviewer sekarang menolak output batch yang missing/extra/duplicate pool dan menegakkan cross-field schema untuk `deploy`/`reject` strategy consistency.
+- `F51` `dry_run_payload` mode sekarang terkunci tidak bisa submit live; supervisor memblok auto-deploy bila `ai.strategyReviewMode="dry_run_payload"` dan `runtime.dryRun=false`, dengan regression test agar payload dry-run tidak berubah menjadi queue deploy sungguhan.
+- `F52` `AiAdvisoryService` sekarang menulis journal `AI_LESSON_INJECTION_FAILED` untuk shortlist ranking dan management advisory saat lesson injection gagal, bukan hanya log warning.
+- `F53` Batch 26 PRD integration coverage sekarang tersedia: close finalized mencatat performance/lesson exactly-once, rebalance old leg mencatat performance once, corrupt lesson store memblok LLM dan menulis journal failure, bad-pool close mengaktifkan pool cooldown, dan backfill dry-run diverifikasi tidak memutasi store.
 - `F41` screening live sekarang punya adapter native Meteora Pool Discovery; bila `SCREENING_API_BASE_URL` kosong, `runLive.ts` memakai `https://pool-discovery-api.datapi.meteora.ag` langsung, membawa `timeframe` ke query, memetakan pool discovery ke candidate V2, lalu tetap melewatkan semua keputusan ke hard-filter/scoring engine di [MeteoraPoolDiscoveryScreeningGateway.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.ts:1) dan [runLive.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1).
 
 ## Next Review Gate

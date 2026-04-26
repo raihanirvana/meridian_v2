@@ -294,6 +294,59 @@ describe("AI advisory service", () => {
     ]);
   });
 
+  it("journals lesson injection failure for shortlist ranking", async () => {
+    const directory = await makeTempDir();
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const result = await rankShortlistWithAi({
+      shortlist: [
+        buildCandidate({ candidateId: "cand_a" }),
+        buildCandidate({ candidateId: "cand_b" }),
+      ],
+      aiMode: "advisory",
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          throw new Error("lesson store unavailable");
+        },
+      },
+      llmGateway: new MockLlmGateway({
+        rankCandidates: {
+          type: "success",
+          value: {
+            rankedCandidateIds: ["cand_b", "cand_a"],
+            reasoning: "should not run",
+          },
+        },
+        explainManagementDecision: {
+          type: "success",
+          value: {
+            action: "HOLD",
+            reasoning: "unused",
+          },
+        },
+      }),
+      journalRepository,
+      wallet: "wallet_001",
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.source).toBe("FALLBACK");
+    const journal = await journalRepository.list();
+    expect(journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "AI_LESSON_INJECTION_FAILED",
+          wallet: "wallet_001",
+          resultStatus: "FAILED",
+          after: {
+            stage: "shortlist_ranking",
+          },
+        }),
+      ]),
+    );
+  });
+
   it("falls back to deterministic management explanation when AI proposes invalid action", async () => {
     const directory = await makeTempDir();
     const result = await adviseManagementDecision({
@@ -319,6 +372,60 @@ describe("AI advisory service", () => {
     expect(result.source).toBe("FALLBACK");
     expect(result.aiSuggestedAction).toBeNull();
     expect(result.aiReasoning).toBeNull();
+  });
+
+  it("journals lesson injection failure for management advisory", async () => {
+    const directory = await makeTempDir();
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    const result = await adviseManagementDecision({
+      aiMode: "advisory",
+      evaluation: buildEvaluation(),
+      position: buildPosition(),
+      triggerReasons: ["stop loss reached"],
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          throw new Error("lesson store unavailable");
+        },
+      },
+      llmGateway: new MockLlmGateway({
+        rankCandidates: {
+          type: "success",
+          value: {
+            rankedCandidateIds: [],
+            reasoning: "unused",
+          },
+        },
+        explainManagementDecision: {
+          type: "success",
+          value: {
+            action: "CLOSE",
+            reasoning: "should not run",
+          },
+        },
+      }),
+      journalRepository,
+      wallet: "wallet_001",
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.source).toBe("FALLBACK");
+    const journal = await journalRepository.list();
+    expect(journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "AI_LESSON_INJECTION_FAILED",
+          wallet: "wallet_001",
+          positionId: "pos_001",
+          resultStatus: "FAILED",
+          after: {
+            stage: "management_advisory",
+          },
+        }),
+      ]),
+    );
   });
 
   it("injects role-specific lessons into management explanation requests", async () => {

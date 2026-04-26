@@ -7,6 +7,7 @@ import {
   ManagementExplanationResultSchema,
   type LlmGateway,
 } from "../../adapters/llm/LlmGateway.js";
+import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
 import {
   CandidateSchema,
   type Candidate,
@@ -60,7 +61,10 @@ export interface RankShortlistWithAiInput {
   aiMode: AiMode;
   lessonPromptService: LessonPromptService;
   llmGateway?: LlmGateway;
+  journalRepository?: JournalRepository;
+  wallet?: string;
   timeoutMs?: number;
+  now?: () => string;
 }
 
 export interface AdviseManagementDecisionInput {
@@ -70,7 +74,10 @@ export interface AdviseManagementDecisionInput {
   triggerReasons: string[];
   lessonPromptService: LessonPromptService;
   llmGateway?: LlmGateway;
+  journalRepository?: JournalRepository;
+  wallet?: string;
   timeoutMs?: number;
+  now?: () => string;
 }
 
 function timeoutError(timeoutMs: number): Error {
@@ -166,6 +173,39 @@ function logLessonInjectionFailure(error: unknown): void {
   );
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function appendAiLessonInjectionFailed(input: {
+  journalRepository?: JournalRepository;
+  wallet?: string;
+  positionId?: string | null;
+  stage: "shortlist_ranking" | "management_advisory";
+  error: unknown;
+  now?: () => string;
+}): Promise<void> {
+  if (input.journalRepository === undefined || input.wallet === undefined) {
+    return;
+  }
+
+  await input.journalRepository.append({
+    timestamp: input.now?.() ?? new Date().toISOString(),
+    eventType: "AI_LESSON_INJECTION_FAILED",
+    actor: "system",
+    wallet: input.wallet,
+    positionId: input.positionId ?? null,
+    actionId: null,
+    before: null,
+    after: {
+      stage: input.stage,
+    },
+    txIds: [],
+    resultStatus: "FAILED",
+    error: errorMessage(input.error),
+  });
+}
+
 function buildLessonSystemPrompt(lessonsPrompt: string | null): string {
   return [
     "### LESSONS LEARNED",
@@ -216,6 +256,15 @@ export async function rankShortlistWithAi(
     });
   } catch (error) {
     logLessonInjectionFailure(error);
+    await appendAiLessonInjectionFailed({
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      ...(input.wallet === undefined ? {} : { wallet: input.wallet }),
+      stage: "shortlist_ranking",
+      error,
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
     return RankedShortlistWithAiSchema.parse({
       shortlist,
       source: "FALLBACK",
@@ -294,6 +343,16 @@ export async function adviseManagementDecision(
     });
   } catch (error) {
     logLessonInjectionFailure(error);
+    await appendAiLessonInjectionFailed({
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      ...(input.wallet === undefined ? {} : { wallet: input.wallet }),
+      positionId: input.position.positionId,
+      stage: "management_advisory",
+      error,
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
     return ManagementDecisionAdvisorySchema.parse({
       source: "FALLBACK",
       aiSuggestedAction: null,

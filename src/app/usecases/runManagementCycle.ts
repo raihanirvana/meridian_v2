@@ -545,12 +545,15 @@ export async function runManagementCycle(
       triggerReasons: evaluation.triggerReasons,
       lessonPromptService:
         input.lessonPromptService ?? missingLessonPromptService,
+      wallet: input.wallet,
+      journalRepository: input.journalRepository,
       ...(input.llmGateway === undefined
         ? {}
         : { llmGateway: input.llmGateway }),
       ...(input.aiTimeoutMs === undefined
         ? {}
         : { timeoutMs: input.aiTimeoutMs }),
+      ...(input.now === undefined ? {} : { now: input.now }),
     });
 
     if (evaluation.action === "PARTIAL_CLOSE") {

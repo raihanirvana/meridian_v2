@@ -418,10 +418,13 @@ export async function runScreeningCycle(
     ),
     aiMode,
     lessonPromptService,
+    wallet: input.wallet,
+    journalRepository: input.journalRepository,
     ...(input.llmGateway === undefined ? {} : { llmGateway: input.llmGateway }),
     ...(input.aiTimeoutMs === undefined
       ? {}
       : { timeoutMs: input.aiTimeoutMs }),
+    ...(input.now === undefined ? {} : { now: input.now }),
   });
 
   const finalCandidates = deterministic.candidates.map((candidate) => {
