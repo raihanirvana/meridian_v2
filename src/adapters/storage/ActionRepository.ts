@@ -11,6 +11,45 @@ export interface UpsertByIdempotencyKeyResult {
   created: boolean;
 }
 
+export class ActionStoreCorruptError extends Error {
+  public constructor(
+    message: string,
+    public readonly filePath: string,
+    public override readonly cause: unknown,
+  ) {
+    super(message);
+    this.name = "ActionStoreCorruptError";
+  }
+}
+
+function parseActions(raw: string, filePath: string): Action[] {
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (error) {
+    const reason =
+      error instanceof Error && error.message.trim().length > 0
+        ? error.message
+        : "unknown JSON parse failure";
+    throw new ActionStoreCorruptError(
+      `action file is corrupt (invalid JSON): ${reason}`,
+      filePath,
+      error,
+    );
+  }
+
+  const result = ActionSchema.array().safeParse(parsedJson);
+  if (!result.success) {
+    throw new ActionStoreCorruptError(
+      `action file is corrupt (schema mismatch): ${result.error.message}`,
+      filePath,
+      result.error,
+    );
+  }
+
+  return result.data;
+}
+
 export class ActionRepository {
   private readonly fileStore: FileStore;
   private readonly filePath: string;
@@ -28,7 +67,7 @@ export class ActionRepository {
       return [];
     }
 
-    return ActionSchema.array().parse(JSON.parse(raw));
+    return parseActions(raw, this.filePath);
   }
 
   public async get(actionId: string): Promise<Action | null> {
@@ -66,8 +105,7 @@ export class ActionRepository {
   public async upsert(action: Action): Promise<void> {
     const validated = ActionSchema.parse(action);
     await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
-      const actions =
-        raw === null ? [] : ActionSchema.array().parse(JSON.parse(raw));
+      const actions = raw === null ? [] : parseActions(raw, this.filePath);
       const nextActions = actions.filter(
         (currentAction) => currentAction.actionId !== validated.actionId,
       );
@@ -89,8 +127,7 @@ export class ActionRepository {
     let created = true;
 
     await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
-      const actions =
-        raw === null ? [] : ActionSchema.array().parse(JSON.parse(raw));
+      const actions = raw === null ? [] : parseActions(raw, this.filePath);
       const existingAction =
         actions.find(
           (currentAction) =>

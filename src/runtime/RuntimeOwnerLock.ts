@@ -16,7 +16,10 @@ export interface RuntimeOwnerLock {
   readonly ownerId: string;
   heartbeat(): Promise<void>;
   release(): Promise<void>;
-  startHeartbeat(intervalMs?: number): () => void;
+  startHeartbeat(
+    intervalMs?: number,
+    onLost?: (error: RuntimeOwnerLockLostError) => void,
+  ): () => void;
 }
 
 export class RuntimeOwnerLockActiveError extends Error {
@@ -28,6 +31,22 @@ export class RuntimeOwnerLockActiveError extends Error {
       `Runtime data directory is already owned by ${record.ownerId} (pid ${record.pid}, heartbeat ${record.heartbeatAt}) at ${lockFilePath}`,
     );
     this.name = "RuntimeOwnerLockActiveError";
+  }
+}
+
+export class RuntimeOwnerLockLostError extends Error {
+  public constructor(
+    public readonly lockFilePath: string,
+    public readonly ownerId: string,
+    public readonly currentOwnerId: string | null,
+  ) {
+    super(
+      `Runtime owner lock at ${lockFilePath} is no longer owned by ${ownerId}` +
+        (currentOwnerId === null
+          ? " (lock missing or unreadable)"
+          : ` (current owner: ${currentOwnerId})`),
+    );
+    this.name = "RuntimeOwnerLockLostError";
   }
 }
 
@@ -149,6 +168,18 @@ export async function acquireRuntimeOwnerLock(input: {
     lockFilePath,
     ownerId,
     async heartbeat() {
+      const existingRaw = await fs.readFile(lockFilePath, "utf8").catch(
+        () => null,
+      );
+      const existingRecord =
+        existingRaw === null ? null : parseLockRecord(existingRaw);
+      if (existingRecord?.ownerId !== ownerId) {
+        throw new RuntimeOwnerLockLostError(
+          lockFilePath,
+          ownerId,
+          existingRecord?.ownerId ?? null,
+        );
+      }
       const heartbeatAt = input.now?.() ?? new Date().toISOString();
       await writeLockFile({
         lockFilePath,
@@ -169,14 +200,25 @@ export async function acquireRuntimeOwnerLock(input: {
         await fs.rm(lockFilePath, { force: true });
       }
     },
-    startHeartbeat(intervalMs = 10_000) {
-      const timer = setInterval(() => {
-        void lock.heartbeat();
-      }, intervalMs);
-
-      return () => {
+    startHeartbeat(intervalMs = 10_000, onLost) {
+      let stopped = false;
+      const stop = () => {
+        if (stopped) {
+          return;
+        }
+        stopped = true;
         clearInterval(timer);
       };
+      const timer = setInterval(() => {
+        void lock.heartbeat().catch((error) => {
+          if (error instanceof RuntimeOwnerLockLostError) {
+            stop();
+            onLost?.(error);
+          }
+        });
+      }, intervalMs);
+
+      return stop;
     },
   };
 

@@ -104,11 +104,14 @@ export {
   transitionActionStatus,
 } from "./domain/stateMachines/actionLifecycle.js";
 export {
+  POSITION_ESCALATION_REASONS,
   POSITION_LIFECYCLE,
   canTransitionPositionStatus,
   transitionClosePositionStatus,
   transitionPositionStatus,
   transitionRebalancePositionStatus,
+  type PositionEscalationReason,
+  type PositionTransitionContext,
   type PositionTransitionFlow,
 } from "./domain/stateMachines/positionLifecycle.js";
 export {
@@ -441,6 +444,7 @@ export {
 } from "./adapters/telegram/HttpTelegramOperatorGateway.js";
 export {
   ActionRepository,
+  ActionStoreCorruptError,
   type ActionRepositoryOptions,
 } from "./adapters/storage/ActionRepository.js";
 export {
@@ -459,10 +463,14 @@ export {
 } from "./adapters/storage/PerformanceRepository.js";
 export {
   JournalRepository,
+  JournalStoreCorruptError,
+  type JournalRecoveryEvent,
+  type JournalRecoveryListener,
   type JournalRepositoryOptions,
 } from "./adapters/storage/JournalRepository.js";
 export {
   StateRepository,
+  StateStoreCorruptError,
   type StateRepositoryOptions,
 } from "./adapters/storage/StateRepository.js";
 export { KeyedLock } from "./infra/locks/KeyedLock.js";

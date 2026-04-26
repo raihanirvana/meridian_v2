@@ -28,11 +28,12 @@ export async function recordPoolDeploy(
 ): Promise<PoolMemoryEntry> {
   const deploy = PoolDeploySchema.parse(input.deploy);
   const cooldownHours = input.cooldownHours ?? 4;
+  let alreadyRecorded = false;
   const updated = await input.poolMemoryRepository.upsert(
     input.poolAddress,
     (current) => {
       const currentDeploys = current?.deploys ?? [];
-      const alreadyRecorded = currentDeploys.some((currentDeploy) => {
+      alreadyRecorded = currentDeploys.some((currentDeploy) => {
         if (
           deploy.positionId !== undefined &&
           currentDeploy.positionId === deploy.positionId
@@ -87,7 +88,7 @@ export async function recordPoolDeploy(
       recall: buildPoolRecallString(updated),
     },
     txIds: [],
-    resultStatus: "RECORDED",
+    resultStatus: alreadyRecorded ? "UNCHANGED" : "RECORDED",
     error: null,
   });
 

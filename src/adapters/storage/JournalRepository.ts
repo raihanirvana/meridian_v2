@@ -5,8 +5,18 @@ import {
 
 import { FileStore, type FileStoreOptions } from "./FileStore.js";
 
+export interface JournalRecoveryEvent {
+  type: "JOURNAL_TRAILING_LINE_SKIPPED";
+  filePath: string;
+  lineNumber: number;
+  reason: string;
+}
+
+export type JournalRecoveryListener = (event: JournalRecoveryEvent) => void;
+
 export interface JournalRepositoryOptions extends FileStoreOptions {
   filePath: string;
+  onRecovery?: JournalRecoveryListener;
 }
 
 export class JournalStoreCorruptError extends Error {
@@ -23,12 +33,14 @@ export class JournalStoreCorruptError extends Error {
 export class JournalRepository {
   private readonly fileStore: FileStore;
   private readonly filePath: string;
+  private readonly onRecovery: JournalRecoveryListener | null;
 
   public constructor(options: JournalRepositoryOptions) {
     this.fileStore = options.fs
       ? new FileStore({ fs: options.fs })
       : new FileStore();
     this.filePath = options.filePath;
+    this.onRecovery = options.onRecovery ?? null;
   }
 
   public async append(event: JournalEvent): Promise<void> {
@@ -52,15 +64,21 @@ export class JournalRepository {
       try {
         events.push(JournalEventSchema.parse(JSON.parse(line)));
       } catch (error) {
-        const isTrailingLine = index === lines.length - 1;
-        if (isTrailingLine) {
-          continue;
-        }
-
         const reason =
           error instanceof Error && error.message.trim().length > 0
             ? error.message
             : "unknown parse failure";
+        const isTrailingLine = index === lines.length - 1;
+        if (isTrailingLine) {
+          this.emitRecovery({
+            type: "JOURNAL_TRAILING_LINE_SKIPPED",
+            filePath: this.filePath,
+            lineNumber: index + 1,
+            reason,
+          });
+          continue;
+        }
+
         throw new JournalStoreCorruptError(
           `journal file is corrupt at line ${index + 1}: ${reason}`,
           this.filePath,
@@ -70,5 +88,16 @@ export class JournalRepository {
     }
 
     return events;
+  }
+
+  private emitRecovery(event: JournalRecoveryEvent): void {
+    if (this.onRecovery === null) {
+      return;
+    }
+    try {
+      this.onRecovery(event);
+    } catch {
+      // Recovery listeners must never block journal reads.
+    }
   }
 }

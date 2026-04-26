@@ -4,6 +4,29 @@ import { PositionStatusSchema, StrategySchema } from "../types/enums.js";
 
 const TimestampSchema = z.string().datetime();
 
+const REQUIRES_OPENED_AT_STATUSES = new Set([
+  "OPEN",
+  "MANAGEMENT_REVIEW",
+  "HOLD",
+  "CLAIM_REQUESTED",
+  "CLAIMING",
+  "CLAIM_CONFIRMED",
+  "PARTIAL_CLOSE_REQUESTED",
+  "PARTIAL_CLOSING",
+  "PARTIAL_CLOSE_CONFIRMED",
+  "REBALANCE_REQUESTED",
+  "CLOSING_FOR_REBALANCE",
+  "CLOSE_REQUESTED",
+  "CLOSING",
+  "CLOSE_CONFIRMED",
+  "CLOSED",
+]);
+
+const RECONCILIATION_STATUSES = new Set([
+  "RECONCILIATION_REQUIRED",
+  "RECONCILING",
+]);
+
 export const PositionEntryMetadataSchema = z
   .object({
     poolName: z.string().min(1).optional(),
@@ -85,11 +108,37 @@ export const PositionSchema = z
       });
     }
 
-    if (position.status === "OPEN" && position.openedAt === null) {
+    if (
+      REQUIRES_OPENED_AT_STATUSES.has(position.status) &&
+      position.openedAt === null
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["openedAt"],
-        message: "must be set when status is OPEN",
+        message: `must be set when status is ${position.status}`,
+      });
+    }
+
+    const activeBinKnownAndOutOfRange =
+      position.activeBin !== null &&
+      (position.activeBin < position.rangeLowerBin ||
+        position.activeBin > position.rangeUpperBin);
+    if (activeBinKnownAndOutOfRange && position.outOfRangeSince === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outOfRangeSince"],
+        message: "must be set when activeBin is outside the current range",
+      });
+    }
+
+    if (
+      RECONCILIATION_STATUSES.has(position.status) &&
+      !position.needsReconciliation
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["needsReconciliation"],
+        message: `must be true when status is ${position.status}`,
       });
     }
 

@@ -4,14 +4,20 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
+import {
+  ActionRepository,
+  ActionStoreCorruptError,
+} from "../../src/adapters/storage/ActionRepository.js";
 import {
   type FileSystemAdapter,
   FileStore,
 } from "../../src/adapters/storage/FileStore.js";
 import { JournalRepository } from "../../src/adapters/storage/JournalRepository.js";
 import type { JournalStoreCorruptError } from "../../src/adapters/storage/JournalRepository.js";
-import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
+import {
+  StateRepository,
+  StateStoreCorruptError,
+} from "../../src/adapters/storage/StateRepository.js";
 import { type Action } from "../../src/domain/entities/Action.js";
 import { type JournalEvent } from "../../src/domain/entities/JournalEvent.js";
 import { type Position } from "../../src/domain/entities/Position.js";
@@ -287,6 +293,95 @@ describe("storage repositories", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]?.eventType).toBe("ACTION_QUEUED");
+  });
+
+  it("emits a structured recovery event when skipping a malformed trailing journal line", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      `${JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001"))}\n{bad json}\n`,
+      "utf8",
+    );
+
+    const recoveryEvents: Array<{
+      type: string;
+      lineNumber: number;
+      filePath: string;
+      reason: string;
+    }> = [];
+    const journalRepository = new JournalRepository({
+      filePath: journalPath,
+      onRecovery: (event) => {
+        recoveryEvents.push({
+          type: event.type,
+          lineNumber: event.lineNumber,
+          filePath: event.filePath,
+          reason: event.reason,
+        });
+      },
+    });
+    const events = await journalRepository.list();
+
+    expect(events).toHaveLength(1);
+    expect(recoveryEvents).toHaveLength(1);
+    expect(recoveryEvents[0]?.type).toBe("JOURNAL_TRAILING_LINE_SKIPPED");
+    expect(recoveryEvents[0]?.lineNumber).toBe(2);
+    expect(recoveryEvents[0]?.filePath).toBe(journalPath);
+    expect(recoveryEvents[0]?.reason.length).toBeGreaterThan(0);
+  });
+
+  it("throws StateStoreCorruptError when positions.json contains invalid JSON", async () => {
+    const directory = await makeTempDir();
+    const positionsPath = path.join(directory, "positions.json");
+    await fs.writeFile(positionsPath, "{not valid json", "utf8");
+
+    const stateRepository = new StateRepository({ filePath: positionsPath });
+
+    await expect(stateRepository.list()).rejects.toBeInstanceOf(
+      StateStoreCorruptError,
+    );
+  });
+
+  it("throws StateStoreCorruptError when positions.json fails schema validation", async () => {
+    const directory = await makeTempDir();
+    const positionsPath = path.join(directory, "positions.json");
+    await fs.writeFile(positionsPath, JSON.stringify([{ wrong: true }]), "utf8");
+
+    const stateRepository = new StateRepository({ filePath: positionsPath });
+
+    await expect(stateRepository.list()).rejects.toBeInstanceOf(
+      StateStoreCorruptError,
+    );
+  });
+
+  it("throws ActionStoreCorruptError when actions.json contains invalid JSON", async () => {
+    const directory = await makeTempDir();
+    const actionsPath = path.join(directory, "actions.json");
+    await fs.writeFile(actionsPath, "not json at all", "utf8");
+
+    const actionRepository = new ActionRepository({ filePath: actionsPath });
+
+    await expect(actionRepository.list()).rejects.toBeInstanceOf(
+      ActionStoreCorruptError,
+    );
+  });
+
+  it("cleans up orphan unique temp files during recovery", async () => {
+    const directory = await makeTempDir();
+    const filePath = path.join(directory, "positions.json");
+    const fileStore = new FileStore();
+
+    await fs.writeFile(filePath, JSON.stringify([]), "utf8");
+    const orphanA = `${filePath}.tmp.orphan-a-uuid`;
+    const orphanB = `${filePath}.tmp.orphan-b-uuid`;
+    await fs.writeFile(orphanA, "stale", "utf8");
+    await fs.writeFile(orphanB, "stale", "utf8");
+
+    await fileStore.readText(filePath);
+
+    await expect(fs.access(orphanA)).rejects.toThrow();
+    await expect(fs.access(orphanB)).rejects.toThrow();
   });
 
   it("throws a corruption error for malformed journal lines in the middle of the file", async () => {

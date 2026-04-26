@@ -272,7 +272,7 @@ function buildClosedOldPosition(input: {
     ),
     lastSyncedAt: input.now,
     lastWriteActionId: input.actionId,
-    needsReconciliation: false,
+    needsReconciliation: true,
   });
 
   return PositionSchema.parse({

@@ -264,7 +264,7 @@ function buildReconcilingPosition(
     status: transitionPositionStatus(confirmedPosition.status, "RECONCILING"),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
-    needsReconciliation: false,
+    needsReconciliation: true,
   });
 }
 

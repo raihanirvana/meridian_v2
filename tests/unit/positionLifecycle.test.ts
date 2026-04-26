@@ -146,6 +146,165 @@ describe("positionLifecycle", () => {
     );
   });
 
+  it("rejects direct OPEN to ABORTED transition without an escalation reason", () => {
+    expect(canTransitionPositionStatus("OPEN", "ABORTED")).toBe(false);
+    expect(() => transitionPositionStatus("OPEN", "ABORTED")).toThrow(
+      /requires an explicit escalationReason/i,
+    );
+  });
+
+  it("allows direct ABORTED transition when an escalation reason is provided", () => {
+    expect(
+      canTransitionPositionStatus("OPEN", "ABORTED", {
+        escalationReason: "operator_abort",
+      }),
+    ).toBe(true);
+    expect(
+      transitionPositionStatus("OPEN", "ABORTED", {
+        escalationReason: "startup_recovery",
+      }),
+    ).toBe("ABORTED");
+  });
+
+  it("allows direct FAILED transition only with an escalation reason", () => {
+    expect(canTransitionPositionStatus("OPEN", "FAILED")).toBe(false);
+    expect(
+      canTransitionPositionStatus("OPEN", "FAILED", {
+        escalationReason: "fatal_validation",
+      }),
+    ).toBe(true);
+  });
+
+  it("still allows direct RECONCILIATION_REQUIRED escalation without a reason", () => {
+    expect(
+      canTransitionPositionStatus("OPEN", "RECONCILIATION_REQUIRED"),
+    ).toBe(true);
+  });
+
+  it("does not require escalation reason for transitions allowed by the base table", () => {
+    expect(canTransitionPositionStatus("DEPLOY_REQUESTED", "FAILED")).toBe(
+      true,
+    );
+    expect(canTransitionPositionStatus("DEPLOYING", "ABORTED")).toBe(true);
+  });
+
+  it("rejects positions in an active status that are missing openedAt", () => {
+    const result = PositionSchema.safeParse({
+      positionId: "pos_active",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_base",
+      quoteMint: "mint_quote",
+      wallet: "wallet_001",
+      status: "MANAGEMENT_REVIEW",
+      openedAt: null,
+      lastSyncedAt: "2026-04-18T00:00:00.000Z",
+      closedAt: null,
+      deployAmountBase: 1,
+      deployAmountQuote: 0.5,
+      currentValueBase: 1,
+      currentValueUsd: 100,
+      feesClaimedBase: 0,
+      feesClaimedUsd: 0,
+      realizedPnlBase: 0,
+      realizedPnlUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      rebalanceCount: 0,
+      partialCloseCount: 0,
+      strategy: "bid_ask",
+      rangeLowerBin: 10,
+      rangeUpperBin: 20,
+      activeBin: 15,
+      outOfRangeSince: null,
+      lastManagementDecision: null,
+      lastManagementReason: null,
+      lastWriteActionId: null,
+      needsReconciliation: false,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects out-of-range positions that have a null outOfRangeSince", () => {
+    const result = PositionSchema.safeParse({
+      positionId: "pos_oor",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_base",
+      quoteMint: "mint_quote",
+      wallet: "wallet_001",
+      status: "OPEN",
+      openedAt: "2026-04-18T00:00:00.000Z",
+      lastSyncedAt: "2026-04-18T00:00:00.000Z",
+      closedAt: null,
+      deployAmountBase: 1,
+      deployAmountQuote: 0.5,
+      currentValueBase: 1,
+      currentValueUsd: 100,
+      feesClaimedBase: 0,
+      feesClaimedUsd: 0,
+      realizedPnlBase: 0,
+      realizedPnlUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      rebalanceCount: 0,
+      partialCloseCount: 0,
+      strategy: "bid_ask",
+      rangeLowerBin: 10,
+      rangeUpperBin: 20,
+      activeBin: 25,
+      outOfRangeSince: null,
+      lastManagementDecision: null,
+      lastManagementReason: null,
+      lastWriteActionId: null,
+      needsReconciliation: false,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects RECONCILIATION_REQUIRED status with needsReconciliation=false", () => {
+    const result = PositionSchema.safeParse({
+      positionId: "pos_recon",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_base",
+      quoteMint: "mint_quote",
+      wallet: "wallet_001",
+      status: "RECONCILIATION_REQUIRED",
+      openedAt: null,
+      lastSyncedAt: "2026-04-18T00:00:00.000Z",
+      closedAt: null,
+      deployAmountBase: 1,
+      deployAmountQuote: 0.5,
+      currentValueBase: 1,
+      currentValueUsd: 100,
+      feesClaimedBase: 0,
+      feesClaimedUsd: 0,
+      realizedPnlBase: 0,
+      realizedPnlUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      rebalanceCount: 0,
+      partialCloseCount: 0,
+      strategy: "bid_ask",
+      rangeLowerBin: 10,
+      rangeUpperBin: 20,
+      activeBin: 15,
+      outOfRangeSince: null,
+      lastManagementDecision: null,
+      lastManagementReason: null,
+      lastWriteActionId: null,
+      needsReconciliation: false,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects in-range positions that still carry outOfRangeSince", () => {
     const result = PositionSchema.safeParse({
       positionId: "pos_002",

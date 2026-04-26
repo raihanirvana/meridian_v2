@@ -1,5 +1,6 @@
 import { ActionRepository } from "../adapters/storage/ActionRepository.js";
 import { JournalRepository } from "../adapters/storage/JournalRepository.js";
+import { logger } from "../infra/logging/logger.js";
 import {
   FileLessonRepository,
   type LessonRepositoryInterface,
@@ -66,6 +67,17 @@ export function createRuntimeStores(
   });
   const journalRepository = new JournalRepository({
     filePath: paths.journalFilePath,
+    onRecovery: (event) => {
+      logger.warn(
+        {
+          eventType: event.type,
+          filePath: event.filePath,
+          lineNumber: event.lineNumber,
+          reason: event.reason,
+        },
+        "journal recovery event during read",
+      );
+    },
   });
   const lessonRepository = new FileLessonRepository({
     filePath: paths.lessonsFilePath,

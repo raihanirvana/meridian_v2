@@ -1111,6 +1111,7 @@ describe("claim flow", () => {
     await stateRepository.upsert(
       buildOpenPosition({
         status: "RECONCILING",
+        needsReconciliation: true,
         lastWriteActionId: "act_claim_resume",
       }),
     );

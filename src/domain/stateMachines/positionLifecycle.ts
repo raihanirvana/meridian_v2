@@ -56,11 +56,27 @@ const BASE_POSITION_TRANSITIONS = {
   ABORTED: [],
 } satisfies Record<PositionStatus, PositionStatus[]>;
 
-const GLOBAL_POSITION_ESCALATIONS = new Set<PositionStatus>([
+const GLOBAL_ESCALATION_TARGETS = new Set<PositionStatus>([
   "RECONCILIATION_REQUIRED",
   "FAILED",
   "ABORTED",
 ]);
+
+const TERMINAL_ESCALATION_TARGETS = new Set<PositionStatus>([
+  "FAILED",
+  "ABORTED",
+]);
+
+export const POSITION_ESCALATION_REASONS = [
+  "operator_abort",
+  "startup_recovery",
+  "fatal_validation",
+  "manual_circuit_breaker",
+  "reconciliation_terminal",
+] as const;
+
+export type PositionEscalationReason =
+  (typeof POSITION_ESCALATION_REASONS)[number];
 
 export const POSITION_LIFECYCLE: Readonly<
   Record<PositionStatus, readonly PositionStatus[]>
@@ -68,23 +84,24 @@ export const POSITION_LIFECYCLE: Readonly<
 
 export type PositionTransitionFlow = "normal_close" | "rebalance";
 
+export interface PositionTransitionContext {
+  flow?: PositionTransitionFlow;
+  escalationReason?: PositionEscalationReason;
+}
+
 export function canTransitionPositionStatus(
   from: PositionStatus,
   to: PositionStatus,
-  context: {
-    flow?: PositionTransitionFlow;
-  } = {},
+  context: PositionTransitionContext = {},
 ): boolean {
   PositionStatusSchema.parse(from);
   PositionStatusSchema.parse(to);
 
-  if (
-    GLOBAL_POSITION_ESCALATIONS.has(to) &&
-    from !== "CLOSED" &&
-    from !== "ABORTED"
-  ) {
-    return true;
+  if (from === "CLOSED" || from === "ABORTED") {
+    return false;
   }
+
+  const baseTableAllows = POSITION_LIFECYCLE[from].includes(to);
 
   if (
     from === "CLOSE_CONFIRMED" &&
@@ -94,17 +111,39 @@ export function canTransitionPositionStatus(
     return true;
   }
 
-  return POSITION_LIFECYCLE[from].includes(to);
+  if (GLOBAL_ESCALATION_TARGETS.has(to)) {
+    if (to === "RECONCILIATION_REQUIRED") {
+      return true;
+    }
+
+    if (baseTableAllows) {
+      return true;
+    }
+
+    return context.escalationReason !== undefined;
+  }
+
+  return baseTableAllows;
 }
 
 export function transitionPositionStatus(
   from: PositionStatus,
   to: PositionStatus,
-  context?: {
-    flow?: PositionTransitionFlow;
-  },
+  context?: PositionTransitionContext,
 ): PositionStatus {
   if (!canTransitionPositionStatus(from, to, context)) {
+    if (
+      TERMINAL_ESCALATION_TARGETS.has(to) &&
+      from !== "CLOSED" &&
+      from !== "ABORTED" &&
+      !POSITION_LIFECYCLE[from].includes(to) &&
+      context?.escalationReason === undefined
+    ) {
+      throw new Error(
+        `Direct position transition ${from} -> ${to} requires an explicit escalationReason`,
+      );
+    }
+
     throw new Error(`Invalid position transition: ${from} -> ${to}`);
   }
 

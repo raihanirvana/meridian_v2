@@ -18,6 +18,7 @@ export interface FileSystemAdapter {
     },
   ): Promise<string | undefined>;
   readFile(filePath: string, encoding: BufferEncoding): Promise<string>;
+  readdir?(dirPath: string): Promise<string[]>;
   rename(fromPath: string, toPath: string): Promise<void>;
   rm(
     targetPath: string,
@@ -192,11 +193,13 @@ export class FileStore {
         if (backupExists) {
           await this.safeCleanup(backupPath);
         }
+        await this.cleanupOrphanUniqueTempFiles(filePath);
         return;
       }
 
       if (backupExists) {
         await this.fs.rename(backupPath, filePath);
+        await this.cleanupOrphanUniqueTempFiles(filePath);
         return;
       }
     }
@@ -207,6 +210,30 @@ export class FileStore {
       }
       if (backupExists) {
         await this.safeCleanup(backupPath);
+      }
+      await this.cleanupOrphanUniqueTempFiles(filePath);
+    }
+  }
+
+  private async cleanupOrphanUniqueTempFiles(filePath: string): Promise<void> {
+    if (this.fs.readdir === undefined) {
+      return;
+    }
+
+    const parentDir = path.dirname(filePath);
+    const baseName = path.basename(filePath);
+    const orphanPrefix = `${baseName}.tmp.`;
+
+    let entries: string[];
+    try {
+      entries = await this.fs.readdir(parentDir);
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.startsWith(orphanPrefix)) {
+        await this.safeCleanup(path.join(parentDir, entry));
       }
     }
   }

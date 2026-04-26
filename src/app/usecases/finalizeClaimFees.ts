@@ -197,7 +197,7 @@ function buildReconcilingPosition(
           ),
     lastSyncedAt: now,
     lastWriteActionId: actionId,
-    needsReconciliation: false,
+    needsReconciliation: true,
   });
 }
 

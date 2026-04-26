@@ -38,7 +38,10 @@ import { handleTelegramOperatorCommand } from "../app/usecases/handleTelegramOpe
 import { createRuntimeStores } from "./createRuntimeStores.js";
 import { createRuntimeSupervisorFromUserConfig } from "./createRuntimeSupervisor.js";
 import { resolveLiveRedeployAmounts } from "./liveRebalancePlanner.js";
-import { acquireRuntimeOwnerLock } from "./RuntimeOwnerLock.js";
+import {
+  acquireRuntimeOwnerLock,
+  type RuntimeOwnerLockLostError,
+} from "./RuntimeOwnerLock.js";
 
 const RuntimeBootstrapEnvSchema = z
   .object({
@@ -524,7 +527,21 @@ async function main() {
     dataDir: stores.paths.dataDir,
     now,
   });
-  const stopRuntimeOwnerHeartbeat = runtimeOwnerLock.startHeartbeat();
+  let onLockLost: ((error: RuntimeOwnerLockLostError) => void) | null = null;
+  const stopRuntimeOwnerHeartbeat = runtimeOwnerLock.startHeartbeat(
+    undefined,
+    (error) => {
+      if (onLockLost !== null) {
+        onLockLost(error);
+        return;
+      }
+      logger.fatal(
+        { err: error },
+        "runtime owner lock lost during bootstrap; exiting",
+      );
+      process.exit(2);
+    },
+  );
   const policyProvider = new DefaultPolicyProvider({
     basePolicy: toRuntimeScreeningPolicy(config.user.screening),
     runtimePolicyStore: stores.runtimePolicyStore,
@@ -976,7 +993,7 @@ async function main() {
       });
   }, config.user.schedule.reportingIntervalSec * 1000);
 
-  const stop = (signal: string) => {
+  const stop = (signal: string, exitCode = 0) => {
     clearInterval(queueTimer);
     if (screeningTimer !== null) {
       clearTimeout(screeningTimer);
@@ -988,8 +1005,16 @@ async function main() {
     stopTelegramOperatorPolling?.();
     stopRuntimeOwnerHeartbeat();
     void runtimeOwnerLock.release();
-    logger.info({ signal }, "runtime supervisor stopped");
-    process.exit(0);
+    logger.info({ signal, exitCode }, "runtime supervisor stopped");
+    process.exit(exitCode);
+  };
+
+  onLockLost = (error) => {
+    logger.fatal(
+      { err: error, ownerId: runtimeOwnerLock.ownerId },
+      "runtime owner lock lost; shutting down to avoid split-brain",
+    );
+    stop("LOCK_LOST", 2);
   };
 
   process.on("SIGINT", () => stop("SIGINT"));
