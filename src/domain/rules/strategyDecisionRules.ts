@@ -86,6 +86,7 @@ export interface ValidateStrategyDecisionInput {
   policy?: Partial<StrategyDecisionValidationPolicy>;
   simulationPassed?: boolean;
   simulationError?: string | null;
+  freshActiveBin?: number | null;
 }
 
 function toDeployStrategy(value: string): DeployStrategy | null {
@@ -190,6 +191,7 @@ function collectCandidateBlockers(input: {
   policy: StrategyDecisionValidationPolicy;
   simulationPassed: boolean;
   simulationError: string | null;
+  freshActiveBin: number | null;
 }): { reasonCodes: string[]; riskFlags: string[] } {
   const reasonCodes: string[] = [];
   const riskFlags: string[] = [
@@ -214,6 +216,18 @@ function collectCandidateBlockers(input: {
   if (input.candidate.dlmmMicrostructureSnapshot.activeBin === null) {
     reasonCodes.push("active_bin_unavailable");
     riskFlags.push("missing_active_bin");
+  }
+  if (input.freshActiveBin !== null) {
+    const snapshotActiveBin =
+      input.candidate.dlmmMicrostructureSnapshot.activeBin;
+    if (
+      snapshotActiveBin === null ||
+      Math.abs(input.freshActiveBin - snapshotActiveBin) >
+        input.policy.maxActiveBinDrift
+    ) {
+      reasonCodes.push("fresh_active_bin_drift_above_limit");
+      riskFlags.push("fresh_active_bin_drift_above_limit");
+    }
   }
   if (
     input.candidate.dlmmMicrostructureSnapshot.activeBinDriftFromDiscovery >
@@ -342,11 +356,13 @@ export function validateStrategyDecision(
   );
   const simulationPassed = input.simulationPassed ?? true;
   const simulationError = input.simulationError ?? null;
+  const freshActiveBin = input.freshActiveBin ?? null;
   const candidateBlockers = collectCandidateBlockers({
     candidate,
     policy,
     simulationPassed,
     simulationError,
+    freshActiveBin,
   });
 
   if (candidateBlockers.riskFlags.length > 0) {

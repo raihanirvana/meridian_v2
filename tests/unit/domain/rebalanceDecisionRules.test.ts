@@ -112,6 +112,20 @@ describe("rebalance decision rules", () => {
     expect(result.riskFlags).toContain("ai_rebalance_high_risk");
   });
 
+  it("rejects high-risk claim-only because the risky position would remain open", () => {
+    const result = validateRebalanceDecision({
+      decision: buildDecision({
+        action: "claim_only",
+        riskLevel: "high",
+        rebalancePlan: null,
+      }),
+      review: buildReview(),
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.riskFlags).toContain("ai_rebalance_high_risk");
+  });
+
   it("rejects bins and slippage outside policy limits", () => {
     const result = validateRebalanceDecision({
       decision: buildDecision({

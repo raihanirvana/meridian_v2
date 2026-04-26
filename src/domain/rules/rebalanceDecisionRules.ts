@@ -211,7 +211,6 @@ export function validateRebalanceDecision(input: {
   if (
     decision.riskLevel === "high" &&
     decision.action !== "exit" &&
-    decision.action !== "claim_only" &&
     policy.exitInsteadOfRebalanceWhenRiskHigh
   ) {
     reasonCodes.push("ai_rebalance_high_risk_must_exit");

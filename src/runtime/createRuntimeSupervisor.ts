@@ -23,6 +23,7 @@ import {
 } from "../domain/rules/riskRules.js";
 import {
   type FinalStrategyDecision,
+  type StrategyDecisionValidationPolicy,
   validateStrategyDecision,
 } from "../domain/rules/strategyDecisionRules.js";
 import type { UserConfig } from "../infra/config/configSchema.js";
@@ -459,6 +460,11 @@ export function createRuntimeSupervisor(
     finalStrategyDecision: FinalStrategyDecision;
     aiSource: string | null;
     aiError?: string | null;
+    simulation?: {
+      ok: boolean;
+      reason: string | null;
+      stage: "not_required" | "pre_queue";
+    };
     riskDecision?: {
       allowed: boolean;
       decision: string;
@@ -498,6 +504,9 @@ export function createRuntimeSupervisor(
           recommendedStrategy:
             inputEvent.finalStrategyDecision.aiRecommendedStrategy,
         },
+        ...(inputEvent.simulation === undefined
+          ? {}
+          : { simulation: inputEvent.simulation }),
         finalStrategyDecision: inputEvent.finalStrategyDecision,
         ...(inputEvent.riskDecision === undefined
           ? {}
@@ -744,35 +753,69 @@ export function createRuntimeSupervisor(
             !input.config.ai.allowAiStrategyForDeploy)
             ? "recommendation_only"
             : requestedStrategyMode;
-        const finalStrategyDecision = validateStrategyDecision({
+        const shouldPreQueueSimulate =
+          strategyMode === "guarded_auto" || strategyMode === "dry_run_payload";
+        const strategyValidationPolicy: Partial<StrategyDecisionValidationPolicy> = {
+          minCandidateScore: 55,
+          minAiStrategyConfidence: input.config.ai.minAiStrategyConfidence,
+          allowedStrategies: ["spot", "curve", "bid_ask"],
+          maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
+          maxBinsBelow: input.config.deploy.maxBinsBelow,
+          maxBinsAbove: input.config.deploy.maxBinsAbove,
+          maxSlippageBps: input.config.deploy.maxSlippageBps,
+          requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
+          strategyFallbackMode: input.config.deploy.strategyFallbackMode,
+        };
+        const configStrategy = {
+          strategy: input.config.deploy.strategy,
+          binsBelow: input.config.deploy.binsBelow,
+          binsAbove: input.config.deploy.binsAbove,
+          slippageBps: input.config.deploy.slippageBps,
+        };
+        const tentativeStrategyDecision = validateStrategyDecision({
           candidate,
           mode: strategyMode,
           aiReview: reviewItem?.review ?? null,
-          configStrategy: {
-            strategy: input.config.deploy.strategy,
-            binsBelow: input.config.deploy.binsBelow,
-            binsAbove: input.config.deploy.binsAbove,
-            slippageBps: input.config.deploy.slippageBps,
-          },
-          policy: {
-            minCandidateScore: 55,
-            minAiStrategyConfidence: input.config.ai.minAiStrategyConfidence,
-            allowedStrategies: ["spot", "curve", "bid_ask"],
-            maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
-            maxBinsBelow: input.config.deploy.maxBinsBelow,
-            maxBinsAbove: input.config.deploy.maxBinsAbove,
-            maxSlippageBps: input.config.deploy.maxSlippageBps,
-            requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
-            strategyFallbackMode: input.config.deploy.strategyFallbackMode,
-          },
+          configStrategy,
+          policy: strategyValidationPolicy,
           simulationPassed: true,
+          ...(shouldPreQueueSimulate ? { freshActiveBin: poolInfo.activeBin } : {}),
         });
+        const simulation =
+          shouldPreQueueSimulate && !tentativeStrategyDecision.rejected
+            ? await input.gateways.dlmmGateway.simulateDeployLiquidity({
+                wallet: input.wallet,
+                ...buildAutoDeployPayload({
+                  candidate,
+                  poolInfo,
+                  deployConfig: input.config.deploy,
+                  solPriceUsd: solPrice.priceUsd,
+                  finalStrategyDecision: tentativeStrategyDecision,
+                }),
+              })
+            : { ok: true, reason: null };
+        const finalStrategyDecision =
+          shouldPreQueueSimulate && !tentativeStrategyDecision.rejected
+            ? validateStrategyDecision({
+                candidate,
+                mode: strategyMode,
+                aiReview: reviewItem?.review ?? null,
+                configStrategy,
+                policy: strategyValidationPolicy,
+                simulationPassed: simulation.ok,
+                simulationError: simulation.reason,
+                freshActiveBin: poolInfo.activeBin,
+              })
+            : tentativeStrategyDecision;
         await appendStrategyDecisionJournal({
           timestamp,
           candidate,
           finalStrategyDecision,
           aiSource: reviewItem?.source ?? null,
           aiError: reviewItem?.aiError ?? null,
+          simulation: shouldPreQueueSimulate
+            ? { ...simulation, stage: "pre_queue" }
+            : { ok: true, reason: null, stage: "not_required" },
         });
         if (finalStrategyDecision.rejected) {
           await appendAutoDeployJournal({

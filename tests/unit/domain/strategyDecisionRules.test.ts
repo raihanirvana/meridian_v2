@@ -263,4 +263,24 @@ describe("validateStrategyDecision", () => {
     expect(decision.rejected).toBe(true);
     expect(decision.reasonCodes).toContain("dlmm_simulation_failed");
   });
+
+  it("rejects guarded auto when fresh active bin drift exceeds the configured limit", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate(),
+      mode: "guarded_auto",
+      aiReview: buildAiReview(),
+      configStrategy,
+      simulationPassed: true,
+      freshActiveBin: 1008,
+      policy: {
+        maxActiveBinDrift: 3,
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.reasonCodes).toContain(
+      "fresh_active_bin_drift_above_limit",
+    );
+  });
 });

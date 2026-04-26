@@ -590,7 +590,7 @@ describe("runtime supervisor", () => {
               poolAddress: "pool_001",
               pairLabel: "ABC-SOL",
               binStep: 80,
-              activeBin: 100,
+              activeBin: 1000,
             },
           },
         }),
@@ -648,9 +648,9 @@ describe("runtime supervisor", () => {
       amountBase: 0,
       amountQuote: 0.25,
       strategy: "bid_ask",
-      rangeLowerBin: 31,
-      rangeUpperBin: 100,
-      initialActiveBin: 100,
+      rangeLowerBin: 931,
+      rangeUpperBin: 1000,
+      initialActiveBin: 1000,
       estimatedValueUsd: 25,
     });
   });
@@ -759,7 +759,7 @@ describe("runtime supervisor", () => {
               poolAddress: "pool_001",
               pairLabel: "ABC-SOL",
               binStep: 80,
-              activeBin: 100,
+              activeBin: 1000,
             },
           },
         }),
@@ -895,7 +895,7 @@ describe("runtime supervisor", () => {
               poolAddress: "pool_001",
               pairLabel: "ABC-SOL",
               binStep: 80,
-              activeBin: 100,
+              activeBin: 1000,
             },
           },
         }),
@@ -1072,7 +1072,7 @@ describe("runtime supervisor", () => {
               poolAddress: "pool_001",
               pairLabel: "ABC-SOL",
               binStep: 80,
-              activeBin: 100,
+              activeBin: 1000,
             },
           },
         }),
@@ -1146,9 +1146,210 @@ describe("runtime supervisor", () => {
     expect(autoDeploy?.after).toMatchObject({
       requestPayload: {
         strategy: "spot",
-        rangeLowerBin: 88,
-        rangeUpperBin: 108,
+        rangeLowerBin: 988,
+        rangeUpperBin: 1008,
         slippageBps: 150,
+      },
+    });
+  });
+
+  it("blocks guarded auto deploy when pre-queue DLMM simulation fails", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+    const userConfig = buildUserConfig({
+      ai: {
+        mode: "advisory",
+        strategyReviewEnabled: true,
+        strategyReviewMode: "guarded_auto",
+        allowAiStrategyForDeploy: true,
+        minAiStrategyConfidence: 0.7,
+        walletRiskMode: "small",
+      },
+      deploy: {
+        defaultAmountSol: 0.25,
+        minAmountSol: 0.1,
+        autoDeployFromShortlist: true,
+        maxAutoDeploysPerCycle: 1,
+        strategy: "bid_ask",
+        binsBelow: 69,
+        binsAbove: 0,
+        slippageBps: 300,
+        maxActiveBinDrift: 3,
+        maxBinsBelow: 120,
+        maxBinsAbove: 120,
+        maxSlippageBps: 300,
+        requireFreshSnapshot: true,
+        strategyFallbackMode: "reject",
+      },
+      runtime: {
+        dryRun: false,
+        logLevel: "info",
+        operatorStdinEnabled: true,
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig,
+      stores,
+      gateways: {
+        aiStrategyReviewer: new MockAiStrategyReviewer({
+          reviewCandidateStrategy: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              decision: "deploy",
+              recommendedStrategy: "spot",
+              confidence: 0.92,
+              riskLevel: "low",
+              binsBelow: 12,
+              binsAbove: 8,
+              slippageBps: 150,
+              maxPositionAgeMinutes: 240,
+              stopLossPct: 5,
+              takeProfitPct: 10,
+              trailingStopPct: 2,
+              reasons: ["ai_prefers_tighter_spot_range"],
+              rejectIf: [],
+            },
+          },
+        }),
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [buildCandidate()],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "fail",
+            error: new Error("deploy should not be queued after sim failure"),
+          },
+          simulateDeployLiquidity: {
+            type: "success",
+            value: {
+              ok: false,
+              reason: "range crosses inactive liquidity",
+            },
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              binStep: 80,
+              activeBin: 1000,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    const queuedActions = await stores.actionRepository.listByStatuses([
+      "QUEUED",
+    ]);
+    const journal = await stores.journalRepository.list();
+    const strategyDecision = journal.find(
+      (event) => event.eventType === "STRATEGY_DECISION_VALIDATED",
+    );
+
+    expect(queuedActions).toHaveLength(0);
+    expect(strategyDecision?.after).toMatchObject({
+      simulation: {
+        ok: false,
+        reason: "range crosses inactive liquidity",
+        stage: "pre_queue",
+      },
+      finalStrategyDecision: {
+        rejected: true,
+        reasonCodes: expect.arrayContaining(["dlmm_simulation_failed"]),
       },
     });
   });

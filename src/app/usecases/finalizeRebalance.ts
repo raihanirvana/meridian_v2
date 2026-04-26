@@ -1078,6 +1078,81 @@ export async function finalizeRebalance(
           };
         }
 
+        const finalRedeploySimulation = await input.dlmmGateway
+          .simulateDeployLiquidity({
+            wallet: latestAction.wallet,
+            poolAddress: postCloseRedeployPayload.poolAddress,
+            tokenXMint: postCloseRedeployPayload.tokenXMint,
+            tokenYMint: postCloseRedeployPayload.tokenYMint,
+            baseMint: postCloseRedeployPayload.baseMint,
+            quoteMint: postCloseRedeployPayload.quoteMint,
+            amountBase: postCloseRedeployPayload.amountBase,
+            amountQuote: postCloseRedeployPayload.amountQuote,
+            ...(postCloseRedeployPayload.slippageBps === undefined
+              ? {}
+              : { slippageBps: postCloseRedeployPayload.slippageBps }),
+            strategy: postCloseRedeployPayload.strategy,
+            rangeLowerBin: postCloseRedeployPayload.rangeLowerBin,
+            rangeUpperBin: postCloseRedeployPayload.rangeUpperBin,
+            initialActiveBin: postCloseRedeployPayload.initialActiveBin,
+          })
+          .catch((error: unknown) => ({
+            ok: false,
+            reason: errorMessage(error, "unknown redeploy simulation error"),
+          }));
+        if (!finalRedeploySimulation.ok) {
+          const failureReason = `Rebalance redeploy simulation failed after old leg closed: ${
+            finalRedeploySimulation.reason ?? "simulation failed"
+          }`;
+          const abortedPayload = buildAbortedPayload({
+            closeSubmitted: closeFinalizedPayload,
+            closeAccounting: closeLeg.closeAccounting,
+            closedPositionId: closeLeg.closedPosition.positionId,
+            availableCapitalUsd: closeLeg.availableCapitalUsd,
+            performanceSnapshot: closeLeg.closeConfirmedPosition,
+            failureReason,
+          });
+          const failedAction = {
+            ...actionAfterCloseFinalized,
+            status: transitionActionStatus(
+              actionAfterCloseFinalized.status,
+              "FAILED",
+            ),
+            resultPayload: toJournalRecord(abortedPayload),
+            txIds: actionAfterCloseFinalized.txIds,
+            error: failureReason,
+            completedAt: now,
+          } satisfies Action;
+          await input.actionRepository.upsert(failedAction);
+
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "REBALANCE_SIMULATION_FAILED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestAction.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: actionAfterCloseFinalized,
+              redeploy: postCloseRedeployPayload,
+            }),
+            after: toJournalRecord({
+              action: failedAction,
+              simulation: finalRedeploySimulation,
+            }),
+            txIds: actionAfterCloseFinalized.txIds,
+            resultStatus: failedAction.status,
+            error: failureReason,
+          });
+
+          return {
+            action: failedAction,
+            oldPosition: closeLeg.closedPosition,
+            newPosition: null,
+            outcome: "REBALANCE_ABORTED" as const,
+          };
+        }
+
         let redeployResult: z.infer<typeof DeployActionResultPayloadSchema>;
 
         try {

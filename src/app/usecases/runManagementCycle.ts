@@ -992,6 +992,67 @@ export async function runManagementCycle(
     if (
       aiRebalanceReview !== null &&
       aiRebalanceReviewInput !== null &&
+      aiRebalanceReview.validation.action === "rebalance_same_pool"
+    ) {
+      const freshActiveBin = rebalancePayload.redeploy.initialActiveBin;
+      const aiSnapshotActiveBin = aiRebalanceReviewInput.pool.currentActiveBin;
+      const maxActiveBinDrift = input.managementPolicy.maxActiveBinDrift ?? 3;
+      const freshActiveBinDrift =
+        freshActiveBin === null || aiSnapshotActiveBin === null
+          ? null
+          : Math.abs(freshActiveBin - aiSnapshotActiveBin);
+
+      if (
+        freshActiveBin === null ||
+        aiSnapshotActiveBin === null ||
+        freshActiveBinDrift === null ||
+        freshActiveBinDrift > maxActiveBinDrift
+      ) {
+        const reason = "rebalance_fresh_active_bin_drift_above_limit";
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "REBALANCE_DECISION_VALIDATED",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            allowed: false,
+            action: "rebalance_same_pool",
+            reasonCodes: [reason],
+            riskFlags: [reason],
+            rebalancePlan: aiRebalanceReview.validation.rebalancePlan,
+            freshActiveBin,
+            aiSnapshotActiveBin,
+            freshActiveBinDrift,
+            maxActiveBinDrift,
+          },
+          txIds: [],
+          resultStatus: "BLOCKED",
+          error: reason,
+        });
+
+        positionResults.push({
+          positionId: managedPosition.positionId,
+          managementAction: evaluation.action,
+          status: "BLOCKED_BY_RISK",
+          reason: "AI rebalance fresh active bin drift exceeded limit",
+          triggerReasons: [...evaluation.triggerReasons, reason],
+          actionId: null,
+          riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
+        });
+        continue;
+      }
+    }
+
+    if (
+      aiRebalanceReview !== null &&
+      aiRebalanceReviewInput !== null &&
       aiRebalanceReview.validation.action === "rebalance_same_pool" &&
       (input.managementPolicy.requireRebalanceSimulation ?? true)
     ) {
