@@ -41,6 +41,15 @@ export async function runScreeningWorker(
       shortlist: [],
       aiSource: "DISABLED",
       aiReasoning: null,
+      enrichmentSummary: {
+        candidateCount: 0,
+        hardFilterPassed: 0,
+        selectedForDetail: 0,
+        skippedDetail: 0,
+        rateLimitCooldownUntil: null,
+        snapshotOnlyWatchCount: 0,
+        deployBlockedMissingDetailCount: 0,
+      },
     };
   }
 

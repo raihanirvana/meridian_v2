@@ -3128,6 +3128,549 @@ Add Batch 26 live auto-learning wiring. Ensure every finalized close path create
 
 ---
 
+## Batch 27 — Meteora rate-budgeted enrichment dan fresh-only deploy gate
+
+### Tujuan
+
+Mengurangi `HTTP 429` dari Meteora/Cloudflare dengan mengubah pipeline screening agar **tidak melakukan detail enrichment ke banyak pool**, serta memastikan deploy hanya boleh memakai data yang fresh, lengkap, dan tervalidasi.
+
+Batch ini **bukan** menambahkan stale cache market data untuk deploy. Fokusnya adalah mengurangi jumlah request dari sumbernya:
+
+1. `getCandidateDetails()` hanya dipanggil untuk kandidat terbaik.
+2. Semua detail request melewati rate limiter.
+3. Jika rate limit terjadi, sistem stop enrichment sementara.
+4. Candidate tanpa fresh detail tidak boleh auto-deploy.
+5. Dry-run dan prod punya request budget yang eksplisit, terukur, dan bisa diaudit.
+
+### Problem yang ditutup
+
+Screening saat ini bisa sukses mengambil candidate list, tetapi detail enrichment per pool bisa terkena:
+
+```txt
+MeteoraPoolDiscoveryScreeningGateway HTTP 429
+candidate detail enrichment failed; continuing with gateway candidate snapshot
+```
+
+Artinya:
+
+- `listCandidates` masih bisa berjalan.
+- Yang terkena limit adalah `getCandidateDetails(poolAddress)`.
+- Masalahnya bukan wallet, RPC, OpenRouter, atau action queue.
+- Masalahnya adalah pola request detail Meteora yang terlalu banyak atau terlalu rapat.
+
+### Keputusan produk
+
+#### 1. Tidak memakai stale cache untuk deploy-critical data
+
+Data berikut **tidak boleh dipakai dari stale cache** untuk deploy:
+
+- `activeBin`
+- `activeBinObservedAt`
+- `activeBinAgeMs`
+- `activeBinDriftFromDiscovery`
+- `depthNearActiveUsd`
+- `depthWithin10BinsUsd`
+- `depthWithin25BinsUsd`
+- `estimatedSlippageBpsForDefaultSize`
+- `priceChange5mPct`
+- `priceChange15mPct`
+- `volatility5mPct`
+- `volatility15mPct`
+- `dataFreshnessSnapshot`
+
+Jika data ini tidak fresh, candidate boleh muncul sebagai `WATCH` / report-only, tetapi **tidak boleh** menjadi `DEPLOY` atau `GUARDED_AUTO_DEPLOY`.
+
+#### 2. Cache yang boleh hanya static metadata atau negative cooldown
+
+Static metadata boleh di-cache karena tidak sensitif terhadap perubahan market cepat:
+
+- pool address
+- token mint
+- symbol pair
+- bin step bila stabil dari discovery source
+- static token metadata
+
+Negative cooldown juga boleh, karena ini bukan memakai data market lama. Negative cooldown hanya mengingat bahwa endpoint/pool baru saja terkena 429 atau error, sehingga bot tidak mengulang request yang sama dalam waktu dekat.
+
+Contoh:
+
+```txt
+pool ABC detail request kena 429
+→ jangan hit detail ABC lagi selama 15 menit
+→ jangan lanjut spam endpoint detail dalam cycle yang sama
+```
+
+#### 3. Detail enrichment hanya top N
+
+Default prod awal:
+
+```json
+{
+  "screening": {
+    "detailEnrichmentTopN": 5,
+    "enrichmentConcurrency": 1
+  }
+}
+```
+
+Flow wajib:
+
+```txt
+listCandidates
+  -> hard filter dari snapshot list
+  -> coarse deterministic scoring
+  -> sort by score
+  -> ambil top N
+  -> baru getCandidateDetails untuk top N saja
+```
+
+Tidak boleh melakukan detail enrichment untuk semua candidate.
+
+#### 4. Rate limiter global untuk Meteora detail API
+
+Semua panggilan `getCandidateDetails()` harus melewati rate limiter global khusus endpoint detail Meteora.
+
+Policy awal:
+
+```txt
+1 request detail setiap 3–5 detik
+maks 5 detail request per screening cycle
+maks 20 detail request per 15 menit
+jika 429 muncul, cooldown endpoint 10–20 menit
+```
+
+Jika 429 muncul:
+
+```txt
+set cooldown endpoint
+stop enrichment cycle saat itu
+jangan retry pool lain di endpoint yang sama
+candidate yang belum enriched menjadi WATCH/report-only
+```
+
+#### 5. Fail closed untuk deploy
+
+Candidate tanpa fresh detail:
+
+```txt
+boleh WATCH
+boleh masuk report
+boleh dikirim ke operator sebagai observasi
+boleh masuk AI advisory sebagai non-deployable context
+TIDAK boleh auto deploy
+TIDAK boleh guarded auto deploy
+```
+
+### Config baru
+
+Tambahkan ke `user-config.json`:
+
+```json
+{
+  "screening": {
+    "detailEnrichmentTopN": 5,
+    "enrichmentConcurrency": 1,
+    "detailRequestIntervalMs": 4000,
+    "maxDetailRequestsPerCycle": 5,
+    "maxDetailRequestsPerWindow": 20,
+    "detailRequestWindowMs": 900000,
+    "detailCooldownAfter429Ms": 900000,
+    "requireDetailForDeploy": true,
+    "allowSnapshotOnlyWatch": true
+  }
+}
+```
+
+Untuk dry-run lokal yang lebih santai:
+
+```json
+{
+  "screening": {
+    "detailEnrichmentTopN": 3,
+    "enrichmentConcurrency": 1,
+    "detailRequestIntervalMs": 5000,
+    "maxDetailRequestsPerCycle": 3,
+    "maxDetailRequestsPerWindow": 10,
+    "detailRequestWindowMs": 900000,
+    "detailCooldownAfter429Ms": 1200000,
+    "requireDetailForDeploy": true,
+    "allowSnapshotOnlyWatch": true
+  }
+}
+```
+
+### Build
+
+#### 1. Domain rule: enrichment budget planning
+
+File:
+
+```txt
+src/domain/rules/enrichmentBudgetRules.ts
+```
+
+Fungsi pure:
+
+```ts
+export type EnrichmentSkipReason =
+  | "outside_top_n"
+  | "cycle_budget_exhausted"
+  | "endpoint_in_cooldown";
+
+export function buildEnrichmentPlan(input: {
+  candidates: Candidate[];
+  topN: number;
+  maxDetailRequestsPerCycle: number;
+  now: string;
+  endpointCooldownUntil?: string | null;
+}): {
+  selectedForDetail: Candidate[];
+  skipped: {
+    candidateId: string;
+    poolAddress: string;
+    reason: EnrichmentSkipReason;
+  }[];
+};
+```
+
+Rules:
+
+- Sort candidate berdasarkan deterministic coarse score.
+- Pilih maksimal `topN`.
+- Tidak boleh melebihi `maxDetailRequestsPerCycle`.
+- Jika endpoint cooldown aktif, pilih 0 candidate.
+- Semua candidate yang tidak dipilih harus punya skipped reason yang eksplisit.
+- Fungsi harus pure, tanpa I/O dan tanpa `Date.now()`.
+
+#### 2. Service: Meteora detail rate limiter
+
+File:
+
+```txt
+src/app/services/MeteoraDetailRateLimiter.ts
+```
+
+Tugas:
+
+- Menjaga jarak antar request detail.
+- Menghitung request per rolling window.
+- Menolak request jika budget window habis.
+- Membuka cooldown jika 429 terjadi.
+- Memberi `waitMs` agar caller bisa menunggu sebelum request berikutnya.
+
+Type output:
+
+```ts
+export type DetailRateLimitDecision =
+  | {
+      allowed: true;
+      waitMs: number;
+    }
+  | {
+      allowed: false;
+      reason: "window_budget_exhausted" | "endpoint_cooldown_active";
+      retryAfterMs: number;
+    };
+```
+
+Interface:
+
+```ts
+export interface MeteoraDetailRateLimiter {
+  beforeRequest(now: string): DetailRateLimitDecision;
+  recordSuccess(now: string): void;
+  recordRateLimited(input: { now: string; retryAfterMs?: number }): void;
+  getCooldownUntil(): string | null;
+  snapshot(): {
+    requestCountInWindow: number;
+    maxDetailRequestsPerWindow: number;
+    cooldownUntil: string | null;
+    lastRequestAt: string | null;
+  };
+}
+```
+
+#### 3. Adapter error mapping untuk HTTP 429
+
+File:
+
+```txt
+src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.ts
+```
+
+Map HTTP 429 menjadi typed error:
+
+```ts
+export class MeteoraRateLimitedError extends Error {
+  readonly status = 429;
+  readonly endpoint: "candidate_detail";
+  readonly poolAddress?: string;
+  readonly retryAfterMs?: number;
+  readonly responseKind: "cloudflare_html" | "json" | "unknown";
+}
+```
+
+Rules:
+
+- Body HTML Cloudflare harus dikenali sebagai `responseKind = "cloudflare_html"`.
+- 429 tidak boleh dianggap fatal untuk seluruh runtime.
+- 429 harus memicu cooldown di rate limiter.
+- Error selain 429 tetap mengikuti adapter error mapping yang ada.
+
+#### 4. Screening cycle integration
+
+File utama:
+
+```txt
+src/app/usecases/runScreeningCycle.ts
+```
+
+Flow baru:
+
+```txt
+1. listCandidates
+2. hard filter dasar dari discovery snapshot
+3. coarse deterministic scoring
+4. buildEnrichmentPlan()
+5. enrich hanya selectedForDetail
+6. setiap detail request melewati MeteoraDetailRateLimiter
+7. jika rate limiter meminta wait, tunggu sesuai waitMs
+8. jika 429:
+   - log/journal METEORA_DETAIL_RATE_LIMITED
+   - recordRateLimited()
+   - stop remaining detail enrichment untuk cycle ini
+9. candidate tanpa detail diberi decision WATCH/SKIPPED_DETAIL
+10. deploy eligibility harus mengecek requireDetailForDeploy
+```
+
+Larangan:
+
+- Jangan detail-enrich semua candidate.
+- Jangan retry semua pool setelah 429.
+- Jangan lanjut memukul endpoint detail kalau cooldown aktif.
+- Jangan auto-deploy candidate snapshot-only.
+
+#### 5. Fresh-only deploy gate
+
+Integrasi di:
+
+```txt
+src/domain/rules/strategyDecisionRules.ts
+src/app/usecases/decideDeploy.ts
+src/app/usecases/requestDeploy.ts
+```
+
+Aturan wajib jika `screening.requireDetailForDeploy = true`:
+
+- `candidate.dataFreshnessSnapshot.poolDetailFetchedAt` wajib ada.
+- `candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy` wajib true.
+- `candidate.dlmmMicrostructureSnapshot.activeBinAgeMs <= screening.maxStrategySnapshotAgeMs`.
+- `candidate.dlmmMicrostructureSnapshot.activeBinDriftFromDiscovery <= deploy.maxActiveBinDrift`.
+- `candidate.dlmmMicrostructureSnapshot.estimatedSlippageBpsForDefaultSize <= screening.maxEstimatedSlippageBps`.
+- `candidate.finalStrategyDecision` tidak boleh dibuat dari stale detail.
+
+Jika gagal:
+
+```txt
+decision = WATCH atau REJECT
+reasonCode = DETAIL_NOT_FRESH_OR_MISSING
+```
+
+#### 6. Journal events
+
+Tambahkan journal event types:
+
+```txt
+ENRICHMENT_PLAN_BUILT
+METEORA_DETAIL_REQUEST_SKIPPED
+METEORA_DETAIL_RATE_LIMITED
+METEORA_DETAIL_COOLDOWN_STARTED
+CANDIDATE_DETAIL_MISSING_DEPLOY_BLOCKED
+```
+
+Payload minimal `ENRICHMENT_PLAN_BUILT`:
+
+```ts
+{
+  candidateCount: number;
+  selectedCount: number;
+  skippedCount: number;
+  topN: number;
+  maxDetailRequestsPerCycle: number;
+  endpointCooldownUntil?: string | null;
+}
+```
+
+Payload minimal `METEORA_DETAIL_RATE_LIMITED`:
+
+```ts
+{
+  poolAddress?: string;
+  endpoint: "candidate_detail";
+  responseKind: "cloudflare_html" | "json" | "unknown";
+  cooldownUntil: string;
+  remainingDetailsSkipped: number;
+}
+```
+
+Payload minimal `CANDIDATE_DETAIL_MISSING_DEPLOY_BLOCKED`:
+
+```ts
+{
+  poolAddress: string;
+  candidateId: string;
+  reasonCode: "DETAIL_NOT_FRESH_OR_MISSING";
+  requireDetailForDeploy: true;
+}
+```
+
+#### 7. Operator/reporting visibility
+
+Tambahkan ringkasan di report startup/screening:
+
+```txt
+candidateCount
+hardFilterPassed
+selectedForDetail
+skippedDetail
+rateLimitCooldownUntil
+snapshotOnlyWatchCount
+deployBlockedMissingDetailCount
+```
+
+Operator harus bisa membedakan:
+
+- tidak ada pool bagus,
+- pool ada tapi snapshot-only,
+- pool bagus tapi detail API sedang cooldown,
+- pool bagus dan fresh-detail eligible.
+
+### Output
+
+Setelah Batch 27:
+
+1. Screening tetap bisa mengambil list pool.
+2. Detail Meteora hanya dipanggil untuk top 3–5 candidate.
+3. Request detail tidak burst.
+4. Jika 429 terjadi, sistem stop enrichment sementara, bukan retry spam.
+5. Candidate tanpa fresh detail tidak bisa auto-deploy.
+6. Operator bisa melihat kenapa candidate tidak diperkaya detailnya.
+7. Dry-run bisa memakai prod-like logic tanpa membanjiri Meteora.
+8. Journal punya bukti request budget, cooldown, dan deploy block reason.
+
+### Tests
+
+#### Unit tests
+
+File:
+
+```txt
+tests/unit/domain/enrichmentBudgetRules.test.ts
+```
+
+Cover:
+
+- Memilih hanya top 5 berdasarkan score.
+- `topN = 3` hanya memilih 3 candidate.
+- `maxDetailRequestsPerCycle` membatasi selection walau `topN` lebih besar.
+- Endpoint cooldown aktif menghasilkan `selectedForDetail = []`.
+- Skipped reason benar untuk `outside_top_n`, `cycle_budget_exhausted`, dan `endpoint_in_cooldown`.
+- Output deterministic untuk input yang sama.
+
+File:
+
+```txt
+tests/unit/app/MeteoraDetailRateLimiter.test.ts
+```
+
+Cover:
+
+- Request pertama allowed.
+- Request kedua terlalu cepat menghasilkan `waitMs`.
+- Window budget habis menghasilkan `window_budget_exhausted`.
+- `recordRateLimited()` membuka cooldown.
+- Cooldown selesai membuat request allowed lagi.
+- `snapshot()` mengembalikan state yang benar.
+
+#### Integration tests
+
+File:
+
+```txt
+tests/integration/screeningTopNEnrichment.test.ts
+```
+
+Cover:
+
+- Dari 30 candidate, `getCandidateDetails()` dipanggil maksimal 5 kali.
+- Dari 30 candidate dengan `detailEnrichmentTopN = 3`, detail dipanggil maksimal 3 kali.
+- 429 pada detail kedua menghentikan detail request berikutnya.
+- Candidate tanpa detail tetap bisa muncul sebagai WATCH/report-only.
+- Candidate tanpa detail tidak eligible deploy.
+- Journal memuat `ENRICHMENT_PLAN_BUILT` dan `METEORA_DETAIL_RATE_LIMITED`.
+
+File:
+
+```txt
+tests/integration/deployFreshDetailGate.test.ts
+```
+
+Cover:
+
+- Candidate tanpa `poolDetailFetchedAt` ditolak deploy.
+- Candidate dengan stale `activeBinAgeMs` ditolak deploy.
+- Candidate dengan active-bin drift di atas limit ditolak deploy.
+- Candidate dengan estimated slippage di atas limit ditolak deploy.
+- Candidate dengan fresh detail lolos validator.
+- `requireDetailForDeploy = false` hanya boleh dipakai di test/manual mode dan harus tetap menulis warning journal.
+
+### Regression tests wajib
+
+1. 429 tidak membuat runtime crash.
+2. 429 tidak menyebabkan retry spam.
+3. Endpoint cooldown mencegah request detail lanjutan.
+4. Candidate snapshot-only tidak bisa auto-deploy.
+5. AI tidak boleh mengubah snapshot-only candidate menjadi deploy.
+6. StrategyDecisionValidator menolak stale detail walau AI confidence tinggi.
+7. Manual deploy tetap membutuhkan fresh detail kecuali operator memakai explicit override yang dijournal.
+8. Dry-run report menunjukkan jumlah request detail yang benar.
+
+### DoD
+
+- `getCandidateDetails()` tidak pernah dipanggil lebih dari `maxDetailRequestsPerCycle` per screening cycle.
+- `enrichmentConcurrency` default prod awal = `1`.
+- `detailEnrichmentTopN` default prod awal = `5`.
+- 429 membuka cooldown endpoint, bukan retry agresif.
+- Tidak ada auto-deploy tanpa fresh detail.
+- Tidak ada stale cache untuk deploy-critical market/microstructure data.
+- Log/journal bisa menjelaskan:
+  - berapa candidate di-list,
+  - berapa yang lolos hard filter,
+  - berapa yang dipilih untuk detail,
+  - berapa yang diskip,
+  - apakah cooldown aktif,
+  - dan apakah deploy diblok karena missing/stale detail.
+- Semua test batch hijau.
+
+### Jangan dikerjakan di Batch 27
+
+- Jangan menambahkan AI write privilege.
+- Jangan memakai stale market cache untuk deploy.
+- Jangan mengubah lifecycle deploy/close/rebalance selain menambah fresh-detail gate.
+- Jangan membuat retry unlimited.
+- Jangan menjadikan 429 sebagai fatal runtime crash.
+- Jangan auto-mutate `user-config.json`.
+
+### Prompt vibecode
+
+```txt
+Add Batch 27: Meteora rate-budgeted enrichment and fresh-only deploy gate.
+
+Refactor screening so getCandidateDetails is only called for the deterministic top N candidates after listCandidates, hard filters, and coarse scoring. Add config knobs: detailEnrichmentTopN, detailRequestIntervalMs, maxDetailRequestsPerCycle, maxDetailRequestsPerWindow, detailRequestWindowMs, detailCooldownAfter429Ms, requireDetailForDeploy, allowSnapshotOnlyWatch. Implement pure enrichmentBudgetRules.buildEnrichmentPlan, a MeteoraDetailRateLimiter service, typed MeteoraRateLimitedError mapping for HTTP 429, and screening integration that stops detail enrichment on 429 instead of retry-spamming.
+
+Do not use stale market cache for deploy-critical data. Candidate without fresh detail may be WATCH/report-only but must not be auto-deploy eligible. Add journal events for enrichment plan, skipped detail requests, rate limit cooldown, and deploy blocked due to missing/stale detail. Add unit and integration tests proving only top N details are requested, 429 stops the cycle, cooldown prevents further requests, and deploy requires fresh detail.
+```
+
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:
@@ -3151,6 +3694,7 @@ Agar bug minimal, aktifkan fitur dalam urutan ini:
 17. Dry-run simulator
 18. Supervised live
 19. Live auto-learning wiring + lesson enforcement
+20. Meteora rate-budgeted enrichment + fresh-only deploy gate
 
 ### Jangan dibalik
 

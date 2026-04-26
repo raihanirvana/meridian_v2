@@ -776,4 +776,11 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - `AiAdvisoryService` sekarang bisa menulis journal `AI_LESSON_INJECTION_FAILED` untuk shortlist ranking dan management advisory bila lesson/pool-memory injection gagal; LLM tidak dipanggil pada error lesson context
   - semantics lesson kosong tetap dipertahankan sebagai konteks valid (`No historical lessons recorded yet.`), bukan skip LLM; yang dianggap failure hanya lesson service/repository error
   - Batch 26 integration coverage sekarang ada di `tests/integration/batch26LearningLoop.test.ts`: close finalized -> performance/lesson exactly once, rebalance old-leg performance once, bad-pool close -> cooldown, corrupt lesson store -> LLM not called + journal failure, dan backfill dry-run no mutation
-- `npm test` terakhir hijau dengan total `369` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau
+- Batch 27 sekarang sudah masuk untuk menangani Meteora/Cloudflare 429 saat detail enrichment:
+  - screening tidak lagi melakukan `getCandidateDetails()` ke banyak pool sekaligus; cycle membangun coarse shortlist dulu, lalu hanya top-N kandidat yang mendapat detail request sesuai `screening.detailEnrichmentTopN` dan `screening.maxDetailRequestsPerCycle`
+  - `MeteoraDetailRateLimiter` membatasi interval request, budget per window, dan membuka cooldown endpoint saat 429 terjadi; ketika cooldown aktif, detail enrichment dilewati tanpa retry spam
+  - `MeteoraPoolDiscoveryScreeningGateway` memetakan HTTP 429 HTML/JSON menjadi `MeteoraRateLimitedError` typed, sehingga worker bisa membedakan rate limit dari error adapter biasa
+  - `runScreeningCycle()` menulis journal `ENRICHMENT_PLAN_BUILT`, `METEORA_DETAIL_REQUEST_SKIPPED`, `METEORA_DETAIL_RATE_LIMITED`, dan `METEORA_DETAIL_COOLDOWN_STARTED`, plus `enrichmentSummary` di hasil screening
+  - kandidat tanpa detail fresh tetap bisa muncul sebagai watch/report-only, tetapi `StrategyDecisionValidator` memblok auto-deploy dengan `DETAIL_NOT_FRESH_OR_MISSING`
+  - `user-config.json` dan example menambah knob detail budget/cooldown; default concurrency enrichment diturunkan ke `1` agar aman untuk provider Meteora
+- `npm test` terakhir hijau dengan total `379` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

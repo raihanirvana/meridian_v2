@@ -11,6 +11,7 @@ import {
 } from "../../domain/rules/poolFeatureRules.js";
 import { scoreStrategySuitability } from "../../domain/scoring/strategySuitabilityScore.js";
 import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
+import { AdapterHttpStatusError } from "../http/HttpJsonClient.js";
 
 import {
   CandidateDetailsSchema,
@@ -42,6 +43,36 @@ export interface MeteoraPoolDiscoveryScreeningGatewayOptions {
   fetchFn?: FetchLike;
   timeoutMs?: number;
   now?: () => string;
+}
+
+export class MeteoraRateLimitedError extends Error {
+  public readonly status = 429;
+  public readonly endpoint = "candidate_detail";
+  public readonly poolAddress?: string;
+  public readonly retryAfterMs?: number;
+  public readonly responseKind: "cloudflare_html" | "json" | "unknown";
+
+  public constructor(input: {
+    poolAddress?: string;
+    retryAfterMs?: number;
+    responseKind: "cloudflare_html" | "json" | "unknown";
+    cause?: unknown;
+  }) {
+    super(
+      `Meteora candidate detail rate limited${
+        input.poolAddress === undefined ? "" : ` for ${input.poolAddress}`
+      }`,
+    );
+    this.name = "MeteoraRateLimitedError";
+    if (input.poolAddress !== undefined) {
+      this.poolAddress = input.poolAddress;
+    }
+    if (input.retryAfterMs !== undefined) {
+      this.retryAfterMs = input.retryAfterMs;
+    }
+    this.responseKind = input.responseKind;
+    this.cause = input.cause;
+  }
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -189,6 +220,23 @@ function extractPools(
   return response.data ?? response.pools ?? response.result ?? [];
 }
 
+function classifyRateLimitResponseKind(
+  responseText: string,
+): "cloudflare_html" | "json" | "unknown" {
+  const trimmed = responseText.trim();
+  if (
+    trimmed.startsWith("<!doctype html") ||
+    trimmed.startsWith("<html") ||
+    trimmed.toLowerCase().includes("cloudflare")
+  ) {
+    return "cloudflare_html";
+  }
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return "json";
+  }
+  return "unknown";
+}
+
 export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
   private readonly client: JsonHttpClient;
   private readonly category: string;
@@ -234,16 +282,28 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     poolAddress: string,
   ): Promise<CandidateDetails> {
     const parsedPoolAddress = z.string().min(1).parse(poolAddress);
-    const response = await this.client.request({
-      method: "GET",
-      path: "/pools",
-      query: {
-        page_size: 1,
-        category: this.category,
-        filter_by: `pool_address=${parsedPoolAddress}`,
-      },
-      responseSchema: PoolDiscoveryResponseSchema,
-    });
+    let response: z.infer<typeof PoolDiscoveryResponseSchema>;
+    try {
+      response = await this.client.request({
+        method: "GET",
+        path: "/pools",
+        query: {
+          page_size: 1,
+          category: this.category,
+          filter_by: `pool_address=${parsedPoolAddress}`,
+        },
+        responseSchema: PoolDiscoveryResponseSchema,
+      });
+    } catch (error) {
+      if (error instanceof AdapterHttpStatusError && error.status === 429) {
+        throw new MeteoraRateLimitedError({
+          poolAddress: parsedPoolAddress,
+          responseKind: classifyRateLimitResponseKind(error.responseText),
+          cause: error,
+        });
+      }
+      throw error;
+    }
     const pool =
       extractPools(response).find(
         (item) => extractPoolAddress(item) === parsedPoolAddress,
@@ -260,10 +320,13 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       });
     }
 
-    return CandidateDetailsSchema.parse(this.toCandidateDetails(pool));
+    return CandidateDetailsSchema.parse(this.toCandidateDetails(pool, true));
   }
 
-  private toCandidate(pool: Record<string, unknown>): Candidate | null {
+  private toCandidate(
+    pool: Record<string, unknown>,
+    detailFetched: boolean = false,
+  ): Candidate | null {
     const poolAddress = extractPoolAddress(pool);
     const { tokenX, tokenY } = pickTokenRecords(pool);
     const tokenXMint = firstString(
@@ -496,7 +559,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     const dataFreshnessSnapshot = buildDataFreshnessSnapshot({
       now,
       screeningSnapshotAt: now,
-      poolDetailFetchedAt: now,
+      poolDetailFetchedAt: detailFetched ? now : null,
       tokenIntelFetchedAt: now,
       chainSnapshotFetchedAt: now,
       hasActiveBin: activeBin !== undefined,
@@ -593,8 +656,11 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     });
   }
 
-  private toCandidateDetails(pool: Record<string, unknown>): CandidateDetails {
-    const candidate = this.toCandidate(pool);
+  private toCandidateDetails(
+    pool: Record<string, unknown>,
+    detailFetched: boolean,
+  ): CandidateDetails {
+    const candidate = this.toCandidate(pool, detailFetched);
     if (candidate === null) {
       const poolAddress = extractPoolAddress(pool) ?? "unknown_pool";
       return CandidateDetailsSchema.parse({
@@ -617,6 +683,9 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       holderCount: candidate.screeningSnapshot.holderCount,
       tokenAgeHours: candidate.smartMoneySnapshot.tokenAgeHours,
       athDistancePct: candidate.screeningSnapshot.athDistancePct,
+      marketFeatureSnapshot: candidate.marketFeatureSnapshot,
+      dlmmMicrostructureSnapshot: candidate.dlmmMicrostructureSnapshot,
+      dataFreshnessSnapshot: candidate.dataFreshnessSnapshot,
       narrativeSummary: null,
       holderDistributionSummary: null,
     });

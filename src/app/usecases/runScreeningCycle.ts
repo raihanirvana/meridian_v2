@@ -17,6 +17,7 @@ import {
   screenAndScoreCandidates,
   type ScreeningPolicy,
 } from "../../domain/rules/screeningRules.js";
+import { buildEnrichmentPlan } from "../../domain/rules/enrichmentBudgetRules.js";
 import type { PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import {
   ScreeningCandidateInputSchema,
@@ -30,6 +31,7 @@ import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
 import type { PolicyProvider } from "../services/PolicyProvider.js";
 import type { SignalWeightsProvider } from "../services/SignalWeightsProvider.js";
 import type { LessonPromptService } from "../services/LessonPromptService.js";
+import type { MeteoraDetailRateLimiter } from "../services/MeteoraDetailRateLimiter.js";
 
 function nowTimestamp(now?: () => string): string {
   return now?.() ?? new Date().toISOString();
@@ -76,28 +78,43 @@ function asOptionalNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-async function mapWithConcurrency<T, U>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<U>,
-): Promise<U[]> {
-  if (items.length === 0) {
-    return [];
-  }
+function addMs(timestamp: string, ms: number): string {
+  return new Date(Date.parse(timestamp) + ms).toISOString();
+}
 
-  const results = new Array<U>(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(1, concurrency), items.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await mapper(items[index] as T, index);
-      }
-    }),
-  );
-  return results;
+function sleep(ms: number): Promise<void> {
+  return ms <= 0
+    ? Promise.resolve()
+    : new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitedDetailError(error: unknown): {
+  poolAddress?: string;
+  retryAfterMs?: number;
+  responseKind: "cloudflare_html" | "json" | "unknown";
+} | null {
+  if (typeof error !== "object" || error === null) {
+    return null;
+  }
+  const record = error as Record<string, unknown>;
+  if (record.status !== 429 || record.endpoint !== "candidate_detail") {
+    return null;
+  }
+  const responseKind =
+    record.responseKind === "cloudflare_html" ||
+    record.responseKind === "json" ||
+    record.responseKind === "unknown"
+      ? record.responseKind
+      : "unknown";
+  return {
+    ...(typeof record.poolAddress === "string"
+      ? { poolAddress: record.poolAddress }
+      : {}),
+    ...(typeof record.retryAfterMs === "number"
+      ? { retryAfterMs: record.retryAfterMs }
+      : {}),
+    responseKind,
+  };
 }
 
 function toScreeningInput(
@@ -107,6 +124,9 @@ function toScreeningInput(
     tokenAgeHours?: number;
     athDistancePct?: number;
     volumeTrendPct?: number;
+    marketFeatureSnapshot?: Candidate["marketFeatureSnapshot"];
+    dlmmMicrostructureSnapshot?: Candidate["dlmmMicrostructureSnapshot"];
+    dataFreshnessSnapshot?: Candidate["dataFreshnessSnapshot"];
     narrativeSummary?: string | null;
     holderDistributionSummary?: string | null;
   },
@@ -201,9 +221,13 @@ function toScreeningInput(
       candidate.smartMoneySnapshot.narrativePenaltyScore,
       "narrativePenaltyScore",
     ),
-    marketFeatureSnapshot: candidate.marketFeatureSnapshot,
-    dlmmMicrostructureSnapshot: candidate.dlmmMicrostructureSnapshot,
-    dataFreshnessSnapshot: candidate.dataFreshnessSnapshot,
+    marketFeatureSnapshot:
+      details.marketFeatureSnapshot ?? candidate.marketFeatureSnapshot,
+    dlmmMicrostructureSnapshot:
+      details.dlmmMicrostructureSnapshot ??
+      candidate.dlmmMicrostructureSnapshot,
+    dataFreshnessSnapshot:
+      details.dataFreshnessSnapshot ?? candidate.dataFreshnessSnapshot,
   });
 }
 
@@ -253,6 +277,11 @@ export interface RunScreeningCycleInput {
   poolMemoryRepository?: PoolMemoryRepository;
   candidateLimit?: number;
   enrichmentConcurrency?: number;
+  detailEnrichmentTopN?: number;
+  maxDetailRequestsPerCycle?: number;
+  detailCooldownAfter429Ms?: number;
+  detailRateLimiter?: MeteoraDetailRateLimiter;
+  sleep?: (ms: number) => Promise<void>;
   now?: () => string;
 }
 
@@ -264,6 +293,15 @@ export interface RunScreeningCycleResult {
   shortlist: Candidate[];
   aiSource: "DISABLED" | "DETERMINISTIC" | "AI" | "FALLBACK";
   aiReasoning: string | null;
+  enrichmentSummary: {
+    candidateCount: number;
+    hardFilterPassed: number;
+    selectedForDetail: number;
+    skippedDetail: number;
+    rateLimitCooldownUntil: string | null;
+    snapshotOnlyWatchCount: number;
+    deployBlockedMissingDetailCount: number;
+  };
 }
 
 export async function runScreeningCycle(
@@ -289,10 +327,163 @@ export async function runScreeningCycle(
     timeframe: screeningPolicy.timeframe,
   });
 
-  const enrichedResults = await mapWithConcurrency(
-    listedCandidates,
-    input.enrichmentConcurrency ?? 10,
-    async (candidate) => {
+  const coarseInputs = listedCandidates.map((candidate) =>
+    toScreeningInput(candidate, {}),
+  );
+  const signalWeights =
+    input.signalWeightsProvider === undefined
+      ? undefined
+      : await input.signalWeightsProvider.resolveSignalWeights();
+  const poolMemoryMap =
+    input.poolMemoryRepository === undefined
+      ? undefined
+      : Object.fromEntries(
+          (await input.poolMemoryRepository.listAll()).map((entry) => [
+            entry.poolAddress,
+            { cooldownUntil: entry.cooldownUntil },
+          ]),
+        );
+  const {
+    minVolumeTrendPct: _coarseMinVolumeTrendPct,
+    minTokenAgeHours: _coarseMinTokenAgeHours,
+    maxTokenAgeHours: _coarseMaxTokenAgeHours,
+    athFilterPct: _coarseAthFilterPct,
+    ...coarsePolicyBase
+  } = screeningPolicy;
+  const coarsePolicy: ScreeningPolicy = {
+    ...coarsePolicyBase,
+    requireFreshSnapshot: false,
+  };
+  const coarse = screenAndScoreCandidates({
+    candidates: coarseInputs,
+    portfolio,
+    screeningPolicy: coarsePolicy,
+    scoringPolicy: deriveDefaultCandidateScorePolicy(coarsePolicy),
+    ...(signalWeights === undefined ? {} : { signalWeights }),
+    ...(poolMemoryMap === undefined ? {} : { poolMemoryMap }),
+    createdAt: now,
+    now,
+  });
+  const detailTopN =
+    input.detailEnrichmentTopN ??
+    screeningPolicy.detailEnrichmentTopN ??
+    Math.min(5, screeningPolicy.shortlistLimit);
+  const maxDetailRequestsPerCycle =
+    input.maxDetailRequestsPerCycle ??
+    screeningPolicy.maxDetailRequestsPerCycle ??
+    detailTopN;
+  const endpointCooldownUntil =
+    input.detailRateLimiter?.getCooldownUntil() ?? null;
+  const enrichmentPlan = buildEnrichmentPlan({
+    candidates: coarse.candidates.filter(
+      (candidate) => candidate.hardFilterPassed,
+    ),
+    topN: detailTopN,
+    maxDetailRequestsPerCycle,
+    now,
+    endpointCooldownUntil,
+  });
+
+  await input.journalRepository.append({
+    timestamp: now,
+    eventType: "ENRICHMENT_PLAN_BUILT",
+    actor: "system",
+    wallet: input.wallet,
+    positionId: null,
+    actionId: null,
+    before: null,
+    after: toJournalRecord({
+      candidateCount: listedCandidates.length,
+      hardFilterPassed: coarse.candidates.filter(
+        (candidate) => candidate.hardFilterPassed,
+      ).length,
+      selectedCount: enrichmentPlan.selectedForDetail.length,
+      skippedCount: enrichmentPlan.skipped.length,
+      topN: detailTopN,
+      maxDetailRequestsPerCycle,
+      endpointCooldownUntil,
+    }),
+    txIds: [],
+    resultStatus: "PLANNED",
+    error: null,
+  });
+  for (const skipped of enrichmentPlan.skipped) {
+    await input.journalRepository.append({
+      timestamp: now,
+      eventType: "METEORA_DETAIL_REQUEST_SKIPPED",
+      actor: "system",
+      wallet: input.wallet,
+      positionId: null,
+      actionId: null,
+      before: null,
+      after: toJournalRecord(skipped),
+      txIds: [],
+      resultStatus: "SKIPPED",
+      error: null,
+    });
+  }
+
+  const selectedIds = new Set(
+    enrichmentPlan.selectedForDetail.map((candidate) => candidate.candidateId),
+  );
+  const detailByCandidateId = new Map<
+    string,
+    {
+      feePerTvl24h?: number;
+      tokenAgeHours?: number;
+      athDistancePct?: number;
+      volumeTrendPct?: number;
+      marketFeatureSnapshot?: Candidate["marketFeatureSnapshot"];
+      dlmmMicrostructureSnapshot?: Candidate["dlmmMicrostructureSnapshot"];
+      dataFreshnessSnapshot?: Candidate["dataFreshnessSnapshot"];
+      narrativeSummary?: string | null;
+      holderDistributionSummary?: string | null;
+    }
+  >();
+  let rateLimitCooldownUntil: string | null = endpointCooldownUntil;
+  let stoppedByRateLimit = false;
+  const wait = input.sleep ?? sleep;
+  let detailRequestNow = now;
+
+  for (const [index, candidate] of enrichmentPlan.selectedForDetail.entries()) {
+    if (stoppedByRateLimit) {
+      break;
+    }
+
+    const limiterDecision =
+      input.detailRateLimiter?.beforeRequest(detailRequestNow);
+    if (limiterDecision !== undefined && !limiterDecision.allowed) {
+      rateLimitCooldownUntil =
+        input.detailRateLimiter?.getCooldownUntil() ?? null;
+      const remainingDetailsSkipped =
+        enrichmentPlan.selectedForDetail.length - index;
+      await input.journalRepository.append({
+        timestamp: now,
+        eventType: "METEORA_DETAIL_REQUEST_SKIPPED",
+        actor: "system",
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: toJournalRecord({
+          candidateId: candidate.candidateId,
+          poolAddress: candidate.poolAddress,
+          reason: limiterDecision.reason,
+          retryAfterMs: limiterDecision.retryAfterMs,
+          remainingDetailsSkipped,
+        }),
+        txIds: [],
+        resultStatus: "SKIPPED",
+        error: limiterDecision.reason,
+      });
+      break;
+    }
+    if (limiterDecision !== undefined && limiterDecision.waitMs > 0) {
+      await wait(limiterDecision.waitMs);
+      detailRequestNow = addMs(detailRequestNow, limiterDecision.waitMs);
+    }
+
+    try {
       const tokenMint = asString(
         candidate.tokenRiskSnapshot.tokenXMint,
         "tokenXMint",
@@ -310,17 +501,10 @@ export async function runScreeningCycle(
                 return null;
               });
       const [details, narrative] = await Promise.all([
-        input.screeningGateway
-          .getCandidateDetails(candidate.poolAddress)
-          .catch((error) => {
-            logger.warn(
-              { err: error, poolAddress: candidate.poolAddress },
-              "candidate detail enrichment failed; continuing with gateway candidate snapshot",
-            );
-            return null;
-          }),
+        input.screeningGateway.getCandidateDetails(candidate.poolAddress),
         narrativePromise,
       ]);
+      input.detailRateLimiter?.recordSuccess(detailRequestNow);
 
       let narrativeSummary = details?.narrativeSummary ?? null;
       let holderDistributionSummary =
@@ -331,7 +515,7 @@ export async function runScreeningCycle(
           narrative.holderDistributionSummary ?? holderDistributionSummary;
       }
 
-      const screeningInput = toScreeningInput(candidate, {
+      detailByCandidateId.set(candidate.candidateId, {
         ...(details?.feePerTvl24h === undefined
           ? {}
           : { feePerTvl24h: details.feePerTvl24h }),
@@ -344,39 +528,99 @@ export async function runScreeningCycle(
         ...(details?.volumeTrendPct === undefined
           ? {}
           : { volumeTrendPct: details.volumeTrendPct }),
+        ...(details?.marketFeatureSnapshot === undefined
+          ? {}
+          : { marketFeatureSnapshot: details.marketFeatureSnapshot }),
+        ...(details?.dlmmMicrostructureSnapshot === undefined
+          ? {}
+          : { dlmmMicrostructureSnapshot: details.dlmmMicrostructureSnapshot }),
+        ...(details?.dataFreshnessSnapshot === undefined
+          ? {}
+          : { dataFreshnessSnapshot: details.dataFreshnessSnapshot }),
         ...(narrativeSummary === null ? {} : { narrativeSummary }),
         ...(holderDistributionSummary === null
           ? {}
           : { holderDistributionSummary }),
       });
-      return {
-        screeningInput,
-        enrichedCandidate: mergeCandidateContext(
-          candidate,
-          screeningInput,
-          now,
-        ),
-      };
-    },
-  );
+    } catch (error) {
+      const rateLimit = isRateLimitedDetailError(error);
+      if (rateLimit !== null) {
+        input.detailRateLimiter?.recordRateLimited({
+          now: detailRequestNow,
+          ...(rateLimit.retryAfterMs === undefined
+            ? {}
+            : { retryAfterMs: rateLimit.retryAfterMs }),
+        });
+        rateLimitCooldownUntil =
+          input.detailRateLimiter?.getCooldownUntil() ??
+          addMs(
+            detailRequestNow,
+            input.detailCooldownAfter429Ms ??
+              screeningPolicy.detailCooldownAfter429Ms ??
+              900_000,
+          );
+        const remainingDetailsSkipped =
+          enrichmentPlan.selectedForDetail.length - index - 1;
+        await input.journalRepository.append({
+          timestamp: now,
+          eventType: "METEORA_DETAIL_RATE_LIMITED",
+          actor: "system",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: toJournalRecord({
+            poolAddress: rateLimit.poolAddress ?? candidate.poolAddress,
+            endpoint: "candidate_detail",
+            responseKind: rateLimit.responseKind,
+            cooldownUntil: rateLimitCooldownUntil,
+            remainingDetailsSkipped,
+          }),
+          txIds: [],
+          resultStatus: "RATE_LIMITED",
+          error: error instanceof Error ? error.message : "rate limited",
+        });
+        await input.journalRepository.append({
+          timestamp: now,
+          eventType: "METEORA_DETAIL_COOLDOWN_STARTED",
+          actor: "system",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: toJournalRecord({
+            endpoint: "candidate_detail",
+            cooldownUntil: rateLimitCooldownUntil,
+          }),
+          txIds: [],
+          resultStatus: "COOLDOWN",
+          error: null,
+        });
+        stoppedByRateLimit = true;
+        break;
+      }
+
+      logger.warn(
+        { err: error, poolAddress: candidate.poolAddress },
+        "candidate detail enrichment failed; continuing with gateway candidate snapshot",
+      );
+    }
+  }
+
+  const enrichedResults = listedCandidates.map((candidate) => {
+    const details = detailByCandidateId.get(candidate.candidateId) ?? {};
+    const screeningInput = toScreeningInput(candidate, details);
+    return {
+      screeningInput,
+      enrichedCandidate: mergeCandidateContext(candidate, screeningInput, now),
+      detailFetched: detailByCandidateId.has(candidate.candidateId),
+      selectedForDetail: selectedIds.has(candidate.candidateId),
+    };
+  });
   const enrichedInputs = enrichedResults.map((item) => item.screeningInput);
   const enrichedCandidates = enrichedResults.map(
     (item) => item.enrichedCandidate,
   );
-
-  const signalWeights =
-    input.signalWeightsProvider === undefined
-      ? undefined
-      : await input.signalWeightsProvider.resolveSignalWeights();
-  const poolMemoryMap =
-    input.poolMemoryRepository === undefined
-      ? undefined
-      : Object.fromEntries(
-          (await input.poolMemoryRepository.listAll()).map((entry) => [
-            entry.poolAddress,
-            { cooldownUntil: entry.cooldownUntil },
-          ]),
-        );
 
   const deterministic = screenAndScoreCandidates({
     candidates: enrichedInputs,
@@ -453,6 +697,29 @@ export async function runScreeningCycle(
   const finalShortlist = aiShortlist.shortlist.map(
     (candidate) => candidateById.get(candidate.candidateId) ?? candidate,
   );
+  const snapshotOnlyWatchCount = enrichedResults.filter(
+    (item) =>
+      item.selectedForDetail &&
+      !item.detailFetched &&
+      item.enrichedCandidate.dataFreshnessSnapshot.poolDetailFetchedAt === null,
+  ).length;
+  const deployBlockedMissingDetailCount = finalCandidates.filter(
+    (candidate) =>
+      candidate.dataFreshnessSnapshot.poolDetailFetchedAt === null &&
+      candidate.decision === "REJECTED_HARD_FILTER" &&
+      candidate.decisionReason === "strategy snapshot is stale",
+  ).length;
+  const enrichmentSummary = {
+    candidateCount: finalCandidates.length,
+    hardFilterPassed: coarse.candidates.filter(
+      (candidate) => candidate.hardFilterPassed,
+    ).length,
+    selectedForDetail: enrichmentPlan.selectedForDetail.length,
+    skippedDetail: enrichmentPlan.skipped.length,
+    rateLimitCooldownUntil,
+    snapshotOnlyWatchCount,
+    deployBlockedMissingDetailCount,
+  };
 
   if (input.journalRepository !== undefined) {
     await input.journalRepository.append({
@@ -468,6 +735,7 @@ export async function runScreeningCycle(
         candidateCount: finalCandidates.length,
         shortlistCount: finalShortlist.length,
         aiSource: aiShortlist.source,
+        enrichment: enrichmentSummary,
       }),
       txIds: [],
       resultStatus: "SCREENED",
@@ -483,5 +751,6 @@ export async function runScreeningCycle(
     shortlist: finalShortlist,
     aiSource: aiShortlist.source,
     aiReasoning: aiShortlist.aiReasoning,
+    enrichmentSummary,
   };
 }

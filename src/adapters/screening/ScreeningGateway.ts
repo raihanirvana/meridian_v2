@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import type { Candidate } from "../../domain/entities/Candidate.js";
+import {
+  DataFreshnessSnapshotSchema,
+  DlmmMicrostructureSnapshotSchema,
+  MarketFeatureSnapshotSchema,
+  type Candidate,
+} from "../../domain/entities/Candidate.js";
 import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export const ListCandidatesRequestSchema = z.object({
@@ -18,6 +23,9 @@ export const CandidateDetailsSchema = z.object({
   holderCount: z.number().int().nonnegative(),
   tokenAgeHours: z.number().nonnegative().optional(),
   athDistancePct: z.number().max(0).optional(),
+  marketFeatureSnapshot: MarketFeatureSnapshotSchema.optional(),
+  dlmmMicrostructureSnapshot: DlmmMicrostructureSnapshotSchema.optional(),
+  dataFreshnessSnapshot: DataFreshnessSnapshotSchema.optional(),
   narrativeSummary: z.string().min(1).nullable().optional(),
   holderDistributionSummary: z.string().min(1).nullable().optional(),
 });

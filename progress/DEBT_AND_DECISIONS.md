@@ -1,6 +1,6 @@
 # Meridian V2 Debt And Decisions
 
-Last updated: 2026-04-26 (Batch 8-11 hardening follow-up)
+Last updated: 2026-04-26 (Patch Soon: none)
 Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan catat keputusan desain yang disengaja agar tidak terus diaudit ulang sebagai bug.
 
 ## How To Use
@@ -12,7 +12,7 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 
 ## Patch Soon
 
-- Tidak ada item aktif saat ini.
+- Tidak ada item Patch Soon saat ini.
 
 ## Deferred
 
@@ -607,6 +607,7 @@ Purpose: pisahkan daftar utang teknis/deferred fixes dari progress batch, dan ca
 - `F51` `dry_run_payload` mode sekarang terkunci tidak bisa submit live; supervisor memblok auto-deploy bila `ai.strategyReviewMode="dry_run_payload"` dan `runtime.dryRun=false`, dengan regression test agar payload dry-run tidak berubah menjadi queue deploy sungguhan.
 - `F52` `AiAdvisoryService` sekarang menulis journal `AI_LESSON_INJECTION_FAILED` untuk shortlist ranking dan management advisory saat lesson injection gagal, bukan hanya log warning.
 - `F53` Batch 26 PRD integration coverage sekarang tersedia: close finalized mencatat performance/lesson exactly-once, rebalance old leg mencatat performance once, corrupt lesson store memblok LLM dan menulis journal failure, bad-pool close mengaktifkan pool cooldown, dan backfill dry-run diverifikasi tidak memutasi store.
+- `F54` `N81` Meteora detail enrichment 429 sudah ditutup lewat Batch 27: detail request sekarang hanya untuk deterministic top-N, semua request melewati `MeteoraDetailRateLimiter`, HTTP 429 dipetakan ke `MeteoraRateLimitedError`, 429 membuka cooldown endpoint tanpa retry spam, dan kandidat tanpa detail fresh diblok dari auto-deploy dengan `DETAIL_NOT_FRESH_OR_MISSING`.
 - `F41` screening live sekarang punya adapter native Meteora Pool Discovery; bila `SCREENING_API_BASE_URL` kosong, `runLive.ts` memakai `https://pool-discovery-api.datapi.meteora.ag` langsung, membawa `timeframe` ke query, memetakan pool discovery ke candidate V2, lalu tetap melewatkan semua keputusan ke hard-filter/scoring engine di [MeteoraPoolDiscoveryScreeningGateway.ts](c:/Users/PC/Desktop/meridian_v2/src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.ts:1) dan [runLive.ts](c:/Users/PC/Desktop/meridian_v2/src/runtime/runLive.ts:1).
 
 ## Next Review Gate

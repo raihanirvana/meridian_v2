@@ -287,4 +287,30 @@ describe("validateStrategyDecision", () => {
       "fresh_active_bin_drift_above_limit",
     );
   });
+
+  it("rejects deploy when detail is required but pool detail is missing", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate({
+        dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+          now,
+          screeningSnapshotAt: now,
+          poolDetailFetchedAt: null,
+          tokenIntelFetchedAt: now,
+          chainSnapshotFetchedAt: now,
+          hasActiveBin: true,
+        }),
+      }),
+      mode: "guarded_auto",
+      aiReview: buildAiReview(),
+      configStrategy,
+      policy: {
+        requireDetailForDeploy: true,
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.reasonCodes).toContain("DETAIL_NOT_FRESH_OR_MISSING");
+    expect(decision.riskFlags).toContain("detail_not_fresh_or_missing");
+  });
 });

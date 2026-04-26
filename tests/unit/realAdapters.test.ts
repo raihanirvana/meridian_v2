@@ -12,7 +12,10 @@ import {
 import { JupiterApiSwapGateway } from "../../src/adapters/jupiter/JupiterApiSwapGateway.js";
 import { JupiterSolPriceGateway } from "../../src/adapters/pricing/JupiterSolPriceGateway.js";
 import { HttpScreeningGateway } from "../../src/adapters/screening/HttpScreeningGateway.js";
-import { MeteoraPoolDiscoveryScreeningGateway } from "../../src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
+import {
+  MeteoraPoolDiscoveryScreeningGateway,
+  type MeteoraRateLimitedError,
+} from "../../src/adapters/screening/MeteoraPoolDiscoveryScreeningGateway.js";
 import { HttpTelegramOperatorGateway } from "../../src/adapters/telegram/HttpTelegramOperatorGateway.js";
 import { CandidateSchema } from "../../src/domain/entities/Candidate.js";
 import { SolanaRpcWalletGateway } from "../../src/adapters/wallet/SolanaRpcWalletGateway.js";
@@ -595,6 +598,27 @@ describe("real adapters", () => {
       tokenAgeHours: 48,
     });
     expect(filterBy).toBe("pool_address=pool_001");
+  });
+
+  it("maps Meteora Pool Discovery 429 details to typed rate-limit errors", async () => {
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      fetchFn: createFetchFromResponse(
+        new Response("<!doctype html><html>cloudflare</html>", {
+          status: 429,
+        }),
+      ),
+    });
+
+    await expect(
+      screening.getCandidateDetails("pool_001"),
+    ).rejects.toMatchObject({
+      name: "MeteoraRateLimitedError",
+      status: 429,
+      endpoint: "candidate_detail",
+      poolAddress: "pool_001",
+      responseKind: "cloudflare_html",
+    } satisfies Partial<MeteoraRateLimitedError>);
   });
 
   it("treats DLMM 404 getPosition as null to preserve reconciliation semantics", async () => {

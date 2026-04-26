@@ -53,6 +53,7 @@ import { DefaultSignalWeightsProvider } from "../app/services/SignalWeightsProvi
 import { createPostClaimSwapHook } from "../app/usecases/executePostClaimSwap.js";
 import { reviewStrategyWithAi } from "../app/usecases/reviewStrategyWithAi.js";
 import { createPerformanceLessonHook } from "../app/services/createPerformanceLessonHook.js";
+import { InMemoryMeteoraDetailRateLimiter } from "../app/services/MeteoraDetailRateLimiter.js";
 import { createUlid } from "../infra/id/createUlid.js";
 
 export interface RuntimeSupervisorInput {
@@ -357,6 +358,13 @@ export function createRuntimeSupervisor(
 ): RuntimeSupervisor {
   const logger = createLogger(input.config.runtime.logLevel);
   let previousPortfolioState: PortfolioState | null = null;
+  const detailRateLimiter = new InMemoryMeteoraDetailRateLimiter({
+    detailRequestIntervalMs: input.config.screening.detailRequestIntervalMs,
+    maxDetailRequestsPerWindow:
+      input.config.screening.maxDetailRequestsPerWindow,
+    detailRequestWindowMs: input.config.screening.detailRequestWindowMs,
+    detailCooldownAfter429Ms: input.config.screening.detailCooldownAfter429Ms,
+  });
   const baseScreeningPolicy: ScreeningPolicy = {
     timeframe: input.config.screening.timeframe,
     minMarketCapUsd: input.config.screening.minMarketCapUsd,
@@ -381,6 +389,15 @@ export function createRuntimeSupervisor(
     requireFreshSnapshot: input.config.screening.requireFreshSnapshot,
     maxEstimatedSlippageBps: input.config.screening.maxEstimatedSlippageBps,
     maxStrategySnapshotAgeMs: input.config.screening.maxStrategySnapshotAgeMs,
+    detailEnrichmentTopN: input.config.screening.detailEnrichmentTopN,
+    detailRequestIntervalMs: input.config.screening.detailRequestIntervalMs,
+    maxDetailRequestsPerCycle: input.config.screening.maxDetailRequestsPerCycle,
+    maxDetailRequestsPerWindow:
+      input.config.screening.maxDetailRequestsPerWindow,
+    detailRequestWindowMs: input.config.screening.detailRequestWindowMs,
+    detailCooldownAfter429Ms: input.config.screening.detailCooldownAfter429Ms,
+    requireDetailForDeploy: input.config.screening.requireDetailForDeploy,
+    allowSnapshotOnlyWatch: input.config.screening.allowSnapshotOnlyWatch,
     minHolderCount: input.config.screening.minHolderCount,
     allowedBinSteps: input.config.screening.allowedBinSteps,
     blockedLaunchpads: input.config.screening.blockedLaunchpads,
@@ -765,6 +782,10 @@ export function createRuntimeSupervisor(
             maxBinsAbove: input.config.deploy.maxBinsAbove,
             maxSlippageBps: input.config.deploy.maxSlippageBps,
             requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
+            requireDetailForDeploy:
+              input.config.screening.requireDetailForDeploy,
+            maxStrategySnapshotAgeMs:
+              input.config.screening.maxStrategySnapshotAgeMs,
             strategyFallbackMode: input.config.deploy.strategyFallbackMode,
           };
         const configStrategy = {
@@ -821,6 +842,31 @@ export function createRuntimeSupervisor(
             : { ok: true, reason: null, stage: "not_required" },
         });
         if (finalStrategyDecision.rejected) {
+          if (
+            finalStrategyDecision.reasonCodes.includes(
+              "DETAIL_NOT_FRESH_OR_MISSING",
+            )
+          ) {
+            await input.stores.journalRepository.append({
+              timestamp,
+              eventType: "CANDIDATE_DETAIL_MISSING_DEPLOY_BLOCKED",
+              actor: "system",
+              wallet: input.wallet,
+              positionId: null,
+              actionId: null,
+              before: null,
+              after: {
+                poolAddress: candidate.poolAddress,
+                candidateId: candidate.candidateId,
+                reasonCode: "DETAIL_NOT_FRESH_OR_MISSING",
+                requireDetailForDeploy:
+                  input.config.screening.requireDetailForDeploy,
+              },
+              txIds: [],
+              resultStatus: "BLOCKED",
+              error: "DETAIL_NOT_FRESH_OR_MISSING",
+            });
+          }
           await appendAutoDeployJournal({
             timestamp,
             candidate,
@@ -1103,6 +1149,12 @@ export function createRuntimeSupervisor(
           : { aiTimeoutMs: input.aiTimeoutMs }),
         poolMemoryRepository: input.stores.poolMemoryRepository,
         enrichmentConcurrency: input.config.screening.enrichmentConcurrency,
+        detailEnrichmentTopN: input.config.screening.detailEnrichmentTopN,
+        maxDetailRequestsPerCycle:
+          input.config.screening.maxDetailRequestsPerCycle,
+        detailCooldownAfter429Ms:
+          input.config.screening.detailCooldownAfter429Ms,
+        detailRateLimiter,
         schedulerMetadataStore: input.stores.schedulerMetadataStore,
         intervalSec:
           intervalSecOverride ?? input.config.schedule.screeningIntervalSec,

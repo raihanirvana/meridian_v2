@@ -75,11 +75,14 @@ function buildUrl(input: {
   path: string;
   query?: Record<string, string | number | boolean | null | undefined>;
 }): string {
-  const baseUrl = input.baseUrl.endsWith("/")
-    ? input.baseUrl
-    : `${input.baseUrl}/`;
   const relativePath = input.path.replace(/^\/+/, "");
-  const url = new URL(relativePath, baseUrl);
+  const url =
+    relativePath === ""
+      ? new URL(input.baseUrl)
+      : new URL(
+          relativePath,
+          input.baseUrl.endsWith("/") ? input.baseUrl : `${input.baseUrl}/`,
+        );
 
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value === null || value === undefined) {

@@ -16,7 +16,7 @@ const GetBalanceResponseSchema = z
       .object({
         value: z.number().int().nonnegative(),
       })
-      .strict(),
+      .passthrough(),
   })
   .passthrough();
 

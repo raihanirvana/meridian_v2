@@ -55,6 +55,28 @@ export const ScreeningPolicySchema = z
     requireFreshSnapshot: z.boolean().optional(),
     maxEstimatedSlippageBps: z.number().positive().optional(),
     maxStrategySnapshotAgeMs: z.number().int().positive().optional(),
+    aiReviewPoolSize: z.number().int().positive().optional(),
+    detailEnrichmentTopN: z.number().int().nonnegative().optional(),
+    enrichmentConcurrency: z.number().int().positive().optional(),
+    detailRequestIntervalMs: z.number().int().nonnegative().optional(),
+    maxDetailRequestsPerCycle: z.number().int().nonnegative().optional(),
+    maxDetailRequestsPerWindow: z.number().int().positive().optional(),
+    detailRequestWindowMs: z.number().int().positive().optional(),
+    detailCooldownAfter429Ms: z.number().int().positive().optional(),
+    requireDetailForDeploy: z.boolean().optional(),
+    allowSnapshotOnlyWatch: z.boolean().optional(),
+    intervalTimezone: z.string().min(1).optional(),
+    peakHours: z
+      .array(
+        z
+          .object({
+            start: z.string().min(1),
+            end: z.string().min(1),
+            intervalSec: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
   .superRefine((policy, ctx) => {

@@ -225,23 +225,21 @@ function createLiveAiRebalancePlanner(input: {
   };
 }
 
-function toRuntimeScreeningPolicy(userScreening: {
-  timeframe: "5m" | "1h" | "24h";
-  minMarketCapUsd: number;
-  maxMarketCapUsd: number;
-  minTvlUsd: number;
-  minVolumeUsd: number;
-  minVolumeTrendPct?: number | undefined;
-  minFeeActiveTvlRatio: number;
-  minFeePerTvl24h: number;
-  minOrganic: number;
-  minHolderCount: number;
-  allowedBinSteps: number[];
-  blockedLaunchpads: string[];
-  aiReviewPoolSize?: number | undefined;
-}): ScreeningPolicy {
-  return {
-    ...userScreening,
+function toRuntimeScreeningPolicy(
+  userScreening: UserConfig["screening"],
+): ScreeningPolicy {
+  const policy: ScreeningPolicy = {
+    timeframe: userScreening.timeframe,
+    minMarketCapUsd: userScreening.minMarketCapUsd,
+    maxMarketCapUsd: userScreening.maxMarketCapUsd,
+    minTvlUsd: userScreening.minTvlUsd,
+    minVolumeUsd: userScreening.minVolumeUsd,
+    minFeeActiveTvlRatio: userScreening.minFeeActiveTvlRatio,
+    minFeePerTvl24h: userScreening.minFeePerTvl24h,
+    minOrganic: userScreening.minOrganic,
+    minHolderCount: userScreening.minHolderCount,
+    allowedBinSteps: userScreening.allowedBinSteps,
+    blockedLaunchpads: userScreening.blockedLaunchpads,
     blockedTokenMints: [],
     blockedDeployers: [],
     allowedPairTypes: ["volatile", "stable"],
@@ -252,7 +250,31 @@ function toRuntimeScreeningPolicy(userScreening: {
     rejectDuplicatePoolExposure: true,
     rejectDuplicateTokenExposure: true,
     shortlistLimit: userScreening.aiReviewPoolSize ?? 30,
+    requireFreshSnapshot: userScreening.requireFreshSnapshot,
+    maxEstimatedSlippageBps: userScreening.maxEstimatedSlippageBps,
+    maxStrategySnapshotAgeMs: userScreening.maxStrategySnapshotAgeMs,
+    detailEnrichmentTopN: userScreening.detailEnrichmentTopN,
+    detailRequestIntervalMs: userScreening.detailRequestIntervalMs,
+    maxDetailRequestsPerCycle: userScreening.maxDetailRequestsPerCycle,
+    maxDetailRequestsPerWindow: userScreening.maxDetailRequestsPerWindow,
+    detailRequestWindowMs: userScreening.detailRequestWindowMs,
+    detailCooldownAfter429Ms: userScreening.detailCooldownAfter429Ms,
+    requireDetailForDeploy: userScreening.requireDetailForDeploy,
+    allowSnapshotOnlyWatch: userScreening.allowSnapshotOnlyWatch,
   };
+  if (userScreening.minVolumeTrendPct !== undefined) {
+    policy.minVolumeTrendPct = userScreening.minVolumeTrendPct;
+  }
+  if (userScreening.minTokenAgeHours !== undefined) {
+    policy.minTokenAgeHours = userScreening.minTokenAgeHours;
+  }
+  if (userScreening.maxTokenAgeHours !== undefined) {
+    policy.maxTokenAgeHours = userScreening.maxTokenAgeHours;
+  }
+  if (userScreening.athFilterPct !== undefined) {
+    policy.athFilterPct = userScreening.athFilterPct;
+  }
+  return policy;
 }
 
 function isDryRunWriteCommand(rawCommand: string): boolean {

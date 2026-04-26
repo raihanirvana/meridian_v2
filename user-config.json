@@ -23,8 +23,16 @@
     "requireFreshSnapshot": true,
     "maxEstimatedSlippageBps": 300,
     "maxStrategySnapshotAgeMs": 120000,
-    "aiReviewPoolSize": 30,
-    "enrichmentConcurrency": 10,
+    "aiReviewPoolSize": 3,
+    "detailEnrichmentTopN": 3,
+    "enrichmentConcurrency": 1,
+    "detailRequestIntervalMs": 5000,
+    "maxDetailRequestsPerCycle": 3,
+    "maxDetailRequestsPerWindow": 10,
+    "detailRequestWindowMs": 900000,
+    "detailCooldownAfter429Ms": 1200000,
+    "requireDetailForDeploy": true,
+    "allowSnapshotOnlyWatch": true,
     "minHolderCount": 500,
     "allowedBinSteps": [80, 100, 125],
     "blockedLaunchpads": [],
@@ -38,7 +46,7 @@
     ]
   },
   "schedule": {
-    "screeningIntervalSec": 1800,
+    "screeningIntervalSec": 3600,
     "managementIntervalSec": 600,
     "reconciliationIntervalSec": 300,
     "reportingIntervalSec": 1800
@@ -71,25 +79,25 @@
   },
   "ai": {
     "mode": "advisory",
-    "generalModel": "minimax/minimax-m2.7",
-    "managementModel": "deepseek/deepseek-v3.2",
-    "screeningModel": "google/gemini-2.5-flash-lite",
+    "generalModel": "openrouter/free",
+    "managementModel": "openrouter/free",
+    "screeningModel": "openrouter/free",
     "timeoutMs": 3000,
     "strategyReviewEnabled": true,
-    "strategyReviewMode": "guarded_auto",
-    "allowAiStrategyForDeploy": true,
+    "strategyReviewMode": "recommendation_only",
+    "allowAiStrategyForDeploy": false,
     "minAiStrategyConfidence": 0.75,
     "walletRiskMode": "small"
   },
   "deploy": {
-    "defaultAmountSol": 0.25,
+    "defaultAmountSol": 0.1,
     "minAmountSol": 0.1,
-    "autoDeployFromShortlist": true,
+    "autoDeployFromShortlist": false,
     "maxAutoDeploysPerCycle": 1,
-    "strategy": "bid_ask",
-    "binsBelow": 69,
-    "binsAbove": 0,
-    "slippageBps": 300,
+    "strategy": "spot",
+    "binsBelow": 60,
+    "binsAbove": 60,
+    "slippageBps": 150,
     "maxActiveBinDrift": 3,
     "maxBinsBelow": 120,
     "maxBinsAbove": 120,
@@ -118,7 +126,7 @@
     "enabled": false
   },
   "runtime": {
-    "dryRun": false,
+    "dryRun": true,
     "logLevel": "info",
     "operatorStdinEnabled": true
   }
