@@ -87,6 +87,55 @@ describe("actionLifecycle", () => {
     expect(result.success).toBe(false);
   });
 
+  it.each(["FAILED", "ABORTED", "TIMED_OUT"] as const)(
+    "rejects terminal %s actions without completedAt",
+    (status) => {
+      const result = ActionSchema.safeParse({
+        actionId: `act_${status.toLowerCase()}`,
+        type: "DEPLOY",
+        status,
+        wallet: "wallet_001",
+        positionId: null,
+        idempotencyKey: `wallet_001:${status.toLowerCase()}`,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+        resultPayload: null,
+        txIds: [],
+        error: status === "FAILED" ? "failed" : null,
+        requestedAt: "2026-04-18T00:00:00.000Z",
+        startedAt: "2026-04-18T00:01:00.000Z",
+        completedAt: null,
+        requestedBy: "system",
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it("rejects non-terminal actions that already have completedAt", () => {
+    const result = ActionSchema.safeParse({
+      actionId: "act_running_with_completed_at",
+      type: "DEPLOY",
+      status: "RUNNING",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: "wallet_001:running",
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+      resultPayload: null,
+      txIds: [],
+      error: null,
+      requestedAt: "2026-04-18T00:00:00.000Z",
+      startedAt: "2026-04-18T00:01:00.000Z",
+      completedAt: "2026-04-18T00:02:00.000Z",
+      requestedBy: "system",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a DEPLOY action that incorrectly carries positionId", () => {
     const result = ActionSchema.safeParse({
       actionId: "act_003",

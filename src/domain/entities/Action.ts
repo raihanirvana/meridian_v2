@@ -33,12 +33,26 @@ export const ActionSchema = z
       "REBALANCE",
       "CANCEL_REBALANCE",
     ]);
+    const terminalStatuses = new Set([
+      "DONE",
+      "FAILED",
+      "ABORTED",
+      "TIMED_OUT",
+    ]);
 
-    if (action.status === "DONE" && action.completedAt === null) {
+    if (terminalStatuses.has(action.status) && action.completedAt === null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["completedAt"],
-        message: "must be set when status is DONE",
+        message: `must be set when status is ${action.status}`,
+      });
+    }
+
+    if (!terminalStatuses.has(action.status) && action.completedAt !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["completedAt"],
+        message: `must be null when status is ${action.status}`,
       });
     }
 

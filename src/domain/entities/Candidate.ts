@@ -183,6 +183,34 @@ export const CandidateSchema = z
     createdAt: TimestampSchema,
     lastReviewedAt: TimestampSchema.nullable().default(null),
   })
+  .superRefine((candidate, ctx) => {
+    if (!candidate.hardFilterPassed) {
+      if (
+        candidate.decision !== "REJECTED_HARD_FILTER" &&
+        candidate.decision !== "REJECTED_COOLDOWN"
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["decision"],
+          message:
+            "must be REJECTED_HARD_FILTER or REJECTED_COOLDOWN when hardFilterPassed is false",
+        });
+      }
+      return;
+    }
+
+    if (
+      candidate.decision === "REJECTED_HARD_FILTER" ||
+      candidate.decision === "REJECTED_COOLDOWN"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["decision"],
+        message:
+          "cannot be REJECTED_HARD_FILTER or REJECTED_COOLDOWN when hardFilterPassed is true",
+      });
+    }
+  })
   .strict();
 
 export type Candidate = z.infer<typeof CandidateSchema>;

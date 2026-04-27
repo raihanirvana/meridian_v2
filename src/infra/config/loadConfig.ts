@@ -70,6 +70,17 @@ function buildSecretInput(
   runtimeEnv: NodeJS.ProcessEnv,
 ): Partial<EnvSecrets> {
   const input: Partial<EnvSecrets> = {};
+  const pickRequired = (
+    runtimeValue: string | undefined,
+    fileValue: string | undefined,
+  ) => {
+    const value = runtimeValue ?? fileValue;
+    if (value === undefined) {
+      return undefined;
+    }
+
+    return value.trim();
+  };
   const pickOptional = (
     runtimeValue: string | undefined,
     fileValue: string | undefined,
@@ -83,13 +94,15 @@ function buildSecretInput(
     return trimmed.length > 0 ? trimmed : undefined;
   };
 
-  const walletPrivateKey =
-    runtimeEnv.WALLET_PRIVATE_KEY ?? envFileValues.WALLET_PRIVATE_KEY;
+  const walletPrivateKey = pickRequired(
+    runtimeEnv.WALLET_PRIVATE_KEY,
+    envFileValues.WALLET_PRIVATE_KEY,
+  );
   if (walletPrivateKey !== undefined) {
     input.WALLET_PRIVATE_KEY = walletPrivateKey;
   }
 
-  const rpcUrl = runtimeEnv.RPC_URL ?? envFileValues.RPC_URL;
+  const rpcUrl = pickRequired(runtimeEnv.RPC_URL, envFileValues.RPC_URL);
   if (rpcUrl !== undefined) {
     input.RPC_URL = rpcUrl;
   }

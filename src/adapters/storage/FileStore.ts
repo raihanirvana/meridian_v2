@@ -211,8 +211,9 @@ export class FileStore {
       if (backupExists) {
         await this.safeCleanup(backupPath);
       }
-      await this.cleanupOrphanUniqueTempFiles(filePath);
     }
+
+    await this.cleanupOrphanUniqueTempFiles(filePath);
   }
 
   private async cleanupOrphanUniqueTempFiles(filePath: string): Promise<void> {

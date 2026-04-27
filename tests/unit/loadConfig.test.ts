@@ -255,6 +255,100 @@ describe("loadConfig", () => {
     }
   });
 
+  it("rejects unknown claim config keys", () => {
+    const directory = makeTempDir();
+    const { envPath, userConfigPath } = writeFixtureFiles(directory, {
+      userConfig: JSON.stringify({
+        risk: {
+          maxConcurrentPositions: 3,
+          maxCapitalUsagePct: 70,
+          minReserveUsd: 0.5,
+          maxTokenExposurePct: 35,
+          maxPoolExposurePct: 40,
+          maxRebalancesPerPosition: 2,
+          dailyLossLimitPct: 8,
+          circuitBreakerCooldownMin: 180,
+          maxNewDeploysPerHour: 2,
+        },
+        screening: {
+          timeframe: "5m",
+          minMarketCapUsd: 150000,
+          maxMarketCapUsd: 10000000,
+          minTvlUsd: 10000,
+          minVolumeUsd: 500,
+          minFeeActiveTvlRatio: 0.05,
+          minFeePerTvl24h: 0.01,
+          minOrganic: 60,
+          minHolderCount: 500,
+          allowedBinSteps: [80, 100, 125],
+          blockedLaunchpads: [],
+        },
+        schedule: {
+          screeningIntervalSec: 1800,
+          managementIntervalSec: 600,
+          reconciliationIntervalSec: 300,
+          reportingIntervalSec: 3600,
+        },
+        management: {
+          stopLossUsd: 50,
+          maxHoldMinutes: 1440,
+          maxOutOfRangeMinutes: 240,
+          claimFeesThresholdUsd: 20,
+          partialCloseEnabled: false,
+          partialCloseProfitTargetUsd: 100,
+          rebalanceEnabled: true,
+        },
+        ai: {
+          mode: "advisory",
+          generalModel: "gpt-4.1-mini",
+          managementModel: "gpt-4.1-mini",
+          screeningModel: "gpt-4.1-mini",
+          timeoutMs: 3000,
+        },
+        deploy: {
+          defaultAmountSol: 0.5,
+          minAmountSol: 0.2,
+        },
+        claim: {
+          autoSwapAfterClaim: false,
+          unexpectedKey: true,
+        },
+        notifications: {
+          telegramEnabled: false,
+        },
+        reporting: {
+          solMode: false,
+        },
+        poolMemory: {
+          snapshotsEnabled: false,
+        },
+        darwin: {
+          enabled: false,
+        },
+        runtime: {
+          dryRun: true,
+          logLevel: "info",
+        },
+      }),
+    });
+
+    try {
+      loadConfig({
+        env: {},
+        envFilePath: envPath,
+        userConfigPath,
+      });
+      throw new Error("Expected ConfigValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigValidationError);
+      expect((error as ConfigValidationError).details).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/claim\.unexpectedKey/i),
+        ]),
+      );
+    }
+  });
+
   it("redacts secrets for logging", () => {
     const directory = makeTempDir();
     const { envPath, userConfigPath } = writeFixtureFiles(directory);
@@ -295,5 +389,20 @@ describe("loadConfig", () => {
     expect(config.secrets.LLM_API_KEY).toBeUndefined();
     expect(config.secrets.LLM_BASE_URL).toBeUndefined();
     expect(config.secrets.TELEGRAM_BOT_TOKEN).toBeUndefined();
+  });
+
+  it("rejects required .env secrets that are only whitespace", () => {
+    const directory = makeTempDir();
+    const { envPath, userConfigPath } = writeFixtureFiles(directory, {
+      env: ["WALLET_PRIVATE_KEY=   ", "RPC_URL=   "].join("\n"),
+    });
+
+    expect(() =>
+      loadConfig({
+        env: {},
+        envFilePath: envPath,
+        userConfigPath,
+      }),
+    ).toThrow(ConfigValidationError);
   });
 });

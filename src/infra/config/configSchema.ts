@@ -168,6 +168,7 @@ export const UserConfigSchema = z
         autoCompoundFees: z.boolean().default(false),
         compoundToSide: z.enum(["base", "quote"]).default("quote"),
       })
+      .strict()
       .default({
         autoSwapAfterClaim: false,
         swapOutputMint: "So11111111111111111111111111111111111111112",

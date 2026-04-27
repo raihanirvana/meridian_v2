@@ -14,7 +14,13 @@ const now = "2026-04-25T00:00:00.000Z";
 function buildCandidate(
   overrides: Partial<Parameters<typeof CandidateSchema.parse>[0]> = {},
 ) {
-  return CandidateSchema.parse({
+  return CandidateSchema.parse(buildCandidateInput(overrides));
+}
+
+function buildCandidateInput(
+  overrides: Partial<Parameters<typeof CandidateSchema.parse>[0]> = {},
+) {
+  return {
     candidateId: "cand_001",
     poolAddress: "pool_001",
     symbolPair: "ABC-SOL",
@@ -65,7 +71,7 @@ function buildCandidate(
     decisionReason: "selected upstream",
     createdAt: now,
     ...overrides,
-  });
+  };
 }
 
 function buildAiReview(
@@ -98,6 +104,31 @@ const configStrategy = {
 };
 
 describe("validateStrategyDecision", () => {
+  it.each(["SHORTLISTED", "SELECTED"] as const)(
+    "rejects candidates that fail hard filter but still carry %s",
+    (decision) => {
+      const result = CandidateSchema.safeParse(
+        buildCandidateInput({
+          hardFilterPassed: false,
+          decision,
+        }),
+      );
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it("rejects REJECTED_HARD_FILTER when hardFilterPassed is true", () => {
+    const result = CandidateSchema.safeParse(
+      buildCandidateInput({
+        hardFilterPassed: true,
+        decision: "REJECTED_HARD_FILTER",
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects AI deploy recommendation when candidate score is below threshold", () => {
     const decision = validateStrategyDecision({
       candidate: buildCandidate({ score: 40 }),

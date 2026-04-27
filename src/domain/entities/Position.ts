@@ -165,12 +165,20 @@ export const PositionSchema = z
     if (
       position.peakPnlPct !== undefined &&
       position.peakPnlPct !== null &&
-      position.peakPnlRecordedAt === undefined
+      position.peakPnlRecordedAt == null
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["peakPnlRecordedAt"],
-        message: "must be present when peakPnlPct is set",
+        message: "must be a timestamp when peakPnlPct is set",
+      });
+    }
+
+    if (position.peakPnlPct == null && position.peakPnlRecordedAt != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["peakPnlRecordedAt"],
+        message: "must be null when peakPnlPct is not set",
       });
     }
   })

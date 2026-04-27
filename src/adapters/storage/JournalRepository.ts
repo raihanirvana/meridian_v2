@@ -19,6 +19,10 @@ export interface JournalRepositoryOptions extends FileStoreOptions {
   onRecovery?: JournalRecoveryListener;
 }
 
+export interface JournalListOptions {
+  repairTrailingLine?: boolean;
+}
+
 export class JournalStoreCorruptError extends Error {
   public constructor(
     message: string,
@@ -45,21 +49,34 @@ export class JournalRepository {
 
   public async append(event: JournalEvent): Promise<void> {
     const validated = JournalEventSchema.parse(event);
+    await this.repairMalformedTrailingLineIfNeeded();
     await this.fileStore.appendLine(this.filePath, JSON.stringify(validated));
   }
 
-  public async list(): Promise<JournalEvent[]> {
+  public async list(options: JournalListOptions = {}): Promise<JournalEvent[]> {
     const raw = await this.fileStore.readText(this.filePath);
     if (raw === null) {
       return [];
     }
 
+    const parsed = this.parseEvents(raw);
+    if (parsed.repaired && options.repairTrailingLine === true) {
+      await this.rewriteValidEvents(parsed.events);
+    }
+    return parsed.events;
+  }
+
+  private parseEvents(raw: string): {
+    events: JournalEvent[];
+    repaired: boolean;
+  } {
     const lines = raw
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
     const events: JournalEvent[] = [];
+    let repaired = false;
     for (const [index, line] of lines.entries()) {
       try {
         events.push(JournalEventSchema.parse(JSON.parse(line)));
@@ -70,6 +87,7 @@ export class JournalRepository {
             : "unknown parse failure";
         const isTrailingLine = index === lines.length - 1;
         if (isTrailingLine) {
+          repaired = true;
           this.emitRecovery({
             type: "JOURNAL_TRAILING_LINE_SKIPPED",
             filePath: this.filePath,
@@ -87,7 +105,29 @@ export class JournalRepository {
       }
     }
 
-    return events;
+    return { events, repaired };
+  }
+
+  private async repairMalformedTrailingLineIfNeeded(): Promise<void> {
+    const raw = await this.fileStore.readText(this.filePath);
+    if (raw === null) {
+      return;
+    }
+
+    const parsed = this.parseEvents(raw);
+    if (!parsed.repaired) {
+      return;
+    }
+
+    await this.rewriteValidEvents(parsed.events);
+  }
+
+  private async rewriteValidEvents(events: JournalEvent[]): Promise<void> {
+    const contents =
+      events.length === 0
+        ? ""
+        : `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+    await this.fileStore.writeTextAtomic(this.filePath, contents);
   }
 
   private emitRecovery(event: JournalRecoveryEvent): void {

@@ -25,6 +25,19 @@ export const PortfolioStateSchema = z
     exposureByToken: z.record(z.string(), z.number().nonnegative()),
     exposureByPool: z.record(z.string(), z.number().nonnegative()),
   })
+  .superRefine((state, ctx) => {
+    if (
+      state.reservedBalance + state.availableBalance >
+      state.walletBalance + 1e-9
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["availableBalance"],
+        message:
+          "reservedBalance + availableBalance must not exceed walletBalance",
+      });
+    }
+  })
   .strict();
 
 export type PortfolioState = z.infer<typeof PortfolioStateSchema>;

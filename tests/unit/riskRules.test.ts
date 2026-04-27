@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { type PortfolioState } from "../../src/domain/entities/PortfolioState.js";
+import {
+  PortfolioStateSchema,
+  type PortfolioState,
+} from "../../src/domain/entities/PortfolioState.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 import {
   buildPortfolioRiskStateSnapshot,
@@ -86,6 +89,18 @@ function buildOpenPosition(overrides: Partial<Position> = {}): Position {
 }
 
 describe("risk rules", () => {
+  it("rejects impossible portfolio balance snapshots", () => {
+    const result = PortfolioStateSchema.safeParse(
+      buildPortfolio({
+        walletBalance: 100,
+        reservedBalance: 80,
+        availableBalance: 80,
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
   it("blocks new deploys when daily loss limit is reached but still allows close and reconcile-only actions", () => {
     const portfolio = buildPortfolio({
       dailyRealizedPnl: -1.2,

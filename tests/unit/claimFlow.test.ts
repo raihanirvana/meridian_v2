@@ -78,7 +78,7 @@ function buildCompoundDeployRiskGuard() {
   return {
     portfolio: {
       walletBalance: 1_000,
-      reservedBalance: 950,
+      reservedBalance: 50,
       availableBalance: 950,
       openPositions: 1,
       pendingActions: 1,

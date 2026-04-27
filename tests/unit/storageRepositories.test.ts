@@ -331,6 +331,69 @@ describe("storage repositories", () => {
     expect(recoveryEvents[0]?.reason.length).toBeGreaterThan(0);
   });
 
+  it("repairs a malformed trailing journal line before appending a new event", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      `${JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001"))}\n{bad json}\n`,
+      "utf8",
+    );
+
+    const journalRepository = new JournalRepository({ filePath: journalPath });
+    await journalRepository.append(
+      buildJournalEvent("ACTION_RUNNING", "act_001"),
+    );
+
+    const events = await journalRepository.list();
+    const raw = await fs.readFile(journalPath, "utf8");
+
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.eventType)).toEqual([
+      "ACTION_QUEUED",
+      "ACTION_RUNNING",
+    ]);
+    expect(raw).not.toContain("{bad json");
+  });
+
+  it("does not let append turn trailing corruption into middle corruption", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      `${JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001"))}\n{bad json}\n`,
+      "utf8",
+    );
+
+    const journalRepository = new JournalRepository({ filePath: journalPath });
+    await journalRepository.append(
+      buildJournalEvent("ACTION_STARTED", "act_001"),
+    );
+
+    const reloadedJournalRepository = new JournalRepository({
+      filePath: journalPath,
+    });
+
+    await expect(reloadedJournalRepository.list()).resolves.toMatchObject([
+      { eventType: "ACTION_QUEUED" },
+      { eventType: "ACTION_STARTED" },
+    ]);
+  });
+
+  it("cleans orphan unique temp files even when the target file does not exist", async () => {
+    const directory = await makeTempDir();
+    const filePath = path.join(directory, "positions.json");
+    const orphanPath = `${filePath}.tmp.orphaned`;
+    const fileStore = new FileStore();
+
+    await fs.writeFile(orphanPath, JSON.stringify([{ orphan: true }]), "utf8");
+
+    const contents = await fileStore.readText(filePath);
+
+    expect(contents).toBeNull();
+    await expect(fs.access(orphanPath)).rejects.toThrow();
+  });
+
   it("throws StateStoreCorruptError when positions.json contains invalid JSON", async () => {
     const directory = await makeTempDir();
     const positionsPath = path.join(directory, "positions.json");

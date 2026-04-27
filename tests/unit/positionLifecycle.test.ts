@@ -10,6 +10,43 @@ import {
   type Position,
 } from "../../src/domain/entities/Position.js";
 
+function buildPositionLike() {
+  return {
+    positionId: "pos_001",
+    poolAddress: "pool_001",
+    tokenXMint: "mint_x",
+    tokenYMint: "mint_y",
+    baseMint: "mint_base",
+    quoteMint: "mint_quote",
+    wallet: "wallet_001",
+    status: "OPEN" as const,
+    openedAt: "2026-04-18T00:00:00.000Z",
+    lastSyncedAt: "2026-04-18T00:00:00.000Z",
+    closedAt: null,
+    deployAmountBase: 1,
+    deployAmountQuote: 0.5,
+    currentValueBase: 1,
+    currentValueUsd: 100,
+    feesClaimedBase: 0,
+    feesClaimedUsd: 0,
+    realizedPnlBase: 0,
+    realizedPnlUsd: 0,
+    unrealizedPnlBase: 0,
+    unrealizedPnlUsd: 0,
+    rebalanceCount: 0,
+    partialCloseCount: 0,
+    strategy: "bid_ask" as const,
+    rangeLowerBin: 10,
+    rangeUpperBin: 20,
+    activeBin: 15,
+    outOfRangeSince: null,
+    lastManagementDecision: null,
+    lastManagementReason: null,
+    lastWriteActionId: null,
+    needsReconciliation: false,
+  };
+}
+
 describe("positionLifecycle", () => {
   it("supports the close path from OPEN to CLOSED", () => {
     let status: Position["status"] = "OPEN";
@@ -164,6 +201,26 @@ describe("positionLifecycle", () => {
         escalationReason: "startup_recovery",
       }),
     ).toBe("ABORTED");
+  });
+
+  it("rejects peakPnlPct with a null peakPnlRecordedAt timestamp", () => {
+    const result = PositionSchema.safeParse({
+      ...buildPositionLike(),
+      peakPnlPct: 10,
+      peakPnlRecordedAt: null,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a peakPnlRecordedAt timestamp when peakPnlPct is unset", () => {
+    const result = PositionSchema.safeParse({
+      ...buildPositionLike(),
+      peakPnlPct: null,
+      peakPnlRecordedAt: "2026-04-18T00:00:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("allows direct FAILED transition only with an escalation reason", () => {
