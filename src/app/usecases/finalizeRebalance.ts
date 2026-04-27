@@ -926,18 +926,63 @@ export async function finalizeRebalance(
         };
       }
 
-      if (latestAction.status !== "WAITING_CONFIRMATION") {
-        throw new Error(
-          `Rebalance finalization expected WAITING_CONFIRMATION, received ${latestAction.status}`,
-        );
-      }
-
       const requestPayload = RebalanceActionRequestPayloadSchema.parse(
         latestAction.requestPayload,
       );
       const latestPayload = RebalanceActionResultPayloadSchema.parse(
         latestAction.resultPayload,
       );
+
+      const canResumeFromReconciling =
+        latestAction.status === "RECONCILING" &&
+        (latestPayload.phase === "REDEPLOY_SUBMITTED" ||
+          latestPayload.phase === "REBALANCE_COMPLETED");
+
+      if (
+        latestAction.status !== "WAITING_CONFIRMATION" &&
+        !canResumeFromReconciling
+      ) {
+        throw new Error(
+          `Rebalance finalization expected WAITING_CONFIRMATION, received ${latestAction.status}`,
+        );
+      }
+
+      if (
+        latestAction.status === "RECONCILING" &&
+        latestPayload.phase === "REBALANCE_COMPLETED"
+      ) {
+        const doneAction = {
+          ...latestAction,
+          status: transitionActionStatus(latestAction.status, "DONE"),
+          completedAt: now,
+          error: null,
+        } satisfies Action;
+        await input.actionRepository.upsert(doneAction);
+
+        const newPositionId = getNewPositionIdFromPayload(doneAction.resultPayload);
+        const oldPosition = await input.stateRepository.get(doneAction.positionId);
+        await ensureOldLegLearning({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          action: doneAction,
+          position: oldPosition,
+          now,
+        });
+
+        return {
+          action: doneAction,
+          oldPosition,
+          newPosition:
+            newPositionId === null
+              ? null
+              : await input.stateRepository.get(newPositionId),
+          outcome: "FINALIZED" as const,
+        };
+      }
 
       if (latestPayload.phase === "CLOSE_SUBMITTED") {
         let closeLeg;
@@ -1693,13 +1738,16 @@ export async function finalizeRebalance(
             });
             await input.stateRepository.upsert(openPosition);
 
-            const reconcilingAction = {
-              ...latestActionAfterRedeployLock,
-              status: transitionActionStatus(
-                latestActionAfterRedeployLock.status,
-                "RECONCILING",
-              ),
-            } satisfies Action;
+            const reconcilingAction =
+              latestActionAfterRedeployLock.status === "RECONCILING"
+                ? latestActionAfterRedeployLock
+                : ({
+                    ...latestActionAfterRedeployLock,
+                    status: transitionActionStatus(
+                      latestActionAfterRedeployLock.status,
+                      "RECONCILING",
+                    ),
+                  } satisfies Action);
             await input.actionRepository.upsert(reconcilingAction);
 
             const completedPayload = buildCompletedPayload({
@@ -1799,13 +1847,16 @@ export async function finalizeRebalance(
             });
             await input.stateRepository.upsert(openPosition);
 
-            const reconcilingAction = {
-              ...latestActionAfterRedeployLock,
-              status: transitionActionStatus(
-                latestActionAfterRedeployLock.status,
-                "RECONCILING",
-              ),
-            } satisfies Action;
+            const reconcilingAction =
+              latestActionAfterRedeployLock.status === "RECONCILING"
+                ? latestActionAfterRedeployLock
+                : ({
+                    ...latestActionAfterRedeployLock,
+                    status: transitionActionStatus(
+                      latestActionAfterRedeployLock.status,
+                      "RECONCILING",
+                    ),
+                  } satisfies Action);
             await input.actionRepository.upsert(reconcilingAction);
 
             const completedPayload = buildCompletedPayload({

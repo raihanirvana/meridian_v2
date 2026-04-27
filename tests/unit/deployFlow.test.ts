@@ -1519,7 +1519,7 @@ describe("deploy flow", () => {
     );
   });
 
-  it("recovers a confirmed deploy when local pending state fell back to reconciliation", async () => {
+  it("deploy ambiguous local RECONCILIATION_REQUIRED + confirmed OPEN -> DONE", async () => {
     const directory = await makeTempDir();
     const actionsPath = path.join(directory, "actions.json");
     const positionsPath = path.join(directory, "positions.json");

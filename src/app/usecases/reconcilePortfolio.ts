@@ -523,6 +523,136 @@ async function recoverReconcilingAction(
       });
     }
 
+    if (latestAction.type === "REBALANCE") {
+      const rebalancePayload = RebalanceActionResultPayloadSchema.safeParse(
+        latestAction.resultPayload,
+      );
+      if (rebalancePayload.success) {
+        if (rebalancePayload.data.phase === "REBALANCE_COMPLETED") {
+          const doneAction = {
+            ...latestAction,
+            status: transitionActionStatus(latestAction.status, "DONE"),
+            completedAt: input.now,
+            error: null,
+          } satisfies Action;
+          await input.actionRepository.upsert(doneAction);
+
+          return createRecord({
+            scope: "ACTION",
+            entityId: doneAction.actionId,
+            wallet: doneAction.wallet,
+            positionId:
+              rebalancePayload.data.confirmedPositionId ?? doneAction.positionId,
+            actionId: doneAction.actionId,
+            outcome: "RECONCILED_OK",
+            detail:
+              "Rebalance reconciling recovery promoted completed payload to DONE",
+          });
+        }
+
+        if (rebalancePayload.data.phase === "REDEPLOY_SUBMITTED") {
+          const newPositionId = rebalancePayload.data.redeployResult.positionId;
+          const confirmedNewPosition =
+            await input.dlmmGateway.getPosition(newPositionId);
+          const localNewPosition =
+            await input.stateRepository.get(newPositionId);
+
+          if (
+            confirmedNewPosition !== null &&
+            confirmedNewPosition.status === "OPEN"
+          ) {
+            const recoveredNewPosition = PositionSchema.parse({
+              ...(localNewPosition ?? confirmedNewPosition),
+              ...confirmedNewPosition,
+              status: "OPEN",
+              lastSyncedAt: input.now,
+              closedAt: null,
+              lastWriteActionId: latestAction.actionId,
+              needsReconciliation: false,
+            });
+            await input.stateRepository.upsert(recoveredNewPosition);
+
+            const doneAction = {
+              ...latestAction,
+              status: transitionActionStatus(latestAction.status, "DONE"),
+              resultPayload: toJournalRecord({
+                ...rebalancePayload.data,
+                phase: "REBALANCE_COMPLETED",
+                confirmedPositionId: recoveredNewPosition.positionId,
+              }),
+              completedAt: input.now,
+              error: null,
+            } satisfies Action;
+            await input.actionRepository.upsert(doneAction);
+
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: input.now,
+              eventType: "REBALANCE_FINALIZED_RECONSTRUCTED",
+              actor: latestAction.requestedBy,
+              wallet: latestAction.wallet,
+              positionId: recoveredNewPosition.positionId,
+              actionId: latestAction.actionId,
+              before: toJournalRecord({
+                action: latestAction,
+                newPosition: localNewPosition,
+                confirmedPosition: confirmedNewPosition,
+              }),
+              after: toJournalRecord({
+                action: doneAction,
+                newPosition: recoveredNewPosition,
+              }),
+              txIds: doneAction.txIds,
+              resultStatus: doneAction.status,
+              error: null,
+            });
+
+            return createRecord({
+              scope: "ACTION",
+              entityId: doneAction.actionId,
+              wallet: doneAction.wallet,
+              positionId: recoveredNewPosition.positionId,
+              actionId: doneAction.actionId,
+              outcome: "RECONCILED_OK",
+              detail:
+                "Rebalance reconciling recovery reconstructed a live OPEN redeploy leg and finalized the action",
+            });
+          }
+        }
+      }
+
+      const result = await finalizeRebalance({
+        actionId: latestAction.actionId,
+        actionRepository: input.actionRepository,
+        stateRepository: input.stateRepository,
+        dlmmGateway: input.dlmmGateway,
+        walletLock: input.walletLock,
+        positionLock: input.positionLock,
+        now: () => input.now,
+        ...(input.runtimeControlStore === undefined
+          ? {}
+          : { runtimeControlStore: input.runtimeControlStore }),
+        ...(input.journalRepository === undefined
+          ? {}
+          : { journalRepository: input.journalRepository }),
+        ...(input.lessonHook === undefined
+          ? {}
+          : { lessonHook: input.lessonHook }),
+      });
+
+      return createRecord({
+        scope: "ACTION",
+        entityId: result.action.actionId,
+        wallet: result.action.wallet,
+        positionId:
+          result.newPosition?.positionId ??
+          result.oldPosition?.positionId ??
+          result.action.positionId,
+        actionId: result.action.actionId,
+        outcome: mapRebalanceReconciliationOutcome(result),
+        detail: `Rebalance reconciling recovery finished with ${result.outcome}`,
+      });
+    }
+
     const position =
       targetPositionId === null
         ? null
@@ -1014,102 +1144,104 @@ export async function reconcilePortfolio(
           continue;
         }
 
-        const liveSnapshot = snapshotById.get(position.positionId);
-        if (liveSnapshot !== undefined) {
+        await positionLock.withLock(position.positionId, async () => {
+          const liveSnapshot = snapshotById.get(position.positionId);
+          if (liveSnapshot !== undefined) {
+            const latestPosition = await input.stateRepository.get(
+              position.positionId,
+            );
+            if (
+              latestPosition !== null &&
+              shouldSyncLiveSnapshot(latestPosition)
+            ) {
+              const syncedPosition = mergeLiveSnapshotPosition({
+                localPosition: latestPosition,
+                snapshotPosition: liveSnapshot,
+                now,
+              });
+              await input.stateRepository.upsert(syncedPosition);
+              if (latestPosition.status === "RECONCILIATION_REQUIRED") {
+                await appendJournalEvent(input.journalRepository, {
+                  timestamp: now,
+                  eventType: "POSITION_RECONCILED_FROM_LIVE_SNAPSHOT",
+                  actor: "system",
+                  wallet,
+                  positionId: syncedPosition.positionId,
+                  actionId: syncedPosition.lastWriteActionId,
+                  before: toJournalRecord({ position: latestPosition }),
+                  after: toJournalRecord({ position: syncedPosition }),
+                  txIds: [],
+                  resultStatus: syncedPosition.status,
+                  error: null,
+                });
+              }
+              records.push(
+                createRecord({
+                  scope: "POSITION",
+                  entityId: syncedPosition.positionId,
+                  wallet,
+                  positionId: syncedPosition.positionId,
+                  actionId: syncedPosition.lastWriteActionId,
+                  outcome: "RECONCILED_OK",
+                  detail:
+                    latestPosition.status === "RECONCILIATION_REQUIRED"
+                      ? "Local reconciliation-required position restored from live DLMM snapshot"
+                      : "Local open position synced from live DLMM snapshot",
+                }),
+              );
+            }
+            return;
+          }
+
           const latestPosition = await input.stateRepository.get(
             position.positionId,
           );
           if (
-            latestPosition !== null &&
-            shouldSyncLiveSnapshot(latestPosition)
+            latestPosition === null ||
+            latestPosition.status === "RECONCILIATION_REQUIRED" ||
+            latestPosition.status === "CLOSED" ||
+            latestPosition.status === "ABORTED"
           ) {
-            const syncedPosition = mergeLiveSnapshotPosition({
-              localPosition: latestPosition,
-              snapshotPosition: liveSnapshot,
-              now,
-            });
-            await input.stateRepository.upsert(syncedPosition);
-            if (latestPosition.status === "RECONCILIATION_REQUIRED") {
-              await appendJournalEvent(input.journalRepository, {
-                timestamp: now,
-                eventType: "POSITION_RECONCILED_FROM_LIVE_SNAPSHOT",
-                actor: "system",
-                wallet,
-                positionId: syncedPosition.positionId,
-                actionId: syncedPosition.lastWriteActionId,
-                before: toJournalRecord({ position: latestPosition }),
-                after: toJournalRecord({ position: syncedPosition }),
-                txIds: [],
-                resultStatus: syncedPosition.status,
-                error: null,
-              });
-            }
-            records.push(
-              createRecord({
-                scope: "POSITION",
-                entityId: syncedPosition.positionId,
-                wallet,
-                positionId: syncedPosition.positionId,
-                actionId: syncedPosition.lastWriteActionId,
-                outcome: "RECONCILED_OK",
-                detail:
-                  latestPosition.status === "RECONCILIATION_REQUIRED"
-                    ? "Local reconciliation-required position restored from live DLMM snapshot"
-                    : "Local open position synced from live DLMM snapshot",
-              }),
-            );
+            return;
           }
-          continue;
-        }
 
-        const latestPosition = await input.stateRepository.get(
-          position.positionId,
-        );
-        if (
-          latestPosition === null ||
-          latestPosition.status === "RECONCILIATION_REQUIRED" ||
-          latestPosition.status === "CLOSED" ||
-          latestPosition.status === "ABORTED"
-        ) {
-          continue;
-        }
-
-        const reconciliationPosition = buildReconciliationRequiredPosition(
-          latestPosition,
-          latestPosition.lastWriteActionId,
-          now,
-        );
-        await input.stateRepository.upsert(reconciliationPosition);
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "POSITION_MISSING_FROM_SNAPSHOT",
-          actor: "system",
-          wallet,
-          positionId: latestPosition.positionId,
-          actionId: latestPosition.lastWriteActionId,
-          before: toJournalRecord({
-            position: latestPosition,
-          }),
-          after: toJournalRecord({
-            position: reconciliationPosition,
-          }),
-          txIds: [],
-          resultStatus: reconciliationPosition.status,
-          error: "Position missing from wallet snapshot during reconciliation",
-        });
-
-        records.push(
-          createRecord({
-            scope: "POSITION",
-            entityId: latestPosition.positionId,
+          const reconciliationPosition = buildReconciliationRequiredPosition(
+            latestPosition,
+            latestPosition.lastWriteActionId,
+            now,
+          );
+          await input.stateRepository.upsert(reconciliationPosition);
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "POSITION_MISSING_FROM_SNAPSHOT",
+            actor: "system",
             wallet,
             positionId: latestPosition.positionId,
             actionId: latestPosition.lastWriteActionId,
-            outcome: "REQUIRES_RETRY",
-            detail:
-              "Local position missing from wallet snapshot; marked RECONCILIATION_REQUIRED instead of auto-closing",
-          }),
-        );
+            before: toJournalRecord({
+              position: latestPosition,
+            }),
+            after: toJournalRecord({
+              position: reconciliationPosition,
+            }),
+            txIds: [],
+            resultStatus: reconciliationPosition.status,
+            error: "Position missing from wallet snapshot during reconciliation",
+          });
+
+          records.push(
+            createRecord({
+              scope: "POSITION",
+              entityId: latestPosition.positionId,
+              wallet,
+              positionId: latestPosition.positionId,
+              actionId: latestPosition.lastWriteActionId,
+              outcome: "REQUIRES_RETRY",
+              detail:
+                "Local position missing from wallet snapshot; marked RECONCILIATION_REQUIRED instead of auto-closing",
+            }),
+          );
+        });
       }
     } catch (error) {
       records.push(

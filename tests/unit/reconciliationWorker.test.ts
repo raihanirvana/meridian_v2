@@ -344,7 +344,7 @@ describe("reconciliation worker", () => {
     );
   });
 
-  it("self-heals reconciliation-required positions from live wallet snapshots", async () => {
+  it("RECONCILIATION_REQUIRED + live snapshot OPEN -> local OPEN", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
       filePath: path.join(directory, "actions.json"),
@@ -410,6 +410,48 @@ describe("reconciliation worker", () => {
         }),
       ]),
     );
+  });
+
+  it("uses positionLock while reconciling live wallet snapshots", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_lock_sync"));
+
+    const lockedPositionIds: string[] = [];
+    const positionLock = {
+      withLock: async <T>(positionId: string, work: () => Promise<T>) => {
+        lockedPositionIds.push(positionId);
+        return work();
+      },
+    };
+
+    await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [
+              {
+                ...buildOpenPosition("pos_lock_sync"),
+                currentValueUsd: 110,
+              },
+            ],
+          },
+        },
+      }),
+      positionLock: positionLock as never,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    expect(lockedPositionIds).toContain("pos_lock_sync");
   });
 
   it("recovers a deploy action stuck in WAITING_CONFIRMATION into timeout reconciliation state", async () => {
@@ -665,6 +707,155 @@ describe("reconciliation worker", () => {
           scope: "ACTION",
           entityId: action.actionId,
           outcome: "MANUAL_REVIEW_REQUIRED",
+        }),
+      ]),
+    );
+  });
+
+  it("REBALANCE action RECONCILING + new live OPEN -> resume/finalize, not FAILED", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_old_reconciling"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old_reconciling",
+      payload: rebalancePayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_old_reconciling",
+              txIds: ["tx_rebalance_reconcile"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const persistedWaitingAction = await actionRepository.get(action.actionId);
+
+    await actionRepository.upsert({
+      ...persistedWaitingAction!,
+      status: "RECONCILING",
+      completedAt: null,
+      resultPayload: {
+        phase: "REDEPLOY_SUBMITTED",
+        closeResult: {
+          actionType: "CLOSE",
+          closedPositionId: "pos_old_reconciling",
+          txIds: ["tx_rebalance_reconcile"],
+          submissionStatus: "submitted",
+          releasedAmountBase: 0.8,
+          releasedAmountQuote: 0.4,
+          estimatedReleasedValueUsd: 80,
+          releasedAmountSource: "post_tx",
+        },
+        closeAccounting: {
+          releasedAmountBase: 0.8,
+          releasedAmountQuote: 0.4,
+          estimatedReleasedValueUsd: 80,
+          releasedAmountSource: "post_tx",
+          sourceConfidence: "post_tx",
+        },
+        closedPositionId: "pos_old_reconciling",
+        availableCapitalUsd: 80,
+        performanceSnapshot: buildOpenPosition("pos_old_reconciling"),
+        redeployResult: {
+          actionType: "DEPLOY",
+          positionId: "pos_new",
+          txIds: ["tx_redeploy_live"],
+          submissionStatus: "submitted",
+        },
+        redeployRequest: rebalancePayload.redeploy,
+      },
+    });
+
+    await stateRepository.upsert({
+      ...buildOpenPosition("pos_old_reconciling"),
+      status: "CLOSED",
+      closedAt: "2026-04-20T00:05:00.000Z",
+      currentValueBase: 0,
+      currentValueUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      needsReconciliation: false,
+      lastWriteActionId: action.actionId,
+    });
+
+    const confirmedNewPosition: Position = {
+      ...buildOpenPosition("pos_new"),
+      poolAddress: rebalancePayload.redeploy.poolAddress,
+      rangeLowerBin: rebalancePayload.redeploy.rangeLowerBin,
+      rangeUpperBin: rebalancePayload.redeploy.rangeUpperBin,
+      activeBin: rebalancePayload.redeploy.initialActiveBin,
+      currentValueUsd: rebalancePayload.redeploy.estimatedValueUsd,
+    };
+
+    await stateRepository.upsert({
+      ...confirmedNewPosition,
+      lastWriteActionId: action.actionId,
+    });
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: confirmedNewPosition,
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [confirmedNewPosition],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedNewPosition = await stateRepository.get("pos_new");
+
+    expect(persistedAction?.status).toBe("DONE");
+    expect(persistedAction?.status).not.toBe("FAILED");
+    expect(persistedNewPosition?.status).toBe("OPEN");
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "ACTION",
+          entityId: action.actionId,
+          outcome: "RECONCILED_OK",
+          detail:
+            "Rebalance reconciling recovery reconstructed a live OPEN redeploy leg and finalized the action",
         }),
       ]),
     );
