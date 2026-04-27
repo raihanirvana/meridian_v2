@@ -940,7 +940,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       postTxClaimedBaseAmount === null
         ? claimAmountEstimate
         : {
-            amount: postTxClaimedBaseAmount,
+            amount: postTxClaimedBaseAmount.amount,
+            rawAmount: postTxClaimedBaseAmount.rawAmount,
             source: "post_tx" as const,
           };
 
@@ -954,6 +955,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     return ClaimFeesResultSchema.parse({
       actionType: "CLAIM_FEES",
       claimedBaseAmount: claimAmount.amount,
+      ...(claimAmount.rawAmount === undefined
+        ? {}
+        : { claimedBaseAmountRaw: claimAmount.rawAmount }),
       claimedBaseAmountSource: claimAmount.source,
       txIds,
     });
@@ -1440,6 +1444,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     wallet: string,
   ): Promise<{
     amount: number;
+    rawAmount?: string;
     source: ClaimAmountSource;
   }> {
     const cached = this.claimedBaseByPositionId.get(positionId);
@@ -1813,7 +1818,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     txIds: string[];
     wallet: string;
     mint: string;
-  }): Promise<number | null> {
+  }): Promise<{
+    amount: number;
+    rawAmount: string;
+  } | null> {
     return this.resolveWalletTokenAmountIncreaseFromTransactions(input);
   }
 
@@ -1821,8 +1829,12 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     txIds: string[];
     wallet: string;
     mint: string;
-  }): Promise<number | null> {
+  }): Promise<{
+    amount: number;
+    rawAmount: string;
+  } | null> {
     let total = 0;
+    let totalRaw = 0n;
     let foundAny = false;
     for (const txId of input.txIds) {
       const amount = await this.resolveClaimedBaseAmountFromTransaction({
@@ -1831,19 +1843,28 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         mint: input.mint,
       });
       if (amount !== null) {
-        total += amount;
+        total += amount.amount;
+        totalRaw += amount.rawAmount;
         foundAny = true;
       }
     }
 
-    return foundAny ? Math.max(total, 0) : null;
+    return foundAny
+      ? {
+          amount: Math.max(total, 0),
+          rawAmount: totalRaw > 0n ? totalRaw.toString() : "0",
+        }
+      : null;
   }
 
   private async resolveClaimedBaseAmountFromTransaction(input: {
     txId: string;
     wallet: string;
     mint: string;
-  }): Promise<number | null> {
+  }): Promise<{
+    amount: number;
+    rawAmount: bigint;
+  } | null> {
     const connectionWithParsedTx = this.connection as Connection & {
       getParsedTransaction?: (...args: unknown[]) => Promise<unknown>;
     };
@@ -1878,13 +1899,22 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       ...postByAccount.keys(),
     ]);
     let delta = 0;
+    let deltaRaw = 0n;
     for (const accountIndex of accountIndexes) {
       delta +=
-        (postByAccount.get(accountIndex) ?? 0) -
-        (preByAccount.get(accountIndex) ?? 0);
+        (postByAccount.get(accountIndex)?.uiAmount ?? 0) -
+        (preByAccount.get(accountIndex)?.uiAmount ?? 0);
+      deltaRaw +=
+        (postByAccount.get(accountIndex)?.rawAmount ?? 0n) -
+        (preByAccount.get(accountIndex)?.rawAmount ?? 0n);
     }
 
-    return delta > 0 ? delta : null;
+    return delta > 0 || deltaRaw > 0n
+      ? {
+          amount: delta > 0 ? delta : 0,
+          rawAmount: deltaRaw > 0n ? deltaRaw : 0n,
+        }
+      : null;
   }
 
   private sumTokenBalancesByAccount(
@@ -1893,8 +1923,20 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       wallet: string;
       mint: string;
     },
-  ): Map<string, number> {
-    const result = new Map<string, number>();
+  ): Map<
+    string,
+    {
+      uiAmount: number;
+      rawAmount: bigint;
+    }
+  > {
+    const result = new Map<
+      string,
+      {
+        uiAmount: number;
+        rawAmount: bigint;
+      }
+    >();
     for (const value of balances) {
       const record = asRecord(value);
       const owner = asString(record.owner);
@@ -1904,7 +1946,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       }
 
       const accountIndex = String(record.accountIndex ?? result.size);
-      const amount = this.readUiTokenAmount(asRecord(record.uiTokenAmount));
+      const amount = this.readTokenAmount(asRecord(record.uiTokenAmount));
       if (amount !== null) {
         result.set(accountIndex, amount);
       }
@@ -1913,25 +1955,40 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     return result;
   }
 
-  private readUiTokenAmount(
+  private readTokenAmount(
     uiTokenAmount: Record<string, unknown>,
-  ): number | null {
+  ):
+    | {
+        uiAmount: number;
+        rawAmount: bigint;
+      }
+    | null {
     const directAmount =
       asNumber(uiTokenAmount.uiAmount) ??
       asNumber(uiTokenAmount.uiAmountString);
+    const rawAmountString = asString(uiTokenAmount.amount);
+    const rawAmount =
+      rawAmountString !== null && /^\d+$/.test(rawAmountString)
+        ? BigInt(rawAmountString)
+        : null;
     if (directAmount !== null) {
-      return directAmount;
+      return {
+        uiAmount: directAmount,
+        rawAmount: rawAmount ?? 0n,
+      };
     }
 
-    const rawAmount = asString(uiTokenAmount.amount);
     const decimals = asNumber(uiTokenAmount.decimals);
     if (
-      rawAmount !== null &&
+      rawAmountString !== null &&
       decimals !== null &&
       Number.isInteger(decimals) &&
       decimals >= 0
     ) {
-      return rawAmountStringToUiNumber(rawAmount, decimals);
+      return {
+        uiAmount: rawAmountStringToUiNumber(rawAmountString, decimals),
+        rawAmount: rawAmount ?? 0n,
+      };
     }
 
     return null;

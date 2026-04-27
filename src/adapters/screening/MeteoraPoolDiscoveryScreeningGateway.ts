@@ -587,7 +587,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       now,
       screeningSnapshotAt: now,
       poolDetailFetchedAt: detailFetched ? now : null,
-      tokenIntelFetchedAt: now,
+      tokenIntelFetchedAt: null,
       chainSnapshotFetchedAt: now,
       hasActiveBin: activeBin !== undefined,
     });

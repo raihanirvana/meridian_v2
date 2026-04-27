@@ -633,6 +633,7 @@ describe("real adapters", () => {
     expect(candidates[0]?.tokenRiskSnapshot.tokenXMint).toBe("mint_meme");
     expect(candidates[0]?.screeningSnapshot.binStep).toBe(100);
     expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBeUndefined();
+    expect(candidates[0]?.dataFreshnessSnapshot.tokenIntelFetchedAt).toBeNull();
     expect(candidates[0]?.smartMoneySnapshot.tokenAgeHours).toBe(24);
   });
 

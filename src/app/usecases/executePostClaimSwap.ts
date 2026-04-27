@@ -18,6 +18,9 @@ export function createPostClaimSwapHook(
       inputMint: parsed.position.baseMint,
       outputMint: parsed.outputMint,
       amount: parsed.claimedBaseAmount,
+      ...(parsed.claimedBaseAmountRaw === undefined
+        ? {}
+        : { amountRaw: parsed.claimedBaseAmountRaw }),
     });
     return ExecuteSwapResultSchema.parse(result);
   };

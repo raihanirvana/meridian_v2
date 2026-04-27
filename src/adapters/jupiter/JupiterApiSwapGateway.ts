@@ -145,7 +145,7 @@ export class JupiterApiSwapGateway implements SwapGateway {
         wallet: parsedRequest.wallet,
         inputMint: parsedRequest.inputMint,
         outputMint: parsedRequest.outputMint,
-        amount: parsedRequest.amount,
+        amount: parsedRequest.amountRaw ?? parsedRequest.amount,
       },
       responseSchema: JupiterExecuteResponseSchema,
     });

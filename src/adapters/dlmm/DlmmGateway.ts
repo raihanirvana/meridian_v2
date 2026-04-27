@@ -133,6 +133,7 @@ export const ClaimFeesRequestSchema = z.object({
 export const ClaimFeesResultSchema = z.object({
   actionType: z.literal("CLAIM_FEES"),
   claimedBaseAmount: z.number().nonnegative(),
+  claimedBaseAmountRaw: z.string().regex(/^\d+$/).optional(),
   claimedBaseAmountUsd: z.number().nonnegative().optional(),
   claimedBaseAmountSource: z
     .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])

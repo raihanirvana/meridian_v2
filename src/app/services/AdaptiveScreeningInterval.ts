@@ -48,10 +48,12 @@ function isWithinWindow(
 export function resolveAdaptiveScreeningIntervalSec(
   input: ResolveAdaptiveScreeningIntervalInput,
 ): number {
-  const currentMinutes = minutesInTimezone(
-    input.now ?? new Date(),
-    input.timezone,
-  );
+  let currentMinutes: number;
+  try {
+    currentMinutes = minutesInTimezone(input.now ?? new Date(), input.timezone);
+  } catch {
+    return input.defaultIntervalSec;
+  }
 
   const matchingIntervals = input.peakHours
     .filter((window) =>

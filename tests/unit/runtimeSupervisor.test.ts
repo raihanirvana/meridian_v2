@@ -117,7 +117,6 @@ function buildUserConfig(overrides: UserConfigOverrides = {}): UserConfig {
       maxEstimatedSlippageBps: 300,
       maxStrategySnapshotAgeMs: 120_000,
       aiReviewPoolSize: 30,
-      enrichmentConcurrency: 10,
     },
     management: {
       stopLossUsd: 50,

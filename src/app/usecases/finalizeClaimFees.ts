@@ -78,6 +78,7 @@ const ClaimConfirmationPayloadSchema = z
   .object({
     actionType: z.literal("CLAIM_FEES"),
     claimedBaseAmount: z.number().nonnegative(),
+    claimedBaseAmountRaw: z.string().regex(/^\d+$/).optional(),
     claimedBaseAmountUsd: z.number().nonnegative().optional(),
     claimedBaseAmountSource: z
       .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])
@@ -101,6 +102,7 @@ export const PostClaimSwapInputSchema = z
     wallet: z.string().min(1),
     position: PositionSchema,
     claimedBaseAmount: z.number().nonnegative(),
+    claimedBaseAmountRaw: z.string().regex(/^\d+$/).optional(),
     outputMint: z.string().min(1),
   })
   .strict();
@@ -441,6 +443,9 @@ async function runClaimPostProcessing(input: {
               wallet: workingAction.wallet,
               position: input.reconcilingPosition,
               claimedBaseAmount: claimResult.claimedBaseAmount,
+              ...(claimResult.claimedBaseAmountRaw === undefined
+                ? {}
+                : { claimedBaseAmountRaw: claimResult.claimedBaseAmountRaw }),
               outputMint: autoSwap.outputMint,
             }),
           );
@@ -451,6 +456,22 @@ async function runClaimPostProcessing(input: {
             error: null,
           });
         } catch (error) {
+          autoSwap = ClaimAutoSwapStateSchema.parse({
+            ...autoSwap,
+            phase: "FAILED",
+            swap: null,
+            error: errorMessage(error, "claim auto swap failed"),
+          });
+          claimResult = ClaimConfirmationPayloadSchema.parse({
+            ...claimResult,
+            autoSwap,
+            swap: { status: "FAILED", error: autoSwap.error ?? "claim auto swap failed" },
+          });
+          workingAction = await persistReconcilingAction({
+            actionRepository: input.actionRepository,
+            action: workingAction,
+            resultPayload: claimResult,
+          });
           await appendJournalEvent(input.journalRepository, {
             timestamp: input.now,
             eventType: "CLAIM_AUTO_SWAP_FAILED",
@@ -463,13 +484,7 @@ async function runClaimPostProcessing(input: {
             txIds: [],
             resultStatus: "FAILED",
             error: errorMessage(error, "claim auto swap failed"),
-          });
-          autoSwap = ClaimAutoSwapStateSchema.parse({
-            ...autoSwap,
-            phase: "FAILED",
-            swap: null,
-            error: errorMessage(error, "claim auto swap failed"),
-          });
+          }).catch(() => undefined);
         }
       }
 
@@ -547,6 +562,9 @@ async function runClaimPostProcessing(input: {
               wallet: workingAction.wallet,
               position: input.reconcilingPosition,
               claimedBaseAmount: claimResult.claimedBaseAmount,
+              ...(claimResult.claimedBaseAmountRaw === undefined
+                ? {}
+                : { claimedBaseAmountRaw: claimResult.claimedBaseAmountRaw }),
               outputMint: compound.outputMint,
             }),
           );
@@ -557,6 +575,20 @@ async function runClaimPostProcessing(input: {
             error: null,
           });
         } catch (error) {
+          compound = ClaimAutoCompoundStateSchema.parse({
+            ...compound,
+            phase: "FAILED",
+            error: errorMessage(error, "claim auto-compound swap failed"),
+          });
+          claimResult = ClaimConfirmationPayloadSchema.parse({
+            ...claimResult,
+            autoCompound: compound,
+          });
+          workingAction = await persistReconcilingAction({
+            actionRepository: input.actionRepository,
+            action: workingAction,
+            resultPayload: claimResult,
+          });
           await appendJournalEvent(input.journalRepository, {
             timestamp: input.now,
             eventType: "CLAIM_AUTO_COMPOUND_FAILED",
@@ -569,12 +601,7 @@ async function runClaimPostProcessing(input: {
             txIds: [],
             resultStatus: "FAILED",
             error: errorMessage(error, "claim auto-compound swap failed"),
-          });
-          compound = ClaimAutoCompoundStateSchema.parse({
-            ...compound,
-            phase: "FAILED",
-            error: errorMessage(error, "claim auto-compound swap failed"),
-          });
+          }).catch(() => undefined);
         }
       }
 
@@ -663,6 +690,23 @@ async function runClaimPostProcessing(input: {
             error: null,
           });
         } catch (error) {
+          compound = ClaimAutoCompoundStateSchema.parse({
+            ...compound,
+            phase: "FAILED",
+            error: errorMessage(
+              error,
+              "claim auto-compound deploy enqueue failed",
+            ),
+          });
+          claimResult = ClaimConfirmationPayloadSchema.parse({
+            ...claimResult,
+            autoCompound: compound,
+          });
+          workingAction = await persistReconcilingAction({
+            actionRepository: input.actionRepository,
+            action: workingAction,
+            resultPayload: claimResult,
+          });
           await appendJournalEvent(input.journalRepository, {
             timestamp: input.now,
             eventType: "CLAIM_AUTO_COMPOUND_FAILED",
@@ -678,15 +722,7 @@ async function runClaimPostProcessing(input: {
               error,
               "claim auto-compound deploy enqueue failed",
             ),
-          });
-          compound = ClaimAutoCompoundStateSchema.parse({
-            ...compound,
-            phase: "FAILED",
-            error: errorMessage(
-              error,
-              "claim auto-compound deploy enqueue failed",
-            ),
-          });
+          }).catch(() => undefined);
         }
       }
 
@@ -840,6 +876,53 @@ export async function finalizeClaimFees(
             latestAction: reconcilingAction,
             claimResult,
             reconcilingPosition: claimingPosition,
+            actionRepository: input.actionRepository,
+            stateRepository: input.stateRepository,
+            journalRepository: input.journalRepository,
+            actionQueue: input.actionQueue,
+            runtimeControlStore: input.runtimeControlStore,
+            postClaimSwapHook: input.postClaimSwapHook,
+            compoundDeployRiskGuard: input.compoundDeployRiskGuard,
+            now,
+          });
+          return {
+            action: resumed.action,
+            position: resumed.openPosition,
+            outcome: "FINALIZED" as const,
+          };
+        }
+
+        if (
+          claimingPosition !== null &&
+          claimingPosition.status === "RECONCILIATION_REQUIRED" &&
+          confirmedPosition !== null &&
+          confirmedPosition.status === "OPEN"
+        ) {
+          const reconcilingPosition = buildReconcilingPosition(
+            PositionSchema.parse({
+              ...claimingPosition,
+              ...confirmedPosition,
+              status: transitionPositionStatus(
+                "RECONCILIATION_REQUIRED",
+                "RECONCILING",
+              ),
+              needsReconciliation: true,
+              lastWriteActionId: latestAction.actionId,
+              lastSyncedAt: now,
+            }),
+            latestAction.actionId,
+            now,
+          );
+          const reconcilingAction = {
+            ...latestAction,
+            status: transitionActionStatus(latestAction.status, "RECONCILING"),
+          } satisfies Action;
+          await input.stateRepository.upsert(reconcilingPosition);
+          await input.actionRepository.upsert(reconcilingAction);
+          const resumed = await runClaimPostProcessing({
+            latestAction: reconcilingAction,
+            claimResult,
+            reconcilingPosition,
             actionRepository: input.actionRepository,
             stateRepository: input.stateRepository,
             journalRepository: input.journalRepository,

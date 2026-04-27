@@ -57,7 +57,6 @@ export const ScreeningPolicySchema = z
     maxStrategySnapshotAgeMs: z.number().int().positive().optional(),
     aiReviewPoolSize: z.number().int().positive().optional(),
     detailEnrichmentTopN: z.number().int().nonnegative().optional(),
-    enrichmentConcurrency: z.number().int().positive().optional(),
     detailRequestIntervalMs: z.number().int().nonnegative().optional(),
     maxDetailRequestsPerCycle: z.number().int().nonnegative().optional(),
     maxDetailRequestsPerWindow: z.number().int().positive().optional(),
@@ -436,7 +435,14 @@ function buildCandidateEntity(input: {
       input.screeningPolicy.maxEstimatedSlippageBps ?? 300,
   });
 
-  const { baseMint, quoteMint } = deriveBaseMintAndQuoteMint(input.candidate);
+  const { baseMint, quoteMint } = deriveBaseMintAndQuoteMint({
+    ...input.candidate,
+    preferredQuoteMints: input.candidate.preferredQuoteMints ?? [
+      "So11111111111111111111111111111111111111112",
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    ],
+  });
 
   return CandidateSchema.parse({
     candidateId: input.candidate.candidateId,

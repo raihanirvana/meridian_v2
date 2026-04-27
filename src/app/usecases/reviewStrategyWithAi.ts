@@ -259,21 +259,28 @@ async function appendLessonInjectionFailedJournal(input: {
     return;
   }
 
-  await input.journalRepository.append({
-    timestamp: input.timestamp,
-    eventType: "AI_LESSON_INJECTION_FAILED",
-    actor: "system",
-    wallet: input.wallet,
-    positionId: null,
-    actionId: null,
-    before: null,
-    after: {
-      stage: "strategy_review",
-    },
-    txIds: [],
-    resultStatus: "FAILED",
-    error: errorMessage(input.error),
-  });
+  try {
+    await input.journalRepository.append({
+      timestamp: input.timestamp,
+      eventType: "AI_LESSON_INJECTION_FAILED",
+      actor: "system",
+      wallet: input.wallet,
+      positionId: null,
+      actionId: null,
+      before: null,
+      after: {
+        stage: "strategy_review",
+      },
+      txIds: [],
+      resultStatus: "FAILED",
+      error: errorMessage(input.error),
+    });
+  } catch (journalError) {
+    logger.warn(
+      { err: journalError },
+      "AI strategy lesson failure journal append failed",
+    );
+  }
 }
 
 async function appendJournal(input: {
@@ -312,14 +319,21 @@ async function appendReviewJournal(input: {
   wallet: string;
   item: StrategyReviewWithAiItem;
 }): Promise<void> {
-  await appendJournal({
-    ...(input.journalRepository === undefined
-      ? {}
-      : { journalRepository: input.journalRepository }),
-    timestamp: input.timestamp,
-    wallet: input.wallet,
-    item: input.item,
-  });
+  try {
+    await appendJournal({
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      timestamp: input.timestamp,
+      wallet: input.wallet,
+      item: input.item,
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, candidateId: input.item.candidateId },
+      "AI strategy review journal append failed",
+    );
+  }
 }
 
 export async function reviewStrategyWithAi(
@@ -377,14 +391,17 @@ export async function reviewStrategyWithAi(
       });
     } else {
       try {
-        lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
-          role: "SCREENER",
-          includePoolMemory: {
-            candidates: aiEligibleCandidates.map((candidate) => ({
-              poolAddress: candidate.poolAddress,
-            })),
-          },
-        });
+        lessonsPrompt = await withTimeout(
+          input.lessonPromptService.buildLessonsPrompt({
+            role: "SCREENER",
+            includePoolMemory: {
+              candidates: aiEligibleCandidates.map((candidate) => ({
+                poolAddress: candidate.poolAddress,
+              })),
+            },
+          }),
+          timeoutMs,
+        );
       } catch (error) {
         lessonInjectionFailed = true;
         logger.warn(

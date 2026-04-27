@@ -50,8 +50,8 @@ describe("renderDailyBriefing", () => {
       emoji: true,
     });
 
-    expect(text).toContain("OK Runtime briefing");
-    expect(text).toContain("POS Open positions: 2");
+    expect(text).toContain("✅ Runtime briefing");
+    expect(text).toContain("📊 Open positions: 2");
     expect(text).toContain("Daily realized pnl: 0.2833 SOL");
   });
 });

@@ -70,7 +70,6 @@ export const UserConfigSchema = z
         maxStrategySnapshotAgeMs: z.number().int().positive().default(120_000),
         aiReviewPoolSize: z.number().int().positive().default(30),
         detailEnrichmentTopN: z.number().int().nonnegative().default(5),
-        enrichmentConcurrency: z.number().int().positive().default(1),
         detailRequestIntervalMs: z.number().int().nonnegative().default(4_000),
         maxDetailRequestsPerCycle: z.number().int().nonnegative().default(5),
         maxDetailRequestsPerWindow: z.number().int().positive().default(20),
@@ -85,7 +84,18 @@ export const UserConfigSchema = z
         maxBotHolderPct: PercentNumber.default(20),
         maxBundleRiskPct: PercentNumber.default(20),
         maxWashTradingRiskPct: PercentNumber.default(20),
-        intervalTimezone: z.string().min(1).default("UTC"),
+        intervalTimezone: z
+          .string()
+          .min(1)
+          .refine((tz) => {
+            try {
+              new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+              return true;
+            } catch {
+              return false;
+            }
+          }, "must be a valid IANA timezone")
+          .default("UTC"),
         peakHours: z
           .array(
             z

@@ -32,12 +32,12 @@ export function renderDailyBriefing(input: RenderDailyBriefingInput): string {
       : formatCurrency(report.dailyPnlUsd);
 
   return [
-    `${prefix(emoji, report.health === "HEALTHY" ? "OK" : "WARN")}Runtime briefing`,
-    `${prefix(emoji, "POS")}Open positions: ${report.openPositions}`,
-    `${prefix(emoji, "ACT")}Pending actions: ${report.pendingActions}`,
-    `${prefix(emoji, "PNL")}Daily realized pnl: ${pnlText}`,
-    `${prefix(emoji, "MEM")}Lessons: ${report.lessonsCount ?? "n/a"} | Pools tracked: ${report.poolsTracked ?? "n/a"}`,
-    `${prefix(emoji, "REC")}Needs reconciliation: ${report.pendingReconciliationPositions}`,
-    `${prefix(emoji, "ALR")}Alerts: ${report.alerts.length}`,
+    `${prefix(emoji, report.health === "HEALTHY" ? "✅" : "⚠️")}Runtime briefing`,
+    `${prefix(emoji, "📊")}Open positions: ${report.openPositions}`,
+    `${prefix(emoji, "⏳")}Pending actions: ${report.pendingActions}`,
+    `${prefix(emoji, "💰")}Daily realized pnl: ${pnlText}`,
+    `${prefix(emoji, "🧠")}Lessons: ${report.lessonsCount ?? "n/a"} | Pools tracked: ${report.poolsTracked ?? "n/a"}`,
+    `${prefix(emoji, "🔁")}Needs reconciliation: ${report.pendingReconciliationPositions}`,
+    `${prefix(emoji, "🚨")}Alerts: ${report.alerts.length}`,
   ].join("\n");
 }

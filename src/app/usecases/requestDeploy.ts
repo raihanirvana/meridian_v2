@@ -10,6 +10,7 @@ import {
   type PortfolioRiskPolicy,
 } from "../../domain/rules/riskRules.js";
 import { StrategySchema, type Actor } from "../../domain/types/enums.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
 
@@ -157,19 +158,30 @@ export async function requestDeploy(
   });
 
   if (input.journalRepository !== undefined) {
-    await input.journalRepository.append({
-      timestamp: journalTimestamp,
-      eventType: "DEPLOY_REQUEST_ACCEPTED",
-      actor: action.requestedBy,
-      wallet: action.wallet,
-      positionId: action.positionId,
-      actionId: action.actionId,
-      before: null,
-      after: buildDeployJournalPayload(action),
-      txIds: [],
-      resultStatus: action.status,
-      error: null,
-    });
+    try {
+      await input.journalRepository.append({
+        timestamp: journalTimestamp,
+        eventType: "DEPLOY_REQUEST_ACCEPTED",
+        actor: action.requestedBy,
+        wallet: action.wallet,
+        positionId: action.positionId,
+        actionId: action.actionId,
+        before: null,
+        after: buildDeployJournalPayload(action),
+        txIds: [],
+        resultStatus: action.status,
+        error: null,
+      });
+    } catch (error) {
+      logger.warn(
+        {
+          err: error,
+          actionId: action.actionId,
+          wallet: action.wallet,
+        },
+        "deploy request journal append failed after enqueue; preserving accepted action",
+      );
+    }
   }
 
   return action;

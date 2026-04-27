@@ -196,6 +196,30 @@ describe("reviewStrategyWithAi", () => {
     );
   });
 
+  it("returns reviews even when strategy review journal append fails", async () => {
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      lessonPromptService: stubLessonPromptService,
+      reviewer: new MockAiStrategyReviewer({
+        reviewCandidateStrategy: {
+          type: "success",
+          value: buildAiReview(),
+        },
+      }),
+      journalRepository: {
+        async append() {
+          throw new Error("journal unavailable");
+        },
+      } as JournalRepository,
+      now: () => now,
+    });
+
+    expect(result.reviews[0]?.source).toBe("AI");
+    expect(result.reviews[0]?.review.recommendedStrategy).toBe("bid_ask");
+  });
+
   it("sends the top deterministic candidates as one batch so AI can rerank deploy priorities", async () => {
     const seenBatchInputs: unknown[] = [];
     const candidateA = buildCandidate({
@@ -443,6 +467,30 @@ describe("reviewStrategyWithAi", () => {
 
     expect(result.reviews[0]?.source).toBe("FALLBACK");
     expect(result.reviews[0]?.aiError).toContain("timed out");
+  });
+
+  it("times out lesson prompt build and falls back deterministically", async () => {
+    const result = await reviewStrategyWithAi({
+      wallet: "wallet_001",
+      candidates: [buildCandidate()],
+      aiMode: "advisory",
+      timeoutMs: 10,
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return new Promise<string | null>(() => undefined);
+        },
+      },
+      reviewer: new MockAiStrategyReviewer({
+        reviewCandidateStrategy: {
+          type: "success",
+          value: buildAiReview(),
+        },
+      }),
+      now: () => now,
+    });
+
+    expect(result.reviews[0]?.source).toBe("FALLBACK");
+    expect(result.reviews[0]?.aiError).toBe("AI_LESSON_INJECTION_FAILED");
   });
 
   it("does not call AI for candidates that failed hard filters", async () => {

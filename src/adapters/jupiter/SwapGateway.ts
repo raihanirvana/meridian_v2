@@ -16,6 +16,7 @@ export const SwapQuoteResultSchema = z.object({
 
 export const ExecuteSwapRequestSchema = SwapQuoteRequestSchema.extend({
   wallet: z.string().min(1),
+  amountRaw: z.string().regex(/^\d+$/).optional(),
 });
 
 export const ExecuteSwapResultSchema = z.object({
