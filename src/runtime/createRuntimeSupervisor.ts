@@ -846,6 +846,11 @@ export function createRuntimeSupervisor(
           simulation: shouldPreQueueSimulate
             ? { ...simulation, stage: "pre_queue" }
             : { ok: true, reason: null, stage: "not_required" },
+        }).catch((err: unknown) => {
+          logger.warn(
+            { err, candidateId: candidate.candidateId },
+            "strategy decision journal append failed; continuing with deploy",
+          );
         });
         if (finalStrategyDecision.rejected) {
           if (
@@ -937,6 +942,11 @@ export function createRuntimeSupervisor(
               reason: riskResult.reason,
               blockingRules: riskResult.blockingRules,
             },
+          }).catch((err: unknown) => {
+            logger.warn(
+              { err, candidateId: candidate.candidateId },
+              "strategy decision journal append failed",
+            );
           });
           await appendAutoDeployJournal({
             timestamp,

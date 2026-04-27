@@ -18,6 +18,7 @@ import {
   type ScreeningPolicy,
 } from "../../domain/rules/screeningRules.js";
 import { buildEnrichmentPlan } from "../../domain/rules/enrichmentBudgetRules.js";
+import { buildDataFreshnessSnapshot } from "../../domain/rules/poolFeatureRules.js";
 import type { PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import {
   ScreeningCandidateInputSchema,
@@ -518,6 +519,19 @@ export async function runScreeningCycle(
           narrative.holderDistributionSummary ?? holderDistributionSummary;
       }
 
+      const updatedDataFreshnessSnapshot = (() => {
+        if (details?.dataFreshnessSnapshot === undefined) return undefined;
+        if (narrative === null) return details.dataFreshnessSnapshot;
+        return buildDataFreshnessSnapshot({
+          now: detailRequestNow,
+          screeningSnapshotAt: details.dataFreshnessSnapshot.screeningSnapshotAt,
+          poolDetailFetchedAt: details.dataFreshnessSnapshot.poolDetailFetchedAt,
+          tokenIntelFetchedAt: detailRequestNow,
+          chainSnapshotFetchedAt: details.dataFreshnessSnapshot.chainSnapshotFetchedAt,
+          hasActiveBin:
+            details.dlmmMicrostructureSnapshot?.activeBinSource !== "unavailable",
+        });
+      })();
       detailByCandidateId.set(candidate.candidateId, {
         ...(details?.feePerTvl24h === undefined
           ? {}
@@ -537,9 +551,9 @@ export async function runScreeningCycle(
         ...(details?.dlmmMicrostructureSnapshot === undefined
           ? {}
           : { dlmmMicrostructureSnapshot: details.dlmmMicrostructureSnapshot }),
-        ...(details?.dataFreshnessSnapshot === undefined
+        ...(updatedDataFreshnessSnapshot === undefined
           ? {}
-          : { dataFreshnessSnapshot: details.dataFreshnessSnapshot }),
+          : { dataFreshnessSnapshot: updatedDataFreshnessSnapshot }),
         ...(narrativeSummary === null ? {} : { narrativeSummary }),
         ...(holderDistributionSummary === null
           ? {}

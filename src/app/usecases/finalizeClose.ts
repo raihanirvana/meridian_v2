@@ -198,6 +198,12 @@ export async function runLessonHookIdempotent(input: {
       txIds: [],
       resultStatus: "FAILED",
       error: failureMessage,
+    // Journal failure must never propagate — learning failure cannot alter a finalized close.
+    }).catch((journalError) => {
+      logger.warn(
+        { err: journalError, actionId: input.closedAction.actionId },
+        "failed to journal lesson hook failure",
+      );
     });
   }
 }
@@ -617,19 +623,23 @@ export async function finalizeClose(
           error: null,
         });
 
-        await runLessonHookIdempotent({
-          ...(input.lessonHook === undefined
-            ? {}
-            : { lessonHook: input.lessonHook }),
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          position: closingPosition,
-          performanceSnapshotPosition: closingPosition,
-          closedAction: doneAction,
-          reason: payload.reason,
-          now,
-        });
+        try {
+          await runLessonHookIdempotent({
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            position: closingPosition,
+            performanceSnapshotPosition: closingPosition,
+            closedAction: doneAction,
+            reason: payload.reason,
+            now,
+          });
+        } catch {
+          // intentionally swallowed
+        }
 
         return {
           action: doneAction,
@@ -687,19 +697,23 @@ export async function finalizeClose(
           error: null,
         });
 
-        await runLessonHookIdempotent({
-          ...(input.lessonHook === undefined
-            ? {}
-            : { lessonHook: input.lessonHook }),
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          position: closingPosition,
-          performanceSnapshotPosition: closeConfirmedPositionLike,
-          closedAction: doneAction,
-          reason: payload.reason,
-          now,
-        });
+        try {
+          await runLessonHookIdempotent({
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            position: closingPosition,
+            performanceSnapshotPosition: closeConfirmedPositionLike,
+            closedAction: doneAction,
+            reason: payload.reason,
+            now,
+          });
+        } catch {
+          // intentionally swallowed
+        }
 
         return {
           action: doneAction,
@@ -882,19 +896,25 @@ export async function finalizeClose(
           error: null,
         });
 
-        await runLessonHookIdempotent({
-          ...(input.lessonHook === undefined
-            ? {}
-            : { lessonHook: input.lessonHook }),
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          position: closedPosition,
-          performanceSnapshotPosition,
-          closedAction: doneAction,
-          reason: payload.reason,
-          now,
-        });
+        // Lesson hook is outside the critical section: its failure must never
+        // revert a finalized close to RECONCILIATION_REQUIRED / FAILED.
+        try {
+          await runLessonHookIdempotent({
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            position: closedPosition,
+            performanceSnapshotPosition,
+            closedAction: doneAction,
+            reason: payload.reason,
+            now,
+          });
+        } catch {
+          // intentionally swallowed
+        }
 
         return {
           action: doneAction,

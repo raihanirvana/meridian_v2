@@ -933,6 +933,9 @@ export async function runManagementCycle(
         journalRepository: input.journalRepository,
         actor: requestedBy,
         now,
+        ...(input.aiTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: input.aiTimeoutMs }),
       });
 
       if (aiRebalanceMode === "dry_run") {
@@ -1511,6 +1514,9 @@ export async function runManagementCycle(
       riskGuard: {
         portfolio,
         policy: input.riskPolicy,
+        ...(portfolio.solPriceUsd !== undefined && portfolio.solPriceUsd > 0
+          ? { solPriceUsd: portfolio.solPriceUsd }
+          : {}),
       },
     });
 

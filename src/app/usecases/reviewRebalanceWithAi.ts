@@ -51,10 +51,23 @@ export interface ReviewRebalanceWithAiInput {
   journalRepository?: JournalRepository;
   actor?: Actor;
   now?: string;
+  timeoutMs?: number;
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`AI rebalance review timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 function deterministicHoldDecision(): AiRebalanceDecision {
@@ -144,39 +157,40 @@ export async function reviewRebalanceWithAi(
     source = "DETERMINISTIC";
   } else {
     try {
-      const lessonsPrompt = await input.lessonPromptService?.buildLessonsPrompt(
-        {
-          role: "MANAGER",
-          includePoolMemory: {
-            candidates: [
-              {
-                poolAddress: review.position.poolAddress,
-              },
-            ],
-          },
-        },
-      );
-      if (input.lessonPromptService === undefined) {
-        throw new Error("LessonPromptService is required for AI rebalance");
-      }
-      const poolMemoryPrompt =
-        lessonsPrompt?.includes("### POOL MEMORY") === true
-          ? []
-          : ["### POOL MEMORY", "No pool memory recorded for this pool yet."];
-      decision = AiRebalanceDecisionSchema.parse(
-        await input.planner.reviewRebalanceDecision({
-          ...review,
-          lessonContext: [
-            "### LESSONS LEARNED",
-            lessonsPrompt ?? "No historical lessons recorded yet.",
-            ...poolMemoryPrompt,
-            "### POSITION PERFORMANCE CONTEXT",
-            `position_pnl_pct=${review.position.pnlPct}`,
-            `range=${review.position.lowerBin}-${review.position.upperBin}`,
-            `out_of_range_minutes=${review.position.outOfRangeMinutes}`,
-          ].join("\n"),
-        }),
-      );
+      const aiWork = async (): Promise<AiRebalanceDecision> => {
+        const lessonsPrompt =
+          await input.lessonPromptService?.buildLessonsPrompt({
+            role: "MANAGER",
+            includePoolMemory: {
+              candidates: [{ poolAddress: review.position.poolAddress }],
+            },
+          });
+        if (input.lessonPromptService === undefined) {
+          throw new Error("LessonPromptService is required for AI rebalance");
+        }
+        const poolMemoryPrompt =
+          lessonsPrompt?.includes("### POOL MEMORY") === true
+            ? []
+            : ["### POOL MEMORY", "No pool memory recorded for this pool yet."];
+        return AiRebalanceDecisionSchema.parse(
+          await input.planner!.reviewRebalanceDecision({
+            ...review,
+            lessonContext: [
+              "### LESSONS LEARNED",
+              lessonsPrompt ?? "No historical lessons recorded yet.",
+              ...poolMemoryPrompt,
+              "### POSITION PERFORMANCE CONTEXT",
+              `position_pnl_pct=${review.position.pnlPct}`,
+              `range=${review.position.lowerBin}-${review.position.upperBin}`,
+              `out_of_range_minutes=${review.position.outOfRangeMinutes}`,
+            ].join("\n"),
+          }),
+        );
+      };
+      decision =
+        input.timeoutMs !== undefined
+          ? await withTimeout(aiWork(), input.timeoutMs)
+          : await aiWork();
       source = "AI";
     } catch (error) {
       logger.warn(

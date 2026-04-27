@@ -635,6 +635,59 @@ describe("real adapters", () => {
     expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBeUndefined();
     expect(candidates[0]?.dataFreshnessSnapshot.tokenIntelFetchedAt).toBeNull();
     expect(candidates[0]?.smartMoneySnapshot.tokenAgeHours).toBe(24);
+    expect(candidates[0]?.baseMint).toBe("mint_meme");
+    expect(candidates[0]?.quoteMint).toBe(
+      "So11111111111111111111111111111111111111112",
+    );
+  });
+
+  it("swaps baseMint/quoteMint when tokenX is a preferred quote token", async () => {
+    const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      now: () => "2026-04-24T00:00:00.000Z",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                pool_address: "pool_001",
+                name: "USDC-MEME",
+                active_tvl: 10_000,
+                volume: 40_000,
+                fee: 100,
+                fee_active_tvl_ratio: 1,
+                volume_change_pct: 5,
+                base_token_holders: 800,
+                dlmm_params: { bin_step: 80 },
+                token_x: {
+                  address: USDC_MINT,
+                  symbol: "USDC",
+                  organic_score: 95,
+                  market_cap: 1_000_000_000,
+                  dev: "deployer_usdc",
+                },
+                token_y: {
+                  address: "mint_meme",
+                  symbol: "MEME",
+                  organic_score: 60,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    });
+
+    const candidates = await screening.listCandidates({
+      limit: 3,
+      timeframe: "5m",
+    });
+
+    expect(candidates[0]?.tokenXMint).toBe(USDC_MINT);
+    expect(candidates[0]?.tokenYMint).toBe("mint_meme");
+    expect(candidates[0]?.baseMint).toBe("mint_meme");
+    expect(candidates[0]?.quoteMint).toBe(USDC_MINT);
   });
 
   it("does not infer 24h fee-per-TVL from a timeframe-window fee", async () => {

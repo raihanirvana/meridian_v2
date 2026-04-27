@@ -148,6 +148,25 @@ function pickTokenRecords(pool: Record<string, unknown>): {
   return { tokenX, tokenY };
 }
 
+const PREFERRED_QUOTE_MINTS = [
+  "So11111111111111111111111111111111111111112", // SOL
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+];
+
+function deriveBaseMintAndQuoteMint(
+  tokenXMint: string,
+  tokenYMint: string,
+): { baseMint: string; quoteMint: string } {
+  if (PREFERRED_QUOTE_MINTS.includes(tokenYMint)) {
+    return { baseMint: tokenXMint, quoteMint: tokenYMint };
+  }
+  if (PREFERRED_QUOTE_MINTS.includes(tokenXMint)) {
+    return { baseMint: tokenYMint, quoteMint: tokenXMint };
+  }
+  return { baseMint: tokenXMint, quoteMint: tokenYMint };
+}
+
 function mapPairType(symbolX: string, symbolY: string): string {
   const stableSymbols = new Set(["USDC", "USDT", "USDH", "PYUSD"]);
   return stableSymbols.has(symbolX.toUpperCase()) &&
@@ -597,14 +616,18 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       dataFreshnessSnapshot,
     });
 
+    const { baseMint, quoteMint } = deriveBaseMintAndQuoteMint(
+      tokenXMint,
+      tokenYMint,
+    );
     return CandidateSchema.parse({
       candidateId: poolAddress,
       poolAddress,
       symbolPair,
       tokenXMint,
       tokenYMint,
-      baseMint: tokenXMint,
-      quoteMint: tokenYMint,
+      baseMint,
+      quoteMint,
       screeningSnapshot: {
         marketCapUsd:
           firstNumber(tokenX.market_cap, tokenX.marketCap, pool.market_cap) ??
