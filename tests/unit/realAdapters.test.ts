@@ -535,6 +535,34 @@ describe("real adapters", () => {
     ).rejects.toBeInstanceOf(AdapterTransportError);
   });
 
+  it("aborts if response body read stalls after headers", async () => {
+    const screening = new HttpScreeningGateway({
+      baseUrl: "https://screening.example.com/v1/",
+      timeoutMs: 5,
+      fetchFn: async (_url, init) => {
+        const signal = init?.signal;
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            new Promise<string>((_resolve, reject) => {
+              signal?.addEventListener(
+                "abort",
+                () => {
+                  reject(new Error("body read aborted"));
+                },
+                { once: true },
+              );
+            }),
+        } as Response;
+      },
+    });
+
+    await expect(
+      screening.listCandidates({ limit: 5, timeframe: "5m" }),
+    ).rejects.toBeInstanceOf(AdapterTransportError);
+  });
+
   it("forwards screening timeframe to the HTTP query boundary", async () => {
     let requestedUrl = "";
     const screening = new HttpScreeningGateway({
@@ -767,6 +795,46 @@ describe("real adapters", () => {
       inputAmount: 100000000,
       outputAmount: 17057460,
     });
+  });
+
+  it("maps Jupiter malformed numeric strings into AdapterResponseValidationError", async () => {
+    const jupiter = new JupiterApiSwapGateway({
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            outAmount: "abc",
+            priceImpactPct: "0.0001",
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      jupiter.quoteSwap({
+        inputMint: "So11111111111111111111111111111111111111112",
+        outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        amount: 100000000,
+      }),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+  });
+
+  it("maps Jupiter SOL price malformed numeric strings into AdapterResponseValidationError", async () => {
+    const priceGateway = new JupiterSolPriceGateway({
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            outAmount: "NaN",
+          }),
+          { status: 200 },
+        ),
+      ),
+      now: () => "2026-04-23T00:00:00.000Z",
+    });
+
+    await expect(priceGateway.getSolPriceUsd()).rejects.toBeInstanceOf(
+      AdapterResponseValidationError,
+    );
   });
 
   it("requires an explicit execution bridge for Jupiter executeSwap", async () => {

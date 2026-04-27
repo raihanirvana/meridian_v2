@@ -94,6 +94,10 @@ export async function maybeRecalibrateSignalWeights(
   });
 
   if (Object.keys(recalculated.changes).length === 0) {
+    await input.signalWeightsStore.replace(currentWeights, {
+      lastRecalibratedAt: input.now(),
+      positionsAtRecalibration,
+    });
     return {
       positionsAtRecalibration,
       changes: {},

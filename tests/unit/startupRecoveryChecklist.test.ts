@@ -170,4 +170,48 @@ describe("startup recovery checklist", () => {
       },
     });
   });
+
+  it("returns UNSAFE instead of throwing when an optional store fails report generation checks", async () => {
+    const directory = await makeTempDir();
+
+    const result = await runStartupRecoveryChecklist({
+      wallet: "wallet_001",
+      stateRepository: new StateRepository({
+        filePath: path.join(directory, "positions.json"),
+      }),
+      actionRepository: new ActionRepository({
+        filePath: path.join(directory, "actions.json"),
+      }),
+      journalRepository: new JournalRepository({
+        filePath: path.join(directory, "journal.jsonl"),
+      }),
+      poolMemoryRepository: {
+        async get() {
+          return null;
+        },
+        async upsert() {
+          throw new Error("unused");
+        },
+        async listAll() {
+          throw new Error("pool memory unavailable");
+        },
+        async addNote() {
+          throw new Error("unused");
+        },
+        async setCooldown() {
+          throw new Error("unused");
+        },
+      },
+      now: "2026-04-22T10:05:00.000Z",
+    });
+
+    expect(result.status).toBe("UNSAFE");
+    expect(
+      result.checklist.find((item) => item.item === "pool_memory_store"),
+    ).toMatchObject({
+      ok: false,
+      detail: "pool memory unavailable",
+    });
+    expect(result.report.poolsTracked).toBeNull();
+  });
 });

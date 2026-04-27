@@ -118,13 +118,28 @@ describe("pool memory rules", () => {
   });
 
   it("builds pool recall string with deploy trend and last note", () => {
-    const recall = buildPoolRecallString(buildEntry());
+    const recall = buildPoolRecallString(buildEntry(), {
+      now: "2026-04-22T08:00:00.000Z",
+    });
 
     expect(recall).toContain("POOL MEMORY [SOL-USDC]");
     expect(recall).toContain("avg PnL");
     expect(recall).toContain("Recent trend:");
     expect(recall).toContain("Cooldown until:");
     expect(recall).toContain("Last note:");
+  });
+
+  it("omits expired cooldowns from recall strings", () => {
+    const recall = buildPoolRecallString(
+      buildEntry({
+        cooldownUntil: "2026-04-22T04:00:00.000Z",
+      }),
+      {
+        now: "2026-04-22T05:00:00.000Z",
+      },
+    );
+
+    expect(recall).not.toContain("Cooldown until:");
   });
 
   it("cools down volume collapse by default and can use custom close reason set", () => {

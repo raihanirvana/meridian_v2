@@ -47,6 +47,44 @@ export interface ReportingWorkerResult {
   skippedBecauseAlreadyRunning: boolean;
 }
 
+function buildRuntimeReportInput(
+  input: ReportingWorkerInput,
+): Parameters<typeof generateRuntimeReport>[0] {
+  return {
+    wallet: input.wallet,
+    stateRepository: input.stateRepository,
+    actionRepository: input.actionRepository,
+    ...(input.lessonRepository === undefined
+      ? {}
+      : { lessonRepository: input.lessonRepository }),
+    ...(input.performanceRepository === undefined
+      ? {}
+      : { performanceRepository: input.performanceRepository }),
+    ...(input.poolMemoryRepository === undefined
+      ? {}
+      : { poolMemoryRepository: input.poolMemoryRepository }),
+    ...(input.priceGateway === undefined
+      ? {}
+      : { priceGateway: input.priceGateway }),
+    ...(input.schedulerMetadataStore === undefined
+      ? {}
+      : { schedulerMetadataStore: input.schedulerMetadataStore }),
+    ...(input.dailyProfitTargetSol === undefined
+      ? {}
+      : { dailyProfitTargetSol: input.dailyProfitTargetSol }),
+    ...(input.solMode === undefined ? {} : { solMode: input.solMode }),
+    now: input.now?.() ?? new Date().toISOString(),
+    ...(input.stuckActionThresholdMinutes === undefined
+      ? {}
+      : { stuckActionThresholdMinutes: input.stuckActionThresholdMinutes }),
+    ...(input.runningWorkerThresholdMinutes === undefined
+      ? {}
+      : {
+          runningWorkerThresholdMinutes: input.runningWorkerThresholdMinutes,
+        }),
+  };
+}
+
 export async function runReportingWorker(
   input: ReportingWorkerInput,
 ): Promise<ReportingWorkerResult> {
@@ -63,40 +101,7 @@ export async function runReportingWorker(
       : { intervalSec: input.intervalSec }),
     ...(input.now === undefined ? {} : { now: input.now }),
     run: async () => {
-      const report = await generateRuntimeReport({
-        wallet: input.wallet,
-        stateRepository: input.stateRepository,
-        actionRepository: input.actionRepository,
-        ...(input.lessonRepository === undefined
-          ? {}
-          : { lessonRepository: input.lessonRepository }),
-        ...(input.performanceRepository === undefined
-          ? {}
-          : { performanceRepository: input.performanceRepository }),
-        ...(input.poolMemoryRepository === undefined
-          ? {}
-          : { poolMemoryRepository: input.poolMemoryRepository }),
-        ...(input.priceGateway === undefined
-          ? {}
-          : { priceGateway: input.priceGateway }),
-        ...(input.schedulerMetadataStore === undefined
-          ? {}
-          : { schedulerMetadataStore: input.schedulerMetadataStore }),
-        ...(input.dailyProfitTargetSol === undefined
-          ? {}
-          : { dailyProfitTargetSol: input.dailyProfitTargetSol }),
-        ...(input.solMode === undefined ? {} : { solMode: input.solMode }),
-        now: input.now?.() ?? new Date().toISOString(),
-        ...(input.stuckActionThresholdMinutes === undefined
-          ? {}
-          : { stuckActionThresholdMinutes: input.stuckActionThresholdMinutes }),
-        ...(input.runningWorkerThresholdMinutes === undefined
-          ? {}
-          : {
-              runningWorkerThresholdMinutes:
-                input.runningWorkerThresholdMinutes,
-            }),
-      });
+      const report = await generateRuntimeReport(buildRuntimeReportInput(input));
 
       const deliveredAlerts: NotificationResult[] = [];
       const briefingText = renderDailyBriefing({
@@ -142,25 +147,7 @@ export async function runReportingWorker(
   });
 
   if (scheduled.status === "SKIPPED_ALREADY_RUNNING") {
-    const report = await generateRuntimeReport({
-      wallet: input.wallet,
-      stateRepository: input.stateRepository,
-      actionRepository: input.actionRepository,
-      ...(input.performanceRepository === undefined
-        ? {}
-        : { performanceRepository: input.performanceRepository }),
-      ...(input.priceGateway === undefined
-        ? {}
-        : { priceGateway: input.priceGateway }),
-      ...(input.schedulerMetadataStore === undefined
-        ? {}
-        : { schedulerMetadataStore: input.schedulerMetadataStore }),
-      ...(input.dailyProfitTargetSol === undefined
-        ? {}
-        : { dailyProfitTargetSol: input.dailyProfitTargetSol }),
-      ...(input.solMode === undefined ? {} : { solMode: input.solMode }),
-      now: input.now?.() ?? new Date().toISOString(),
-    });
+    const report = await generateRuntimeReport(buildRuntimeReportInput(input));
     return {
       report,
       briefingText: renderDailyBriefing({

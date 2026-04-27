@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
+import {
+  AdapterResponseValidationError,
+  JsonHttpClient,
+  type FetchLike,
+} from "../http/HttpJsonClient.js";
 
 import {
   ExecuteSwapRequestSchema,
@@ -34,7 +38,9 @@ const JupiterExecuteResponseSchema = z
 function parseNumericString(value: string, fieldName: string): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`invalid numeric string in ${fieldName}`);
+    throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
+      `${fieldName}: invalid numeric string`,
+    ]);
   }
 
   return parsed;
@@ -47,7 +53,9 @@ function pickAmount(
 ): number {
   const value = primary ?? fallback;
   if (value === undefined) {
-    throw new Error(`missing ${fieldName} in Jupiter execute response`);
+    throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
+      `${fieldName}: missing numeric string`,
+    ]);
   }
 
   return parseNumericString(value, fieldName);

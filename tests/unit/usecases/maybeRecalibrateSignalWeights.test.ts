@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FileLessonRepository } from "../../../src/adapters/storage/LessonRepository.js";
 import { FilePerformanceRepository } from "../../../src/adapters/storage/PerformanceRepository.js";
@@ -10,6 +10,7 @@ import { FileSignalWeightsStore } from "../../../src/adapters/storage/SignalWeig
 import { JournalRepository } from "../../../src/adapters/storage/JournalRepository.js";
 import { maybeRecalibrateSignalWeights } from "../../../src/app/usecases/maybeRecalibrateSignalWeights.js";
 import { type PerformanceRecord } from "../../../src/domain/entities/PerformanceRecord.js";
+import * as signalWeightRules from "../../../src/domain/rules/signalWeightRules.js";
 
 const tempDirs: string[] = [];
 
@@ -164,5 +165,74 @@ describe("maybeRecalibrateSignalWeights", () => {
         lesson.rule.includes("AUTO-DARWIN"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("persists recalibration metadata even when recalculated changes are empty", async () => {
+    const directory = await makeTempDir();
+    const lessonsFilePath = path.join(directory, "lessons.json");
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: lessonsFilePath,
+    });
+    const lessonRepository = new FileLessonRepository({
+      filePath: lessonsFilePath,
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const signalWeightsStore = new FileSignalWeightsStore({
+      filePath: path.join(directory, "signal-weights.json"),
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      await performanceRepository.append(
+        buildPerformance({
+          positionId: `pos_noop_${index}`,
+        }),
+      );
+    }
+
+    const recalibrateSpy = vi.spyOn(signalWeightRules, "recalculateWeights");
+    recalibrateSpy.mockReturnValue({
+      changes: {},
+      rationale: { noop: "no meaningful signal drift" },
+    });
+
+    try {
+      const first = await maybeRecalibrateSignalWeights({
+        performanceRepository,
+        signalWeightsStore,
+        lessonRepository,
+        journalRepository,
+        darwinEnabled: true,
+        now: () => "2026-04-22T12:00:00.000Z",
+        idGen: () => "noop_recalibration",
+      });
+
+      expect(first.skipped).not.toBe(true);
+      if (first.skipped) {
+        throw new Error("expected no-op recalibration result");
+      }
+      expect(first.changes).toEqual({});
+
+      const snapshot = await signalWeightsStore.snapshot();
+      expect(snapshot.metadata.positionsAtRecalibration).toBe(10);
+
+      const second = await maybeRecalibrateSignalWeights({
+        performanceRepository,
+        signalWeightsStore,
+        lessonRepository,
+        journalRepository,
+        darwinEnabled: true,
+        now: () => "2026-04-22T12:01:00.000Z",
+        idGen: () => "noop_recalibration_retry",
+      });
+
+      expect(second).toEqual({
+        skipped: true,
+        reason: "already_recalibrated_for_position_count",
+      });
+    } finally {
+      recalibrateSpy.mockRestore();
+    }
   });
 });

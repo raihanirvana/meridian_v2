@@ -49,8 +49,12 @@ export function shouldCooldown(input: {
   return closeReasonSet.includes(input.closeReason);
 }
 
-export function buildPoolRecallString(entry: PoolMemoryEntry): string | null {
+export function buildPoolRecallString(
+  entry: PoolMemoryEntry,
+  options?: { now?: string },
+): string | null {
   const validated = PoolMemoryEntrySchema.parse(entry);
+  const now = options?.now ?? new Date().toISOString();
   if (
     validated.totalDeploys === 0 &&
     validated.notes.length === 0 &&
@@ -79,7 +83,15 @@ export function buildPoolRecallString(entry: PoolMemoryEntry): string | null {
   }
 
   if (validated.cooldownUntil !== undefined) {
-    lines.push(`Cooldown until: ${validated.cooldownUntil}`);
+    const cooldownMs = Date.parse(validated.cooldownUntil);
+    const nowMs = Date.parse(now);
+    if (
+      !Number.isNaN(cooldownMs) &&
+      !Number.isNaN(nowMs) &&
+      cooldownMs > nowMs
+    ) {
+      lines.push(`Cooldown until: ${validated.cooldownUntil}`);
+    }
   }
 
   const lastNote = validated.notes[validated.notes.length - 1];

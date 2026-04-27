@@ -85,7 +85,7 @@ export async function recordPoolDeploy(
       avgPnlPct: updated.avgPnlPct,
       winRatePct: updated.winRatePct,
       lastOutcome: updated.lastOutcome,
-      recall: buildPoolRecallString(updated),
+      recall: buildPoolRecallString(updated, { now: input.now }),
     },
     txIds: [],
     resultStatus: alreadyRecorded ? "UNCHANGED" : "RECORDED",

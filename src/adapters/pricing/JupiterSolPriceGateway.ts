@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
+import {
+  AdapterResponseValidationError,
+  JsonHttpClient,
+  type FetchLike,
+} from "../http/HttpJsonClient.js";
 
 import {
   SolPriceQuoteSchema,
@@ -22,7 +26,9 @@ const UsdcDecimals = 1_000_000;
 function parseAmount(value: string, fieldName: string): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`invalid numeric string in ${fieldName}`);
+    throw new AdapterResponseValidationError("JupiterSolPriceGateway", [
+      `${fieldName}: invalid numeric string`,
+    ]);
   }
 
   return parsed;

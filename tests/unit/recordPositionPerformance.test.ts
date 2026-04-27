@@ -175,4 +175,36 @@ describe("recordPositionPerformance", () => {
       (await journalRepository.list()).map((event) => event.eventType),
     ).toEqual(["LESSON_RECORDED"]);
   });
+
+  it("prevents duplicate performance records for the same position under concurrent calls", async () => {
+    const directory = await makeTempDir();
+    const filePath = path.join(directory, "lessons.json");
+    const lessonRepository = new FileLessonRepository({ filePath });
+    const performanceRepository = new FilePerformanceRepository({ filePath });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    await Promise.all([
+      recordPositionPerformance({
+        performance: buildPerformance(),
+        lessonRepository,
+        performanceRepository,
+        journalRepository,
+        idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FAA",
+        now: () => "2026-04-22T02:00:00.000Z",
+      }),
+      recordPositionPerformance({
+        performance: buildPerformance(),
+        lessonRepository,
+        performanceRepository,
+        journalRepository,
+        idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FAB",
+        now: () => "2026-04-22T02:00:00.000Z",
+      }),
+    ]);
+
+    expect(await performanceRepository.list()).toHaveLength(1);
+    expect(await lessonRepository.list()).toHaveLength(1);
+  });
 });

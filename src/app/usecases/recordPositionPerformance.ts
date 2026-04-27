@@ -45,24 +45,21 @@ export async function recordPositionPerformance(
   input: RecordPositionPerformanceInput,
 ): Promise<RecordPositionPerformanceResult> {
   const requestedPerformance = PerformanceRecordSchema.parse(input.performance);
-  const existingPerformance = (await input.performanceRepository.list()).find(
-    (record) => record.positionId === requestedPerformance.positionId,
-  );
-  const performance = existingPerformance ?? requestedPerformance;
+  const isSuspicious = isSuspiciousUnitMix(requestedPerformance);
 
-  if (existingPerformance === undefined && isSuspiciousUnitMix(performance)) {
+  if (isSuspicious) {
     await input.journalRepository?.append({
       timestamp: input.now(),
       eventType: "PERFORMANCE_RECORD_SKIPPED",
       actor: "system",
-      wallet: performance.wallet,
-      positionId: performance.positionId,
+      wallet: requestedPerformance.wallet,
+      positionId: requestedPerformance.positionId,
       actionId: null,
       before: null,
       after: {
         reason: "suspicious_unit_mix",
-        pool: performance.pool,
-        pnlPct: performance.pnlPct,
+        pool: requestedPerformance.pool,
+        pnlPct: requestedPerformance.pnlPct,
       },
       txIds: [],
       resultStatus: "SKIPPED",
@@ -74,8 +71,11 @@ export async function recordPositionPerformance(
     };
   }
 
-  if (existingPerformance === undefined) {
-    await input.performanceRepository.append(performance);
+  const {
+    inserted: insertedPerformance,
+    record: performance,
+  } = await input.performanceRepository.appendIfAbsent(requestedPerformance);
+  if (insertedPerformance) {
     await input.journalRepository?.append({
       timestamp: input.now(),
       eventType: "PERFORMANCE_RECORDED",
@@ -108,30 +108,35 @@ export async function recordPositionPerformance(
           candidate: candidateLesson,
         }),
     );
-    lesson = existingLesson ?? candidateLesson;
-  }
-
-  if (candidateLesson !== null && lesson === candidateLesson) {
-    await input.lessonRepository.append(candidateLesson);
-    await input.journalRepository?.append({
-      timestamp: input.now(),
-      eventType: "LESSON_RECORDED",
-      actor: "system",
-      wallet: performance.wallet,
-      positionId: performance.positionId,
-      actionId: null,
-      before: null,
-      after: {
-        lessonId: candidateLesson.id,
-        outcome: candidateLesson.outcome,
-        pnlPct: performance.pnlPct,
-        pool: performance.pool,
-        role: candidateLesson.role,
-      },
-      txIds: [],
-      resultStatus: "RECORDED",
-      error: null,
-    });
+    if (existingLesson !== undefined) {
+      lesson = existingLesson;
+    } else {
+      const insertedLesson = await input.lessonRepository.appendIfAbsentDerived(
+        candidateLesson,
+      );
+      lesson = insertedLesson.lesson;
+      if (insertedLesson.inserted) {
+        await input.journalRepository?.append({
+          timestamp: input.now(),
+          eventType: "LESSON_RECORDED",
+          actor: "system",
+          wallet: performance.wallet,
+          positionId: performance.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            lessonId: insertedLesson.lesson.id,
+            outcome: insertedLesson.lesson.outcome,
+            pnlPct: performance.pnlPct,
+            pool: performance.pool,
+            role: insertedLesson.lesson.role,
+          },
+          txIds: [],
+          resultStatus: "RECORDED",
+          error: null,
+        });
+      }
+    }
   }
 
   return {

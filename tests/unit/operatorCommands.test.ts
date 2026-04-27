@@ -1104,4 +1104,110 @@ describe("operator commands", () => {
       ]),
     );
   });
+
+  it("keeps manual circuit breaker state changes when journal append fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const runtimeControlStore = new FileRuntimeControlStore({
+      filePath: path.join(directory, "runtime-controls.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: new JournalRepository({
+        filePath: path.join(directory, "journal.jsonl"),
+      }),
+    });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("disk full");
+      },
+    } as JournalRepository;
+
+    const tripResult = await executeOperatorCommand({
+      command: {
+        kind: "CIRCUIT_BREAKER_TRIP",
+      },
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      runtimeControlStore,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(tripResult.text).toContain("manual circuit breaker activated");
+    expect(tripResult.text).toContain("journal write failed");
+    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(
+      true,
+    );
+
+    const clearResult = await executeOperatorCommand({
+      command: {
+        kind: "CIRCUIT_BREAKER_CLEAR",
+      },
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      runtimeControlStore,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:05:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:05:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:05:00.000Z",
+    });
+
+    expect(clearResult.text).toContain("manual circuit breaker cleared");
+    expect(clearResult.text).toContain("journal write failed");
+    expect((await runtimeControlStore.snapshot()).stopAllDeploys.active).toBe(
+      false,
+    );
+  });
 });

@@ -147,6 +147,7 @@ export class JsonHttpClient {
     });
 
     let response: Response;
+    let text: string;
     try {
       response = await this.fetchFn(url, {
         method: options.method,
@@ -162,6 +163,7 @@ export class JsonHttpClient {
           ? {}
           : { body: JSON.stringify(options.body) }),
       });
+      text = await response.text();
     } catch (error) {
       throw new AdapterTransportError(this.adapterName, error);
     } finally {
@@ -169,13 +171,6 @@ export class JsonHttpClient {
         clearTimeout(abortTimer);
       }
       options.signal?.removeEventListener("abort", abortFromParentSignal);
-    }
-
-    let text: string;
-    try {
-      text = await response.text();
-    } catch (error) {
-      throw new AdapterTransportError(this.adapterName, error);
     }
     if (!response.ok) {
       throw new AdapterHttpStatusError({

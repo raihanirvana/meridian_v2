@@ -251,4 +251,122 @@ describe("dry-run simulation harness", () => {
       }),
     ).rejects.toThrow("Replay timeout after 30000ms");
   });
+
+  it("replay ambiguous deploy responses surface as ambiguous submission errors for reconciliation paths", async () => {
+    const fixture: ReplaySimulationFixture = {
+      wallet: "wallet_sim_001",
+      initialPositions: [],
+      initialActions: [],
+      initialJournalEvents: [],
+      steps: [
+        {
+          timestamp: "2026-04-21T00:00:00.000Z",
+          walletBalanceSol: 1,
+          solPriceUsd: 50,
+          onChainPositions: [],
+          signalsByPositionId: {},
+        },
+      ],
+      deployResponses: [
+        {
+          type: "ambiguous",
+          operation: "DEPLOY",
+          positionId: "pos_amb_001",
+          txIds: ["tx_amb_001"],
+        },
+      ],
+      closeResponses: [],
+      claimFeesResponses: [],
+      partialCloseResponses: [],
+      poolInfoByPool: {},
+    };
+    const replayGateway = new ReplaySimulationGateway(fixture);
+
+    await expect(
+      replayGateway.deployLiquidity({
+        wallet: "wallet_sim_001",
+        poolAddress: "pool_sim_001",
+        amountBase: 1,
+        amountQuote: 1,
+        strategy: "bid_ask",
+      }),
+    ).rejects.toMatchObject({
+      name: "AmbiguousSubmissionError",
+      positionId: "pos_amb_001",
+      txIds: ["tx_amb_001"],
+    });
+  });
+
+  it("does not duplicate initial journal seed when dry-run simulation is executed twice on the same store", async () => {
+    const directory = await makeTempDir();
+    const fixture: ReplaySimulationFixture = {
+      wallet: "wallet_sim_001",
+      initialPositions: [],
+      initialActions: [],
+      initialJournalEvents: [
+        {
+          timestamp: "2026-04-21T00:00:00.000Z",
+          eventType: "ACTION_QUEUED",
+          actor: "system",
+          wallet: "wallet_sim_001",
+          positionId: null,
+          actionId: "act_seed_001",
+          before: null,
+          after: { seeded: true },
+          txIds: [],
+          resultStatus: "QUEUED",
+          error: null,
+        },
+      ],
+      steps: [
+        {
+          timestamp: "2026-04-21T00:00:00.000Z",
+          walletBalanceSol: 1,
+          solPriceUsd: 50,
+          onChainPositions: [],
+          signalsByPositionId: {},
+        },
+      ],
+      deployResponses: [],
+      closeResponses: [],
+      claimFeesResponses: [],
+      partialCloseResponses: [],
+      poolInfoByPool: {},
+    };
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const fakeClock = new FakeClock("2026-04-21T00:00:00.000Z");
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+      now: () => fakeClock.now(),
+    });
+
+    const runOnce = async () =>
+      runDryRunSimulation({
+        fixture,
+        fakeClock,
+        replayGateway: new ReplaySimulationGateway(fixture),
+        actionQueue,
+        actionRepository,
+        stateRepository,
+        journalRepository,
+        managementPolicy: createStopLossScenarioPack().managementPolicy,
+        riskPolicy: createStopLossScenarioPack().riskPolicy,
+      });
+
+    await runOnce();
+    const firstJournalCount = (await journalRepository.list()).length;
+    await runOnce();
+    const secondJournalCount = (await journalRepository.list()).length;
+
+    expect(firstJournalCount).toBe(secondJournalCount);
+  });
 });

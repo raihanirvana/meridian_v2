@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  AmbiguousSubmissionError,
   ClaimFeesResultSchema,
   ClosePositionResultSchema,
   DeployLiquidityResultSchema,
@@ -50,6 +51,14 @@ const ReplayTimeoutSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+const ReplayAmbiguousSchema = z.object({
+  type: z.literal("ambiguous"),
+  operation: z.enum(["DEPLOY", "CLOSE", "CLAIM_FEES"]),
+  positionId: z.string().min(1),
+  txIds: z.array(z.string().min(1)).default([]),
+  timeoutMs: z.number().int().positive().optional(),
+});
+
 function buildReplaySuccessSchema<T extends z.ZodTypeAny>(valueSchema: T) {
   return z.object({
     type: z.literal("success"),
@@ -61,18 +70,21 @@ const DeployReplaySchema = z.discriminatedUnion("type", [
   buildReplaySuccessSchema(DeployLiquidityResultSchema),
   ReplayFailureSchema,
   ReplayTimeoutSchema,
+  ReplayAmbiguousSchema,
 ]);
 
 const CloseReplaySchema = z.discriminatedUnion("type", [
   buildReplaySuccessSchema(ClosePositionResultSchema),
   ReplayFailureSchema,
   ReplayTimeoutSchema,
+  ReplayAmbiguousSchema,
 ]);
 
 const ClaimFeesReplaySchema = z.discriminatedUnion("type", [
   buildReplaySuccessSchema(ClaimFeesResultSchema),
   ReplayFailureSchema,
   ReplayTimeoutSchema,
+  ReplayAmbiguousSchema,
 ]);
 
 const PartialCloseReplaySchema = z.discriminatedUnion("type", [
@@ -142,7 +154,12 @@ type ReplaySuccess<T> = {
 
 type ReplayFailure = z.infer<typeof ReplayFailureSchema>;
 type ReplayTimeout = z.infer<typeof ReplayTimeoutSchema>;
-type ReplayResult<T> = ReplaySuccess<T> | ReplayFailure | ReplayTimeout;
+type ReplayAmbiguous = z.infer<typeof ReplayAmbiguousSchema>;
+type ReplayResult<T> =
+  | ReplaySuccess<T>
+  | ReplayFailure
+  | ReplayTimeout
+  | ReplayAmbiguous;
 
 async function resolveReplayResult<T>(entry: ReplayResult<T>): Promise<T> {
   if (entry.type === "success") {
@@ -151,6 +168,17 @@ async function resolveReplayResult<T>(entry: ReplayResult<T>): Promise<T> {
 
   if (entry.type === "fail") {
     throw new Error(entry.error);
+  }
+
+  if (entry.type === "ambiguous") {
+    throw new AmbiguousSubmissionError(
+      `Replay ambiguous submission for ${entry.operation} after ${entry.timeoutMs ?? 10}ms`,
+      {
+        operation: entry.operation,
+        positionId: entry.positionId,
+        txIds: entry.txIds,
+      },
+    );
   }
 
   const timeoutMs = entry.timeoutMs ?? 10;

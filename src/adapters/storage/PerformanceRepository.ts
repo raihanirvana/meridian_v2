@@ -22,6 +22,10 @@ export interface PerformanceSummary {
 
 export interface PerformanceRepositoryInterface {
   append(record: PerformanceRecord): Promise<void>;
+  appendIfAbsent(record: PerformanceRecord): Promise<{
+    inserted: boolean;
+    record: PerformanceRecord;
+  }>;
   list(input?: {
     sinceIso?: string;
     limit?: number;
@@ -81,6 +85,44 @@ export class FilePerformanceRepository implements PerformanceRepositoryInterface
       });
       return JSON.stringify(next, null, 2);
     });
+  }
+
+  public async appendIfAbsent(record: PerformanceRecord): Promise<{
+    inserted: boolean;
+    record: PerformanceRecord;
+  }> {
+    const validated = PerformanceRecordSchema.parse(record);
+    let inserted = false;
+    let resolvedRecord: PerformanceRecord = validated;
+
+    await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
+      const store = parseStore(raw, this.filePath);
+      const existing = store.performance.find(
+        (current) => current.positionId === validated.positionId,
+      );
+      if (existing !== undefined) {
+        resolvedRecord = existing;
+        inserted = false;
+        return JSON.stringify(store, null, 2);
+      }
+
+      inserted = true;
+      resolvedRecord = validated;
+      const next = LessonStoreFileSchema.parse({
+        ...store,
+        performance: [...store.performance, validated].sort(
+          (left, right) =>
+            left.recordedAt.localeCompare(right.recordedAt) ||
+            left.positionId.localeCompare(right.positionId),
+        ),
+      });
+      return JSON.stringify(next, null, 2);
+    });
+
+    return {
+      inserted,
+      record: resolvedRecord,
+    };
   }
 
   public async list(

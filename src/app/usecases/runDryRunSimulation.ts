@@ -82,10 +82,7 @@ async function seedFixture(input: {
 }): Promise<void> {
   await input.stateRepository.replaceAll(input.fixture.initialPositions);
   await input.actionRepository.replaceAll(input.fixture.initialActions);
-
-  for (const event of input.fixture.initialJournalEvents) {
-    await input.journalRepository.append(event);
-  }
+  await input.journalRepository.replaceAll(input.fixture.initialJournalEvents);
 }
 
 export async function runDryRunSimulation(

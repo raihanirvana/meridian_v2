@@ -153,7 +153,19 @@ export async function generateRuntimeReport(
   const cooldownPools =
     poolMemory === null
       ? null
-      : poolMemory.filter((entry) => entry.cooldownUntil !== undefined).length;
+      : poolMemory.filter((entry) => {
+          if (entry.cooldownUntil === undefined) {
+            return false;
+          }
+
+          const cooldownMs = Date.parse(entry.cooldownUntil);
+          const nowMs = Date.parse(generatedAt);
+          if (Number.isNaN(cooldownMs) || Number.isNaN(nowMs)) {
+            return false;
+          }
+
+          return cooldownMs > nowMs;
+        }).length;
   const dailyPnlUsd =
     dailyPerformance === null
       ? null

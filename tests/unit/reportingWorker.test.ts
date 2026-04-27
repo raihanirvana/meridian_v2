@@ -5,13 +5,17 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
+import { FileLessonRepository } from "../../src/adapters/storage/LessonRepository.js";
 import { FilePerformanceRepository } from "../../src/adapters/storage/PerformanceRepository.js";
+import { FilePoolMemoryRepository } from "../../src/adapters/storage/PoolMemoryRepository.js";
 import { StateRepository } from "../../src/adapters/storage/StateRepository.js";
 import { MockNotifierGateway } from "../../src/adapters/telegram/NotifierGateway.js";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { runReportingWorker } from "../../src/app/workers/reportingWorker.js";
 import { type Action } from "../../src/domain/entities/Action.js";
+import { type Lesson } from "../../src/domain/entities/Lesson.js";
 import { type PerformanceRecord } from "../../src/domain/entities/PerformanceRecord.js";
+import { type PoolMemoryEntry } from "../../src/domain/entities/PoolMemory.js";
 import { type Position } from "../../src/domain/entities/Position.js";
 import { FileSchedulerMetadataStore } from "../../src/infra/scheduler/SchedulerMetadataStore.js";
 import type { NotifierGateway } from "../../src/adapters/telegram/NotifierGateway.js";
@@ -117,6 +121,38 @@ function buildPerformanceRecord(
   };
 }
 
+function buildLesson(overrides: Partial<Lesson> = {}): Lesson {
+  return {
+    id: "01JTSPM4Q5T3H6S8Y2Z4ABCD01",
+    rule: "Prefer healthier pools",
+    tags: ["screening"],
+    outcome: "good",
+    role: "SCREENER",
+    pinned: false,
+    createdAt: "2026-04-22T03:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function buildPoolMemoryEntry(
+  overrides: Partial<PoolMemoryEntry> = {},
+): PoolMemoryEntry {
+  return {
+    poolAddress: "pool_001",
+    name: "SOL-USDC",
+    baseMint: "mint_sol",
+    totalDeploys: 0,
+    deploys: [],
+    avgPnlPct: 0,
+    winRatePct: 0,
+    lastDeployedAt: null,
+    lastOutcome: null,
+    notes: [],
+    snapshots: [],
+    ...overrides,
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirs
@@ -185,6 +221,30 @@ describe("reporting worker", () => {
     const actionRepository = new ActionRepository({
       filePath: path.join(directory, "actions.json"),
     });
+    const lessonRepository = new FileLessonRepository({
+      filePath: path.join(directory, "lessons.json"),
+    });
+    const poolMemoryRepository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
+
+    await lessonRepository.append(buildLesson());
+    await poolMemoryRepository.upsert("pool_001", () =>
+      buildPoolMemoryEntry({
+        cooldownUntil: "2026-04-22T10:30:00.000Z",
+      }),
+    );
+    await poolMemoryRepository.upsert("pool_002", () =>
+      buildPoolMemoryEntry({
+        poolAddress: "pool_002",
+        name: "MEME-SOL",
+        cooldownUntil: "2026-04-22T09:30:00.000Z",
+      }),
+    );
+    await actionRepository.upsert({
+      ...buildStuckAction(),
+      startedAt: "2026-04-22T10:00:00.000Z",
+    });
 
     await schedulerMetadataStore.tryStartRun({
       worker: "reporting",
@@ -197,13 +257,23 @@ describe("reporting worker", () => {
       wallet: "wallet_001",
       stateRepository,
       actionRepository,
+      lessonRepository,
+      poolMemoryRepository,
       schedulerMetadataStore,
       triggerSource: "manual",
       intervalSec: 300,
+      stuckActionThresholdMinutes: 0,
+      runningWorkerThresholdMinutes: 0,
       now: () => "2026-04-22T10:00:01.000Z",
     });
 
     expect(result.skippedBecauseAlreadyRunning).toBe(true);
+    expect(result.report.lessonsCount).toBe(1);
+    expect(result.report.poolsTracked).toBe(2);
+    expect(result.report.cooldownPools).toBe(1);
+    expect(result.report.alerts.map((alert) => alert.kind)).toContain(
+      "STUCK_ACTION",
+    );
     const workerState = await schedulerMetadataStore.get("reporting");
     expect(workerState.status).toBe("RUNNING");
     expect(workerState.manualRunCount).toBe(1);

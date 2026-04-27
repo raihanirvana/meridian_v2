@@ -44,6 +44,37 @@ export interface StartupRecoveryChecklistResult {
   report: RuntimeReport;
 }
 
+function buildMinimalUnsafeReport(input: {
+  wallet: string;
+  generatedAt: string;
+  issues: string[];
+}): RuntimeReport {
+  return {
+    wallet: input.wallet,
+    generatedAt: input.generatedAt,
+    health: "UNSAFE",
+    displayMode: "USD",
+    solPriceUsd: null,
+    positionsByStatus: {},
+    actionsByStatus: {},
+    actionsByType: {},
+    openPositions: 0,
+    pendingActions: 0,
+    pendingReconciliationPositions: 0,
+    lessonsCount: null,
+    poolsTracked: null,
+    cooldownPools: null,
+    performanceSummary: null,
+    dailyPnlUsd: null,
+    dailyPnlSol: null,
+    dailyProfitTargetSol: null,
+    dailyProfitTargetReached: false,
+    scheduler: null,
+    issues: input.issues,
+    alerts: [],
+  };
+}
+
 async function checkItem(
   item: string,
   check: () => Promise<string>,
@@ -264,24 +295,40 @@ export async function runStartupRecoveryChecklist(
     );
   }
 
-  const report = await generateRuntimeReport({
-    wallet: input.wallet,
-    stateRepository: input.stateRepository,
-    actionRepository: input.actionRepository,
-    ...(input.lessonRepository === undefined
-      ? {}
-      : { lessonRepository: input.lessonRepository }),
-    ...(input.performanceRepository === undefined
-      ? {}
-      : { performanceRepository: input.performanceRepository }),
-    ...(input.poolMemoryRepository === undefined
-      ? {}
-      : { poolMemoryRepository: input.poolMemoryRepository }),
-    ...(input.schedulerMetadataStore === undefined
-      ? {}
-      : { schedulerMetadataStore: input.schedulerMetadataStore }),
-    now: checkedAt,
-  });
+  const checkOk = (item: string): boolean =>
+    checklist.find((entry) => entry.item === item)?.ok ?? false;
+
+  let report: RuntimeReport;
+  try {
+    report = await generateRuntimeReport({
+      wallet: input.wallet,
+      stateRepository: input.stateRepository,
+      actionRepository: input.actionRepository,
+      ...(input.lessonRepository !== undefined && checkOk("lesson_store")
+        ? { lessonRepository: input.lessonRepository }
+        : {}),
+      ...(input.performanceRepository !== undefined &&
+      checkOk("performance_store")
+        ? { performanceRepository: input.performanceRepository }
+        : {}),
+      ...(input.poolMemoryRepository !== undefined && checkOk("pool_memory_store")
+        ? { poolMemoryRepository: input.poolMemoryRepository }
+        : {}),
+      ...(input.schedulerMetadataStore !== undefined &&
+      checkOk("scheduler_metadata_store")
+        ? { schedulerMetadataStore: input.schedulerMetadataStore }
+        : {}),
+      now: checkedAt,
+    });
+  } catch (error) {
+    report = buildMinimalUnsafeReport({
+      wallet: input.wallet,
+      generatedAt: checkedAt,
+      issues: [
+        `STARTUP_REPORT_FAILED: ${error instanceof Error ? error.message : "unknown startup report error"}`,
+      ],
+    });
+  }
 
   const hasFailedCheck = checklist.some((item) => !item.ok);
 

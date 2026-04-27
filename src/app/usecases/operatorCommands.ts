@@ -38,6 +38,10 @@ import {
   type RebalanceActionRequestPayload,
 } from "./requestRebalance.js";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "unknown operator error";
+}
+
 const OperatorCommandSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("STATUS"),
@@ -1138,25 +1142,34 @@ export async function executeOperatorCommand(
           : { reason: input.command.reason }),
         updatedAt: requestedAt,
       });
-      await input.journalRepository.append({
-        timestamp: requestedAt,
-        eventType: "CIRCUIT_BREAKER_MANUAL_TRIP",
-        actor: requestedBy,
-        wallet: input.wallet,
-        positionId: null,
-        actionId: null,
-        before: null,
-        after: snapshot,
-        txIds: [],
-        resultStatus: "ACTIVE",
-        error: null,
-      });
+      let journalWarning: string | null = null;
+      try {
+        await input.journalRepository.append({
+          timestamp: requestedAt,
+          eventType: "CIRCUIT_BREAKER_MANUAL_TRIP",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: snapshot,
+          txIds: [],
+          resultStatus: "ACTIVE",
+          error: null,
+        });
+      } catch (error) {
+        journalWarning = errorMessage(error);
+      }
       return {
         command: input.command.kind,
         text:
-          snapshot.reason === undefined
-            ? "manual circuit breaker activated"
-            : `manual circuit breaker activated: ${snapshot.reason}`,
+          journalWarning === null
+            ? snapshot.reason === undefined
+              ? "manual circuit breaker activated"
+              : `manual circuit breaker activated: ${snapshot.reason}`
+            : snapshot.reason === undefined
+              ? `manual circuit breaker activated, but journal write failed: ${journalWarning}`
+              : `manual circuit breaker activated: ${snapshot.reason}; journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
@@ -1166,22 +1179,30 @@ export async function executeOperatorCommand(
       );
       const snapshot =
         await runtimeControlStore.clearStopAllDeploys(requestedAt);
-      await input.journalRepository.append({
-        timestamp: requestedAt,
-        eventType: "CIRCUIT_BREAKER_MANUAL_CLEAR",
-        actor: requestedBy,
-        wallet: input.wallet,
-        positionId: null,
-        actionId: null,
-        before: null,
-        after: snapshot,
-        txIds: [],
-        resultStatus: "CLEARED",
-        error: null,
-      });
+      let journalWarning: string | null = null;
+      try {
+        await input.journalRepository.append({
+          timestamp: requestedAt,
+          eventType: "CIRCUIT_BREAKER_MANUAL_CLEAR",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: snapshot,
+          txIds: [],
+          resultStatus: "CLEARED",
+          error: null,
+        });
+      } catch (error) {
+        journalWarning = errorMessage(error);
+      }
       return {
         command: input.command.kind,
-        text: "manual circuit breaker cleared",
+        text:
+          journalWarning === null
+            ? "manual circuit breaker cleared"
+            : `manual circuit breaker cleared, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }

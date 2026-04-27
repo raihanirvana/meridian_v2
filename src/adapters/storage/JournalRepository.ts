@@ -66,6 +66,11 @@ export class JournalRepository {
     return parsed.events;
   }
 
+  public async replaceAll(events: JournalEvent[]): Promise<void> {
+    const validated = JournalEventSchema.array().parse(events);
+    await this.rewriteValidEvents(validated);
+  }
+
   private parseEvents(raw: string): {
     events: JournalEvent[];
     repaired: boolean;

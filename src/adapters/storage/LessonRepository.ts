@@ -80,6 +80,10 @@ async function updateLessonStore(
 export interface LessonRepositoryInterface {
   list(): Promise<Lesson[]>;
   append(lesson: Lesson): Promise<void>;
+  appendIfAbsentDerived(lesson: Lesson): Promise<{
+    inserted: boolean;
+    lesson: Lesson;
+  }>;
   update(id: string, patch: Partial<Lesson>): Promise<void>;
   remove(id: string): Promise<number>;
   clear(): Promise<number>;
@@ -112,6 +116,48 @@ export class FileLessonRepository implements LessonRepositoryInterface {
           left.id.localeCompare(right.id),
       ),
     }));
+  }
+
+  public async appendIfAbsentDerived(lesson: Lesson): Promise<{
+    inserted: boolean;
+    lesson: Lesson;
+  }> {
+    const validated = LessonSchema.parse(lesson);
+    let inserted = false;
+    let resolvedLesson: Lesson = validated;
+
+    await updateLessonStore(this.fileStore, this.filePath, (store) => {
+      const existing = store.lessons.find(
+        (current) =>
+          current.rule === validated.rule &&
+          current.pool === validated.pool &&
+          current.context === validated.context &&
+          current.pnlPct === validated.pnlPct &&
+          current.rangeEfficiencyPct === validated.rangeEfficiencyPct &&
+          current.outcome === validated.outcome,
+      );
+      if (existing !== undefined) {
+        resolvedLesson = existing;
+        inserted = false;
+        return store;
+      }
+
+      inserted = true;
+      resolvedLesson = validated;
+      return {
+        ...store,
+        lessons: [...store.lessons, validated].sort(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.id.localeCompare(right.id),
+        ),
+      };
+    });
+
+    return {
+      inserted,
+      lesson: resolvedLesson,
+    };
   }
 
   public async update(id: string, patch: Partial<Lesson>): Promise<void> {

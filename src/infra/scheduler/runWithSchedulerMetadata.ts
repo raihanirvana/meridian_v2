@@ -3,6 +3,7 @@ import type {
   SchedulerTriggerSource,
   SchedulerWorkerName,
 } from "../../domain/entities/SchedulerMetadata.js";
+import { logger } from "../logging/logger.js";
 
 export interface RunWithSchedulerMetadataInput<T> {
   schedulerMetadataStore?: SchedulerMetadataStore;
@@ -50,27 +51,50 @@ export async function runWithSchedulerMetadata<T>(
     };
   }
 
+  let result: T;
   try {
-    const result = await input.run();
+    result = await input.run();
+  } catch (error) {
+    try {
+      await input.schedulerMetadataStore.finishRun({
+        worker: input.worker,
+        completedAt: input.now?.() ?? new Date().toISOString(),
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "unknown scheduler worker error",
+      });
+    } catch (finishError) {
+      logger.warn(
+        {
+          err: finishError,
+          worker: input.worker,
+        },
+        "scheduler finishRun failure metadata write failed after worker error",
+      );
+    }
+    throw error;
+  }
+
+  try {
     await input.schedulerMetadataStore.finishRun({
       worker: input.worker,
       completedAt: input.now?.() ?? new Date().toISOString(),
       success: true,
     });
-    return {
-      status: "COMPLETED",
-      result,
-    };
   } catch (error) {
-    await input.schedulerMetadataStore.finishRun({
-      worker: input.worker,
-      completedAt: input.now?.() ?? new Date().toISOString(),
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "unknown scheduler worker error",
-    });
-    throw error;
+    logger.warn(
+      {
+        err: error,
+        worker: input.worker,
+      },
+      "scheduler finishRun success metadata write failed; preserving worker success result",
+    );
   }
+
+  return {
+    status: "COMPLETED",
+    result,
+  };
 }
