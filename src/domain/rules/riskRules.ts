@@ -379,9 +379,11 @@ export function updatePortfolioDailyRiskState(input: {
   portfolio: PortfolioState;
   policy: PortfolioRiskPolicy;
   realizedPnlDelta: number;
+  now?: string;
 }): PortfolioState {
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = PortfolioRiskPolicySchema.parse(input.policy);
+  const now = input.now ?? new Date().toISOString();
   const nextDailyRealizedPnl =
     portfolio.dailyRealizedPnl + input.realizedPnlDelta;
   const dailyLossPct = Math.max(
@@ -397,21 +399,74 @@ export function updatePortfolioDailyRiskState(input: {
     resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
       ? null
       : Math.max(-nextDailyRealizedPnl, 0) / resolvedSolPriceUsd;
-  const circuitBreakerState =
+
+  const circuitBreakerActive =
     dailyLossPct >= policy.dailyLossLimitPct ||
     (policy.maxDailyLossSol !== undefined &&
       dailyLossSol !== null &&
-      dailyLossSol >= policy.maxDailyLossSol)
-      ? "ON"
-      : portfolio.circuitBreakerState === "COOLDOWN"
-        ? "COOLDOWN"
-        : "OFF";
+      dailyLossSol >= policy.maxDailyLossSol);
+  const missingSolValuationForConfiguredLossGuard =
+    policy.maxDailyLossSol !== undefined &&
+    (resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0);
+
+  const diffMinutes = (from: string | null, to: string): number | null => {
+    if (from === null) {
+      return null;
+    }
+
+    const fromMs = Date.parse(from);
+    const toMs = Date.parse(to);
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+      return null;
+    }
+
+    return Math.max(0, Math.floor((toMs - fromMs) / 60_000));
+  };
+
+  let circuitBreakerState: PortfolioState["circuitBreakerState"];
+  let circuitBreakerActivatedAt = portfolio.circuitBreakerActivatedAt ?? null;
+  let circuitBreakerCooldownStartedAt =
+    portfolio.circuitBreakerCooldownStartedAt ?? null;
+
+  if (circuitBreakerActive || missingSolValuationForConfiguredLossGuard) {
+    circuitBreakerState = "ON";
+    circuitBreakerActivatedAt = portfolio.circuitBreakerActivatedAt ?? now;
+    circuitBreakerCooldownStartedAt = null;
+  } else if (portfolio.circuitBreakerState === "ON") {
+    circuitBreakerState = "COOLDOWN";
+    circuitBreakerCooldownStartedAt =
+      portfolio.circuitBreakerCooldownStartedAt ?? now;
+  } else if (portfolio.circuitBreakerState === "COOLDOWN") {
+    const cooldownStartedAt =
+      portfolio.circuitBreakerCooldownStartedAt ??
+      portfolio.circuitBreakerActivatedAt ??
+      now;
+    const cooldownAgeMinutes = diffMinutes(cooldownStartedAt, now);
+
+    if (
+      cooldownAgeMinutes !== null &&
+      cooldownAgeMinutes < policy.circuitBreakerCooldownMin
+    ) {
+      circuitBreakerState = "COOLDOWN";
+      circuitBreakerCooldownStartedAt = cooldownStartedAt;
+    } else {
+      circuitBreakerState = "OFF";
+      circuitBreakerActivatedAt = null;
+      circuitBreakerCooldownStartedAt = null;
+    }
+  } else {
+    circuitBreakerState = "OFF";
+    circuitBreakerActivatedAt = null;
+    circuitBreakerCooldownStartedAt = null;
+  }
 
   return PortfolioStateSchema.parse({
     ...portfolio,
     dailyRealizedPnl: nextDailyRealizedPnl,
     drawdownState,
     circuitBreakerState,
+    circuitBreakerActivatedAt,
+    circuitBreakerCooldownStartedAt,
   });
 }
 

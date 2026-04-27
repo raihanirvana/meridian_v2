@@ -30,7 +30,10 @@ import type { UserConfig } from "../infra/config/configSchema.js";
 import { createLogger } from "../infra/logging/logger.js";
 import type { Position } from "../domain/entities/Position.js";
 import type { RuntimeStores } from "./createRuntimeStores.js";
-import { buildPortfolioState } from "../app/services/PortfolioStateBuilder.js";
+import {
+  buildPortfolioState,
+  type CircuitBreakerHint,
+} from "../app/services/PortfolioStateBuilder.js";
 import { processActionQueue } from "../app/usecases/processActionQueue.js";
 import { processCloseAction } from "../app/usecases/processCloseAction.js";
 import { processClaimFeesAction } from "../app/usecases/processClaimFeesAction.js";
@@ -358,6 +361,8 @@ export function createRuntimeSupervisor(
 ): RuntimeSupervisor {
   const logger = createLogger(input.config.runtime.logLevel);
   let previousPortfolioState: PortfolioState | null = null;
+  let persistedCircuitBreakerSnapshot: CircuitBreakerHint | null | undefined =
+    undefined;
   const detailRateLimiter = new FileMeteoraDetailRateLimiter({
     filePath: input.stores.paths.meteoraRateLimitStateFilePath,
     detailRequestIntervalMs: input.config.screening.detailRequestIntervalMs,
@@ -1201,6 +1206,13 @@ export function createRuntimeSupervisor(
     },
 
     async runManagementTick(triggerSource = "cron") {
+      if (
+        persistedCircuitBreakerSnapshot === undefined &&
+        input.stores.runtimeControlStore !== undefined
+      ) {
+        persistedCircuitBreakerSnapshot =
+          await input.stores.runtimeControlStore.getCircuitBreakerSnapshot();
+      }
       const result = await runManagementWorker({
         wallet: input.wallet,
         actionQueue: input.stores.actionQueue,
@@ -1234,9 +1246,25 @@ export function createRuntimeSupervisor(
         intervalSec: input.config.schedule.managementIntervalSec,
         triggerSource,
         previousPortfolioState,
+        ...(persistedCircuitBreakerSnapshot != null
+          ? { previousCircuitBreakerSnapshot: persistedCircuitBreakerSnapshot }
+          : {}),
         ...(input.now === undefined ? {} : { now: input.now }),
       });
       previousPortfolioState = result.portfolioState;
+      persistedCircuitBreakerSnapshot = null;
+      if (
+        input.stores.runtimeControlStore !== undefined &&
+        result.portfolioState !== null
+      ) {
+        await input.stores.runtimeControlStore.setCircuitBreakerSnapshot({
+          circuitBreakerState: result.portfolioState.circuitBreakerState,
+          circuitBreakerActivatedAt:
+            result.portfolioState.circuitBreakerActivatedAt ?? null,
+          circuitBreakerCooldownStartedAt:
+            result.portfolioState.circuitBreakerCooldownStartedAt ?? null,
+        });
+      }
       return result;
     },
 

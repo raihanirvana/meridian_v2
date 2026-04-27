@@ -66,13 +66,22 @@ export type ManagementExplanationResult = z.infer<
   typeof ManagementExplanationResultSchema
 >;
 
+export interface LlmRequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface LlmGateway {
-  rankCandidates(input: CandidateRankingInput): Promise<CandidateRankingResult>;
+  rankCandidates(
+    input: CandidateRankingInput,
+    options?: LlmRequestOptions,
+  ): Promise<CandidateRankingResult>;
   explainManagementDecision(
     input: ManagementExplanationInput,
+    options?: LlmRequestOptions,
   ): Promise<ManagementExplanationResult>;
   reviewRebalanceDecision?(
     input: RebalanceReviewInput,
+    options?: LlmRequestOptions,
   ): Promise<AiRebalanceDecision>;
 }
 
@@ -87,6 +96,7 @@ export class MockLlmGateway implements LlmGateway {
 
   public async rankCandidates(
     input: CandidateRankingInput,
+    _options?: LlmRequestOptions,
   ): Promise<CandidateRankingResult> {
     CandidateRankingInputSchema.parse(input);
     return CandidateRankingResultSchema.parse(
@@ -96,6 +106,7 @@ export class MockLlmGateway implements LlmGateway {
 
   public async explainManagementDecision(
     input: ManagementExplanationInput,
+    _options?: LlmRequestOptions,
   ): Promise<ManagementExplanationResult> {
     ManagementExplanationInputSchema.parse(input);
     return ManagementExplanationResultSchema.parse(
@@ -105,6 +116,7 @@ export class MockLlmGateway implements LlmGateway {
 
   public async reviewRebalanceDecision(
     input: RebalanceReviewInput,
+    _options?: LlmRequestOptions,
   ): Promise<AiRebalanceDecision> {
     RebalanceReviewInputSchema.parse(input);
     if (this.behaviors.reviewRebalanceDecision === undefined) {

@@ -637,6 +637,89 @@ describe("management worker", () => {
     ).toContain("MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION");
   });
 
+  it("continues evaluating management actions when pool memory snapshot recording fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition());
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy(),
+      signalProvider: () => ({
+        forcedManualClose: true,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      poolMemorySnapshotsEnabled: true,
+      poolMemoryRepository: {
+        async get() {
+          return null;
+        },
+        async upsert() {
+          throw new Error("pool memory unavailable");
+        },
+        async listAll() {
+          return [];
+        },
+        async addNote() {
+          throw new Error("unused");
+        },
+        async setCooldown() {
+          throw new Error("unused");
+        },
+      },
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.managementAction).toBe("CLOSE");
+    expect(result.positionResults[0]?.status).toBe("DISPATCHED");
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("POOL_MEMORY_SNAPSHOT_FAILED");
+  });
+
   it("persists peak pnl state and later closes on trailing retrace", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({

@@ -68,6 +68,7 @@ export interface JsonHttpRequestOptions<T> {
   body?: unknown;
   responseSchema: z.ZodType<T>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 function buildUrl(input: {
@@ -129,13 +130,21 @@ export class JsonHttpClient {
     });
     const resolvedTimeoutMs = options.timeoutMs ?? this.timeoutMs;
     const abortController =
-      resolvedTimeoutMs === null ? null : new AbortController();
+      resolvedTimeoutMs === null && options.signal === undefined
+        ? null
+        : new AbortController();
     let abortTimer: ReturnType<typeof setTimeout> | null = null;
     if (abortController !== null && resolvedTimeoutMs !== null) {
       abortTimer = setTimeout(() => {
         abortController.abort();
       }, resolvedTimeoutMs);
     }
+    const abortFromParentSignal = () => {
+      abortController?.abort();
+    };
+    options.signal?.addEventListener("abort", abortFromParentSignal, {
+      once: true,
+    });
 
     let response: Response;
     try {
@@ -159,6 +168,7 @@ export class JsonHttpClient {
       if (abortTimer !== null) {
         clearTimeout(abortTimer);
       }
+      options.signal?.removeEventListener("abort", abortFromParentSignal);
     }
 
     let text: string;

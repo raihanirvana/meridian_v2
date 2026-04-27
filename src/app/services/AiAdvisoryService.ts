@@ -84,13 +84,18 @@ function timeoutError(timeoutMs: number): Error {
   return new Error(`AI advisory timed out after ${timeoutMs}ms`);
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    const abortController = new AbortController();
     const timer = setTimeout(() => {
+      abortController.abort();
       reject(timeoutError(timeoutMs));
     }, timeoutMs);
 
-    promise.then(
+    operation(abortController.signal).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -189,21 +194,25 @@ async function appendAiLessonInjectionFailed(input: {
     return;
   }
 
-  await input.journalRepository.append({
-    timestamp: input.now?.() ?? new Date().toISOString(),
-    eventType: "AI_LESSON_INJECTION_FAILED",
-    actor: "system",
-    wallet: input.wallet,
-    positionId: input.positionId ?? null,
-    actionId: null,
-    before: null,
-    after: {
-      stage: input.stage,
-    },
-    txIds: [],
-    resultStatus: "FAILED",
-    error: errorMessage(input.error),
-  });
+  try {
+    await input.journalRepository.append({
+      timestamp: input.now?.() ?? new Date().toISOString(),
+      eventType: "AI_LESSON_INJECTION_FAILED",
+      actor: "system",
+      wallet: input.wallet,
+      positionId: input.positionId ?? null,
+      actionId: null,
+      before: null,
+      after: {
+        stage: input.stage,
+      },
+      txIds: [],
+      resultStatus: "FAILED",
+      error: errorMessage(input.error),
+    });
+  } catch {
+    // best-effort; journal failure must not propagate into the AI fallback path
+  }
 }
 
 function buildLessonSystemPrompt(lessonsPrompt: string | null): string {
@@ -246,14 +255,18 @@ export async function rankShortlistWithAi(
 
   let lessonsPrompt: string | null;
   try {
-    lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
-      role: "SCREENER",
-      includePoolMemory: {
-        candidates: shortlist.map((candidate) => ({
-          poolAddress: candidate.poolAddress,
-        })),
-      },
-    });
+    lessonsPrompt = await withTimeout(
+      async () =>
+        input.lessonPromptService.buildLessonsPrompt({
+          role: "SCREENER",
+          includePoolMemory: {
+            candidates: shortlist.map((candidate) => ({
+              poolAddress: candidate.poolAddress,
+            })),
+          },
+        }),
+      normalizeTimeout(input.timeoutMs),
+    );
   } catch (error) {
     logLessonInjectionFailure(error);
     await appendAiLessonInjectionFailed({
@@ -275,12 +288,14 @@ export async function rankShortlistWithAi(
   try {
     const ranking = CandidateRankingResultSchema.parse(
       await withTimeout(
-        llmGateway.rankCandidates(
+        async (signal) =>
+          llmGateway.rankCandidates(
           CandidateRankingInputSchema.parse({
             candidates: shortlist,
-            systemPrompt: buildLessonSystemPrompt(lessonsPrompt),
+              systemPrompt: buildLessonSystemPrompt(lessonsPrompt),
           }),
-        ),
+            { signal },
+          ),
         normalizeTimeout(input.timeoutMs),
       ),
     );
@@ -338,9 +353,13 @@ export async function adviseManagementDecision(
 
   let lessonsPrompt: string | null;
   try {
-    lessonsPrompt = await input.lessonPromptService.buildLessonsPrompt({
-      role: "MANAGER",
-    });
+    lessonsPrompt = await withTimeout(
+      async () =>
+        input.lessonPromptService.buildLessonsPrompt({
+          role: "MANAGER",
+        }),
+      normalizeTimeout(input.timeoutMs),
+    );
   } catch (error) {
     logLessonInjectionFailure(error);
     await appendAiLessonInjectionFailed({
@@ -363,15 +382,17 @@ export async function adviseManagementDecision(
   try {
     const explanation = ManagementExplanationResultSchema.parse(
       await withTimeout(
-        llmGateway.explainManagementDecision(
-          ManagementExplanationInputSchema.parse({
-            positionId: input.position.positionId,
-            proposedAction: evaluation.action,
-            positionSnapshot: input.position,
-            triggerReasons: input.triggerReasons,
-            systemPrompt: buildLessonSystemPrompt(lessonsPrompt),
-          }),
-        ),
+        async (signal) =>
+          llmGateway.explainManagementDecision(
+            ManagementExplanationInputSchema.parse({
+              positionId: input.position.positionId,
+              proposedAction: evaluation.action,
+              positionSnapshot: input.position,
+              triggerReasons: input.triggerReasons,
+              systemPrompt: buildLessonSystemPrompt(lessonsPrompt),
+            }),
+            { signal },
+          ),
         normalizeTimeout(input.timeoutMs),
       ),
     );

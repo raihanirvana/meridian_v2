@@ -347,6 +347,48 @@ describe("AI advisory service", () => {
     );
   });
 
+  it("still falls back for shortlist ranking when lesson loading and journal append both fail", async () => {
+    const directory = await makeTempDir();
+
+    const result = await rankShortlistWithAi({
+      shortlist: [
+        buildCandidate({ candidateId: "cand_a" }),
+        buildCandidate({ candidateId: "cand_b" }),
+      ],
+      aiMode: "advisory",
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          throw new Error("lesson store unavailable");
+        },
+      },
+      llmGateway: new MockLlmGateway({
+        rankCandidates: {
+          type: "success",
+          value: {
+            rankedCandidateIds: ["cand_b", "cand_a"],
+            reasoning: "should not run",
+          },
+        },
+        explainManagementDecision: {
+          type: "success",
+          value: {
+            action: "HOLD",
+            reasoning: "unused",
+          },
+        },
+      }),
+      journalRepository: {
+        async append() {
+          throw new Error("journal unavailable");
+        },
+      } as JournalRepository,
+      wallet: "wallet_001",
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.source).toBe("FALLBACK");
+  });
+
   it("falls back to deterministic management explanation when AI proposes invalid action", async () => {
     const directory = await makeTempDir();
     const result = await adviseManagementDecision({
@@ -426,6 +468,47 @@ describe("AI advisory service", () => {
         }),
       ]),
     );
+  });
+
+  it("still falls back for management advisory when lesson loading and journal append both fail", async () => {
+    const directory = await makeTempDir();
+
+    const result = await adviseManagementDecision({
+      aiMode: "advisory",
+      evaluation: buildEvaluation(),
+      position: buildPosition(),
+      triggerReasons: ["stop loss reached"],
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          throw new Error("lesson store unavailable");
+        },
+      },
+      llmGateway: new MockLlmGateway({
+        rankCandidates: {
+          type: "success",
+          value: {
+            rankedCandidateIds: [],
+            reasoning: "unused",
+          },
+        },
+        explainManagementDecision: {
+          type: "success",
+          value: {
+            action: "CLOSE",
+            reasoning: "should not run",
+          },
+        },
+      }),
+      journalRepository: {
+        async append() {
+          throw new Error("journal unavailable");
+        },
+      } as JournalRepository,
+      wallet: "wallet_001",
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.source).toBe("FALLBACK");
   });
 
   it("injects role-specific lessons into management explanation requests", async () => {
@@ -562,6 +645,73 @@ describe("AI advisory service", () => {
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("CLOSE");
     expect(actions[0]?.status).toBe("QUEUED");
+  });
+
+  it("times out to fallback when shortlist lesson prompt loading never resolves", async () => {
+    const result = await rankShortlistWithAi({
+      shortlist: [
+        buildCandidate({ candidateId: "cand_a" }),
+        buildCandidate({ candidateId: "cand_b" }),
+      ],
+      aiMode: "advisory",
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return await new Promise<string | null>(() => undefined);
+        },
+      },
+      llmGateway: new MockLlmGateway({
+        rankCandidates: {
+          type: "success",
+          value: {
+            rankedCandidateIds: ["cand_b", "cand_a"],
+            reasoning: "should not run",
+          },
+        },
+        explainManagementDecision: {
+          type: "success",
+          value: {
+            action: "HOLD",
+            reasoning: "unused",
+          },
+        },
+      }),
+      timeoutMs: 10,
+    });
+
+    expect(result.source).toBe("FALLBACK");
+  });
+
+  it("times out to fallback when management lesson prompt loading never resolves", async () => {
+    const result = await adviseManagementDecision({
+      aiMode: "advisory",
+      evaluation: buildEvaluation(),
+      position: buildPosition(),
+      triggerReasons: ["stop loss reached"],
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return await new Promise<string | null>(() => undefined);
+        },
+      },
+      llmGateway: new MockLlmGateway({
+        rankCandidates: {
+          type: "success",
+          value: {
+            rankedCandidateIds: [],
+            reasoning: "unused",
+          },
+        },
+        explainManagementDecision: {
+          type: "success",
+          value: {
+            action: "CLOSE",
+            reasoning: "should not run",
+          },
+        },
+      }),
+      timeoutMs: 10,
+    });
+
+    expect(result.source).toBe("FALLBACK");
   });
 
   it("does not call AI advisory for HOLD results", async () => {

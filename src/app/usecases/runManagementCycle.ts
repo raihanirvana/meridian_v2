@@ -32,7 +32,10 @@ import type { ActionQueue } from "../services/ActionQueue.js";
 import { adviseManagementDecision } from "../services/AiAdvisoryService.js";
 import type { AiRebalancePlanner } from "../services/AiRebalancePlanner.js";
 import { type LessonPromptService } from "../services/LessonPromptService.js";
-import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
+import {
+  buildPortfolioState,
+  type CircuitBreakerHint,
+} from "../services/PortfolioStateBuilder.js";
 import { countRecentNewDeploys } from "../services/RecentDeployCounter.js";
 
 import { recordPoolSnapshot } from "./recordPoolSnapshot.js";
@@ -337,6 +340,7 @@ export interface RunManagementCycleInput {
     compoundToSide: "base" | "quote";
   };
   previousPortfolioState?: PortfolioState | null;
+  previousCircuitBreakerSnapshot?: CircuitBreakerHint | null;
   now?: () => string;
 }
 
@@ -460,6 +464,9 @@ export async function runManagementCycle(
       walletGateway: input.walletGateway,
       priceGateway: input.priceGateway,
       previousPortfolioState,
+      ...(input.previousCircuitBreakerSnapshot !== undefined
+        ? { previousCircuitBreakerSnapshot: input.previousCircuitBreakerSnapshot }
+        : {}),
       now,
     });
     previousPortfolioState = portfolio;
@@ -496,25 +503,50 @@ export async function runManagementCycle(
       input.poolMemoryRepository !== undefined &&
       input.poolMemorySnapshotsEnabled === true
     ) {
-      await recordPoolSnapshot({
-        poolMemoryRepository: input.poolMemoryRepository,
-        ...(input.journalRepository === undefined
-          ? {}
-          : { journalRepository: input.journalRepository }),
-        poolAddress: managedPosition.poolAddress,
-        name: managedPosition.poolAddress,
-        baseMint: managedPosition.baseMint,
-        snapshot: {
-          ts: now,
-          positionId: managedPosition.positionId,
-          pnlPct: deriveSnapshotPnlPct(managedPosition),
-          pnlUsd: managedPosition.unrealizedPnlUsd,
-          inRange: isPositionInRange(managedPosition),
-          unclaimedFeesUsd: signals.claimableFeesUsd,
-          minutesOutOfRange: diffMinutes(managedPosition.outOfRangeSince, now),
-          ageMinutes: diffMinutes(managedPosition.openedAt, now),
-        },
-      });
+      try {
+        await recordPoolSnapshot({
+          poolMemoryRepository: input.poolMemoryRepository,
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          poolAddress: managedPosition.poolAddress,
+          name: managedPosition.poolAddress,
+          baseMint: managedPosition.baseMint,
+          snapshot: {
+            ts: now,
+            positionId: managedPosition.positionId,
+            pnlPct: deriveSnapshotPnlPct(managedPosition),
+            pnlUsd: managedPosition.unrealizedPnlUsd,
+            inRange: isPositionInRange(managedPosition),
+            unclaimedFeesUsd: signals.claimableFeesUsd,
+            minutesOutOfRange: diffMinutes(managedPosition.outOfRangeSince, now),
+            ageMinutes: diffMinutes(managedPosition.openedAt, now),
+          },
+        });
+      } catch (error) {
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "POOL_MEMORY_SNAPSHOT_FAILED",
+            actor: requestedBy,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+            actionId: null,
+            before: null,
+            after: {
+              poolAddress: managedPosition.poolAddress,
+            },
+            txIds: [],
+            resultStatus: "FAILED",
+            error:
+              error instanceof Error
+                ? error.message
+                : "pool memory snapshot failed",
+          });
+        } catch {
+          // best-effort observability; snapshot failure must not abort the management cycle
+        }
+      }
     }
     const evaluation = evaluateManagementAction({
       now,

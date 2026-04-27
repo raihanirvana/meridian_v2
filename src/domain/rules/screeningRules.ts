@@ -386,9 +386,9 @@ export function evaluateScreeningHardFilters(input: {
 function deriveBaseMintAndQuoteMint(candidate: {
   tokenXMint: string;
   tokenYMint: string;
-  baseMint?: string;
-  quoteMint?: string;
-  preferredQuoteMints?: string[];
+  baseMint?: string | undefined;
+  quoteMint?: string | undefined;
+  preferredQuoteMints?: string[] | undefined;
 }): { baseMint: string; quoteMint: string } {
   if (candidate.baseMint !== undefined && candidate.quoteMint !== undefined) {
     return { baseMint: candidate.baseMint, quoteMint: candidate.quoteMint };

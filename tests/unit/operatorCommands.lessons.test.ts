@@ -55,6 +55,16 @@ describe("operatorCommands lessons", () => {
         confirm: true,
       },
     );
+    expect(() =>
+      parseOperatorCommand({
+        raw: "lessons list --role",
+      }),
+    ).toThrow(/--role requires a value/i);
+    expect(() =>
+      parseOperatorCommand({
+        raw: "lessons list --tag",
+      }),
+    ).toThrow(/--tag requires a value/i);
   });
 
   it("executes lesson add/list and performance summary commands", async () => {

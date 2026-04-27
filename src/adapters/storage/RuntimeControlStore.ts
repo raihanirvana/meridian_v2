@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CircuitBreakerStateSchema } from "../../domain/types/enums.js";
 import { TimestampSchema } from "../../domain/types/schemas.js";
 import { FileStore, type FileStoreOptions } from "./FileStore.js";
 
@@ -11,15 +12,27 @@ export const RuntimeDeployControlSchema = z
   })
   .strict();
 
+export const PersistedCircuitBreakerSnapshotSchema = z
+  .object({
+    circuitBreakerState: CircuitBreakerStateSchema,
+    circuitBreakerActivatedAt: z.string().datetime().nullable(),
+    circuitBreakerCooldownStartedAt: z.string().datetime().nullable(),
+  })
+  .strict();
+
 export const RuntimeControlStoreFileSchema = z
   .object({
     stopAllDeploys: RuntimeDeployControlSchema.default({
       active: false,
     }),
+    circuitBreakerSnapshot: PersistedCircuitBreakerSnapshotSchema.optional(),
   })
   .strict();
 
 export type RuntimeDeployControl = z.infer<typeof RuntimeDeployControlSchema>;
+export type PersistedCircuitBreakerSnapshot = z.infer<
+  typeof PersistedCircuitBreakerSnapshotSchema
+>;
 export type RuntimeControlStoreFile = z.infer<
   typeof RuntimeControlStoreFileSchema
 >;
@@ -31,6 +44,10 @@ export interface RuntimeControlStore {
     updatedAt: string;
   }): Promise<RuntimeDeployControl>;
   clearStopAllDeploys(updatedAt: string): Promise<RuntimeDeployControl>;
+  setCircuitBreakerSnapshot(
+    snapshot: PersistedCircuitBreakerSnapshot,
+  ): Promise<void>;
+  getCircuitBreakerSnapshot(): Promise<PersistedCircuitBreakerSnapshot | null>;
 }
 
 export interface RuntimeControlStoreOptions extends FileStoreOptions {
@@ -138,5 +155,30 @@ export class FileRuntimeControlStore implements RuntimeControlStore {
     });
 
     return RuntimeDeployControlSchema.parse(snapshot);
+  }
+
+  public async setCircuitBreakerSnapshot(
+    snapshot: PersistedCircuitBreakerSnapshot,
+  ): Promise<void> {
+    const validated = PersistedCircuitBreakerSnapshotSchema.parse(snapshot);
+    await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
+      const current = parseStore(raw, this.filePath);
+      return JSON.stringify(
+        RuntimeControlStoreFileSchema.parse({
+          ...current,
+          circuitBreakerSnapshot: validated,
+        }),
+        null,
+        2,
+      );
+    });
+  }
+
+  public async getCircuitBreakerSnapshot(): Promise<PersistedCircuitBreakerSnapshot | null> {
+    const current = parseStore(
+      await this.fileStore.readText(this.filePath),
+      this.filePath,
+    );
+    return current.circuitBreakerSnapshot ?? null;
   }
 }

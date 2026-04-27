@@ -130,12 +130,19 @@ function assertFreshExternalSnapshot(input: {
   }
 }
 
+export type CircuitBreakerHint = Pick<
+  PortfolioState,
+  | "circuitBreakerState"
+  | "circuitBreakerActivatedAt"
+  | "circuitBreakerCooldownStartedAt"
+>;
+
 function resolveCircuitBreakerLifecycle(input: {
   now: string;
   dailyLossPct: number;
   dailyLossLimitPct: number;
   cooldownMin: number;
-  previousPortfolioState: PortfolioState | null;
+  previousCircuitBreakerHint: CircuitBreakerHint | null;
 }): Pick<
   PortfolioState,
   | "circuitBreakerState"
@@ -146,26 +153,25 @@ function resolveCircuitBreakerLifecycle(input: {
     return {
       circuitBreakerState: "ON",
       circuitBreakerActivatedAt:
-        input.previousPortfolioState?.circuitBreakerActivatedAt ?? input.now,
+        input.previousCircuitBreakerHint?.circuitBreakerActivatedAt ?? input.now,
       circuitBreakerCooldownStartedAt: null,
     };
   }
 
-  if (input.previousPortfolioState?.circuitBreakerState === "ON") {
+  if (input.previousCircuitBreakerHint?.circuitBreakerState === "ON") {
     return {
       circuitBreakerState: "COOLDOWN",
       circuitBreakerActivatedAt:
-        input.previousPortfolioState.circuitBreakerActivatedAt ?? input.now,
+        input.previousCircuitBreakerHint.circuitBreakerActivatedAt ?? input.now,
       circuitBreakerCooldownStartedAt:
-        input.previousPortfolioState.circuitBreakerCooldownStartedAt ??
-        input.now,
+        input.previousCircuitBreakerHint.circuitBreakerCooldownStartedAt ?? input.now,
     };
   }
 
-  if (input.previousPortfolioState?.circuitBreakerState === "COOLDOWN") {
+  if (input.previousCircuitBreakerHint?.circuitBreakerState === "COOLDOWN") {
     const cooldownStartedAt =
-      input.previousPortfolioState.circuitBreakerCooldownStartedAt ??
-      input.previousPortfolioState.circuitBreakerActivatedAt ??
+      input.previousCircuitBreakerHint.circuitBreakerCooldownStartedAt ??
+      input.previousCircuitBreakerHint.circuitBreakerActivatedAt ??
       input.now;
     const cooldownMinutes = diffMinutes(cooldownStartedAt, input.now);
 
@@ -173,7 +179,7 @@ function resolveCircuitBreakerLifecycle(input: {
       return {
         circuitBreakerState: "COOLDOWN",
         circuitBreakerActivatedAt:
-          input.previousPortfolioState.circuitBreakerActivatedAt ?? null,
+          input.previousCircuitBreakerHint.circuitBreakerActivatedAt ?? null,
         circuitBreakerCooldownStartedAt: cooldownStartedAt,
       };
     }
@@ -197,6 +203,7 @@ export interface BuildPortfolioStateInput {
   walletGateway: WalletGateway;
   priceGateway: PriceGateway;
   previousPortfolioState?: PortfolioState | null;
+  previousCircuitBreakerSnapshot?: CircuitBreakerHint | null;
   now?: string;
 }
 
@@ -265,12 +272,14 @@ export async function buildPortfolioState(
     dailyLossPct,
     dailyLossLimitPct: input.dailyLossLimitPct,
   });
+  const previousCircuitBreakerHint: CircuitBreakerHint | null =
+    input.previousPortfolioState ?? input.previousCircuitBreakerSnapshot ?? null;
   const circuitBreakerSnapshot = resolveCircuitBreakerLifecycle({
     now,
     dailyLossPct,
     dailyLossLimitPct: input.dailyLossLimitPct,
     cooldownMin: input.circuitBreakerCooldownMin,
-    previousPortfolioState: input.previousPortfolioState ?? null,
+    previousCircuitBreakerHint,
   });
 
   const exposureByPool: Record<string, number> = {};

@@ -478,11 +478,82 @@ describe("risk rules", () => {
         dailyLossLimitPct: 10,
       }),
       realizedPnlDelta: -1.5,
+      now: "2026-04-21T12:00:00.000Z",
     });
 
     expect(updatedPortfolio.dailyRealizedPnl).toBe(-1.5);
     expect(updatedPortfolio.drawdownState).toBe("LIMIT_REACHED");
     expect(updatedPortfolio.circuitBreakerState).toBe("ON");
+    expect(updatedPortfolio.circuitBreakerActivatedAt).toBe(
+      "2026-04-21T12:00:00.000Z",
+    );
+  });
+
+  it("moves circuit breaker from ON to COOLDOWN when loss recovers below the limit", () => {
+    const updatedPortfolio = updatePortfolioDailyRiskState({
+      portfolio: buildPortfolio({
+        walletBalance: 100,
+        dailyRealizedPnl: -10,
+        circuitBreakerState: "ON",
+        circuitBreakerActivatedAt: "2026-04-21T10:00:00.000Z",
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 60,
+      }),
+      realizedPnlDelta: 5,
+      now: "2026-04-21T11:00:00.000Z",
+    });
+
+    expect(updatedPortfolio.circuitBreakerState).toBe("COOLDOWN");
+    expect(updatedPortfolio.circuitBreakerActivatedAt).toBe(
+      "2026-04-21T10:00:00.000Z",
+    );
+    expect(updatedPortfolio.circuitBreakerCooldownStartedAt).toBe(
+      "2026-04-21T11:00:00.000Z",
+    );
+  });
+
+  it("keeps circuit breaker in COOLDOWN until the cooldown window elapses", () => {
+    const updatedPortfolio = updatePortfolioDailyRiskState({
+      portfolio: buildPortfolio({
+        walletBalance: 100,
+        dailyRealizedPnl: -4,
+        circuitBreakerState: "COOLDOWN",
+        circuitBreakerActivatedAt: "2026-04-21T10:00:00.000Z",
+        circuitBreakerCooldownStartedAt: "2026-04-21T11:00:00.000Z",
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 60,
+      }),
+      realizedPnlDelta: 1,
+      now: "2026-04-21T11:30:00.000Z",
+    });
+
+    expect(updatedPortfolio.circuitBreakerState).toBe("COOLDOWN");
+  });
+
+  it("returns circuit breaker to OFF after the cooldown window elapses", () => {
+    const updatedPortfolio = updatePortfolioDailyRiskState({
+      portfolio: buildPortfolio({
+        walletBalance: 100,
+        dailyRealizedPnl: -4,
+        circuitBreakerState: "COOLDOWN",
+        circuitBreakerActivatedAt: "2026-04-21T10:00:00.000Z",
+        circuitBreakerCooldownStartedAt: "2026-04-21T11:00:00.000Z",
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 60,
+      }),
+      realizedPnlDelta: 1,
+      now: "2026-04-21T12:05:00.000Z",
+    });
+
+    expect(updatedPortfolio.circuitBreakerState).toBe("OFF");
+    expect(updatedPortfolio.circuitBreakerActivatedAt).toBeNull();
+    expect(updatedPortfolio.circuitBreakerCooldownStartedAt).toBeNull();
   });
 
   it("blocks deploy when either percent or absolute SOL daily loss limit is breached", () => {
@@ -529,5 +600,62 @@ describe("risk rules", () => {
     expect(result.blockingRules).toContain(
       "daily SOL loss guard cannot be evaluated because solPriceUsd is unavailable",
     );
+  });
+
+  it("fails safe to circuit breaker ON when maxDailyLossSol is configured but SOL price is unavailable during daily risk update", () => {
+    const updatedPortfolio = updatePortfolioDailyRiskState({
+      portfolio: buildPortfolio({
+        walletBalance: 100,
+        solPriceUsd: undefined,
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 90,
+        maxDailyLossSol: 0.2,
+      }),
+      realizedPnlDelta: -5,
+      now: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(updatedPortfolio.circuitBreakerState).toBe("ON");
+    expect(updatedPortfolio.circuitBreakerActivatedAt).toBe(
+      "2026-04-21T12:00:00.000Z",
+    );
+  });
+
+  it("keeps evaluatePortfolioRisk and daily risk updates aligned for missing SOL valuation under maxDailyLossSol", () => {
+    const portfolio = buildPortfolio({
+      walletBalance: 100,
+      dailyRealizedPnl: 0,
+      solPriceUsd: undefined,
+    });
+    const policy = buildPolicy({
+      dailyLossLimitPct: 90,
+      maxDailyLossSol: 0.2,
+    });
+
+    const riskResult = evaluatePortfolioRisk({
+      action: "DEPLOY",
+      portfolio: {
+        ...portfolio,
+        dailyRealizedPnl: -5,
+      },
+      policy,
+      proposedAllocationUsd: 1,
+      proposedPoolAddress: "pool_new",
+      proposedTokenMints: ["mint_a", "mint_b"],
+      recentNewDeploys: 0,
+    });
+    const updatedPortfolio = updatePortfolioDailyRiskState({
+      portfolio,
+      policy,
+      realizedPnlDelta: -5,
+      now: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(riskResult.allowed).toBe(false);
+    expect(riskResult.blockingRules).toContain(
+      "daily SOL loss guard cannot be evaluated because solPriceUsd is unavailable",
+    );
+    expect(updatedPortfolio.circuitBreakerState).toBe("ON");
   });
 });

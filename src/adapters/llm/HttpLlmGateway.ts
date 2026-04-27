@@ -160,6 +160,7 @@ export class HttpLlmGateway implements LlmGateway {
     model: string;
     systemPrompt: string;
     userPrompt: string;
+    signal?: AbortSignal;
   }): Promise<unknown> {
     const response = await this.client.request({
       method: "POST",
@@ -179,6 +180,7 @@ export class HttpLlmGateway implements LlmGateway {
         ],
       },
       responseSchema: ChatCompletionResponseSchema,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
 
     const content = normalizeMessageContent(
@@ -203,6 +205,7 @@ export class HttpLlmGateway implements LlmGateway {
 
   public async rankCandidates(
     input: CandidateRankingInput,
+    options?: { signal?: AbortSignal },
   ): Promise<CandidateRankingResult> {
     const parsedInput = CandidateRankingInputSchema.parse(input);
     const payload = await this.complete({
@@ -226,6 +229,7 @@ export class HttpLlmGateway implements LlmGateway {
           })),
         ),
       ].join("\n\n"),
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
     });
 
     const parsed = CandidateRankingResultSchema.safeParse(payload);
@@ -242,6 +246,7 @@ export class HttpLlmGateway implements LlmGateway {
 
   public async explainManagementDecision(
     input: ManagementExplanationInput,
+    options?: { signal?: AbortSignal },
   ): Promise<ManagementExplanationResult> {
     const parsedInput = ManagementExplanationInputSchema.parse(input);
     const payload = await this.complete({
@@ -261,6 +266,7 @@ export class HttpLlmGateway implements LlmGateway {
           positionSnapshot: parsedInput.positionSnapshot,
         }),
       ].join("\n\n"),
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
     });
 
     const parsed = ManagementExplanationResultSchema.safeParse(payload);
@@ -277,6 +283,7 @@ export class HttpLlmGateway implements LlmGateway {
 
   public async reviewRebalanceDecision(
     input: RebalanceReviewInput,
+    options?: { signal?: AbortSignal },
   ): Promise<AiRebalanceDecision> {
     const parsedInput = RebalanceReviewInputSchema.parse(input);
     const payload = await this.complete({
@@ -294,6 +301,7 @@ export class HttpLlmGateway implements LlmGateway {
         jsonInstruction("AiRebalanceDecision"),
       ].join("\n"),
       userPrompt: JSON.stringify(parsedInput),
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
     });
 
     const parsed = AiRebalanceDecisionSchema.safeParse(payload);

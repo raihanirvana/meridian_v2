@@ -456,6 +456,67 @@ describe("real adapters", () => {
     ).rejects.toBeInstanceOf(AdapterTransportError);
   });
 
+  it("aborts HttpLlmGateway requests via AbortSignal when timeout elapses", async () => {
+    let aborted = false;
+    const llm = new HttpLlmGateway({
+      baseUrl: "https://llm.example.com/v1/",
+      generalModel: "gpt-test",
+      timeoutMs: 1,
+      fetchFn: async (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("request aborted"));
+          });
+        }),
+    });
+
+    await expect(
+      llm.explainManagementDecision({
+        positionId: "pos_001",
+        proposedAction: "CLOSE",
+        positionSnapshot: {
+          positionId: "pos_001",
+          poolAddress: "pool_001",
+          tokenXMint: "mint_x",
+          tokenYMint: "mint_y",
+          baseMint: "mint_base",
+          quoteMint: "mint_quote",
+          wallet: "wallet_001",
+          status: "OPEN",
+          openedAt: "2026-04-21T00:00:00.000Z",
+          lastSyncedAt: "2026-04-21T00:00:00.000Z",
+          closedAt: null,
+          deployAmountBase: 1,
+          deployAmountQuote: 1,
+          currentValueBase: 1,
+          currentValueUsd: 100,
+          feesClaimedBase: 0,
+          feesClaimedUsd: 0,
+          realizedPnlBase: 0,
+          realizedPnlUsd: 0,
+          unrealizedPnlBase: -1,
+          unrealizedPnlUsd: -10,
+          rebalanceCount: 0,
+          partialCloseCount: 0,
+          strategy: "bid_ask",
+          rangeLowerBin: 10,
+          rangeUpperBin: 20,
+          activeBin: 15,
+          outOfRangeSince: null,
+          lastManagementDecision: null,
+          lastManagementReason: null,
+          lastWriteActionId: null,
+          needsReconciliation: false,
+        },
+        triggerReasons: ["stop loss reached"],
+        systemPrompt: "be concise",
+      }),
+    ).rejects.toBeInstanceOf(AdapterTransportError);
+
+    expect(aborted).toBe(true);
+  });
+
   it("maps response body read failures into AdapterTransportError", async () => {
     const screening = new HttpScreeningGateway({
       baseUrl: "https://screening.example.com/v1/",

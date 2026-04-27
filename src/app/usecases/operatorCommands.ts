@@ -12,7 +12,10 @@ import type { RuntimeControlStore } from "../../adapters/storage/RuntimeControlS
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { Action } from "../../domain/entities/Action.js";
 import { type PortfolioState } from "../../domain/entities/PortfolioState.js";
-import { type PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
+import {
+  evaluatePortfolioRisk,
+  type PortfolioRiskPolicy,
+} from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
 import { createUlid } from "../../infra/id/createUlid.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
@@ -321,17 +324,29 @@ export function parseOperatorCommand(
     for (let index = 0; index < args.length; index += 1) {
       const part = args[index];
       if (part === "--role") {
-        payload.role = args[index + 1] ?? null;
+        const value = args[index + 1];
+        if (value === undefined || value.startsWith("--")) {
+          throw new Error("--role requires a value");
+        }
+        payload.role = value;
         index += 1;
         continue;
       }
       if (part === "--tag") {
-        payload.tag = args[index + 1] ?? null;
+        const value = args[index + 1];
+        if (value === undefined || value.startsWith("--")) {
+          throw new Error("--tag requires a value");
+        }
+        payload.tag = value;
         index += 1;
         continue;
       }
       if (part === "--limit") {
-        payload.limit = Number(args[index + 1] ?? "30");
+        const value = args[index + 1];
+        if (value === undefined || value.startsWith("--")) {
+          throw new Error("--limit requires a value");
+        }
+        payload.limit = Number(value);
         index += 1;
         continue;
       }
@@ -629,6 +644,68 @@ export async function executeOperatorCommand(
       };
     }
     case "REQUEST_CLOSE": {
+      const closePositionId = input.command.positionId;
+      const activeCloseAction = await (async () => {
+        const pending = await input.actionRepository.listByStatuses([
+          "QUEUED",
+          "RUNNING",
+          "WAITING_CONFIRMATION",
+          "RECONCILING",
+          "RETRY_QUEUED",
+        ]);
+        return (
+          pending.find(
+            (a) =>
+              a.wallet === input.wallet && a.positionId === closePositionId,
+          ) ?? null
+        );
+      })();
+      if (activeCloseAction !== null) {
+        throw new Error(
+          `position ${closePositionId} already has an active action ${activeCloseAction.actionId} (${activeCloseAction.type}/${activeCloseAction.status}); close request blocked`,
+        );
+      }
+
+      const portfolio = await buildPortfolioState({
+        wallet: input.wallet,
+        minReserveUsd: input.riskPolicy.minReserveUsd,
+        dailyLossLimitPct: input.riskPolicy.dailyLossLimitPct,
+        circuitBreakerCooldownMin: input.riskPolicy.circuitBreakerCooldownMin,
+        stateRepository: input.stateRepository,
+        actionRepository: input.actionRepository,
+        journalRepository: input.journalRepository,
+        walletGateway: input.walletGateway,
+        priceGateway: input.priceGateway,
+        previousPortfolioState: input.previousPortfolioState ?? null,
+        now: requestedAt,
+      });
+      const riskResult = evaluatePortfolioRisk({
+        action: "CLOSE",
+        portfolio,
+        policy: input.riskPolicy,
+      });
+      if (!riskResult.allowed) {
+        await input.journalRepository.append({
+          timestamp: requestedAt,
+          eventType: "CLOSE_REQUEST_BLOCKED_BY_RISK",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: input.command.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            requestPayload: input.command.payload,
+            riskDecision: riskResult.decision,
+            blockingRules: riskResult.blockingRules,
+          },
+          txIds: [],
+          resultStatus: "BLOCKED",
+          error: riskResult.reason,
+        });
+
+        throw new Error(`close blocked by risk guard: ${riskResult.reason}`);
+      }
+
       const action = await requestClose({
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
@@ -656,7 +733,7 @@ export async function executeOperatorCommand(
           "manual circuit breaker is active; deploy requests are blocked",
         );
       }
-      const [portfolio, solPriceQuote, recentNewDeploys] = await Promise.all([
+      const [portfolio, recentNewDeploys] = await Promise.all([
         buildPortfolioState({
           wallet: input.wallet,
           minReserveUsd: input.riskPolicy.minReserveUsd,
@@ -670,7 +747,6 @@ export async function executeOperatorCommand(
           previousPortfolioState: input.previousPortfolioState ?? null,
           now: requestedAt,
         }),
-        input.priceGateway.getSolPriceUsd(),
         countRecentNewDeploys({
           wallet: input.wallet,
           actionRepository: input.actionRepository,
@@ -689,7 +765,9 @@ export async function executeOperatorCommand(
           portfolio,
           policy: input.riskPolicy,
           recentNewDeploys,
-          solPriceUsd: solPriceQuote.priceUsd,
+          ...(portfolio.solPriceUsd === undefined
+            ? {}
+            : { solPriceUsd: portfolio.solPriceUsd }),
         },
       });
 
@@ -709,22 +787,19 @@ export async function executeOperatorCommand(
           "manual circuit breaker is active; rebalance requests are blocked",
         );
       }
-      const [portfolio, solPriceQuote] = await Promise.all([
-        buildPortfolioState({
-          wallet: input.wallet,
-          minReserveUsd: input.riskPolicy.minReserveUsd,
-          dailyLossLimitPct: input.riskPolicy.dailyLossLimitPct,
-          circuitBreakerCooldownMin: input.riskPolicy.circuitBreakerCooldownMin,
-          stateRepository: input.stateRepository,
-          actionRepository: input.actionRepository,
-          journalRepository: input.journalRepository,
-          walletGateway: input.walletGateway,
-          priceGateway: input.priceGateway,
-          previousPortfolioState: input.previousPortfolioState ?? null,
-          now: requestedAt,
-        }),
-        input.priceGateway.getSolPriceUsd(),
-      ]);
+      const portfolio = await buildPortfolioState({
+        wallet: input.wallet,
+        minReserveUsd: input.riskPolicy.minReserveUsd,
+        dailyLossLimitPct: input.riskPolicy.dailyLossLimitPct,
+        circuitBreakerCooldownMin: input.riskPolicy.circuitBreakerCooldownMin,
+        stateRepository: input.stateRepository,
+        actionRepository: input.actionRepository,
+        journalRepository: input.journalRepository,
+        walletGateway: input.walletGateway,
+        priceGateway: input.priceGateway,
+        previousPortfolioState: input.previousPortfolioState ?? null,
+        now: requestedAt,
+      });
       const action = await requestRebalance({
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
@@ -738,7 +813,9 @@ export async function executeOperatorCommand(
         riskGuard: {
           portfolio,
           policy: input.riskPolicy,
-          solPriceUsd: solPriceQuote.priceUsd,
+          ...(portfolio.solPriceUsd === undefined
+            ? {}
+            : { solPriceUsd: portfolio.solPriceUsd }),
         },
       });
 

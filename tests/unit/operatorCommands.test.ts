@@ -339,6 +339,74 @@ describe("operator commands", () => {
     expect(actions[0]?.requestedBy).toBe("operator");
   });
 
+  it("blocks manual close requests when another write action is already pending", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition());
+    await actionRepository.upsert(
+      buildAction({
+        type: "CLAIM_FEES",
+        positionId: "pos_other",
+        idempotencyKey: "wallet_001:CLAIM_FEES:pos_other:test",
+        requestPayload: {
+          reason: "pending claim",
+        },
+      }),
+    );
+
+    await expect(
+      handleCliOperatorCommand({
+        rawCommand: "close pos_001 operator requested close",
+        wallet: "wallet_001",
+        actionQueue,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 5,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        riskPolicy: buildRiskPolicy(),
+        requestedBy: "operator",
+        requestedAt: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toThrow(/close blocked by risk guard/i);
+
+    expect(await actionRepository.listByStatuses(["QUEUED"])).toHaveLength(1);
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("CLOSE_REQUEST_BLOCKED_BY_RISK");
+  });
+
   it("manual deploy requests enqueue work instead of bypassing the queue", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
@@ -400,6 +468,64 @@ describe("operator commands", () => {
     expect(actions.every((action) => action.status === "QUEUED")).toBe(true);
   });
 
+  it("manual deploy uses portfolio.solPriceUsd and does not require a second price fetch", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    let priceCalls = 0;
+    await stateRepository.upsert(buildPosition());
+
+    const result = await handleCliOperatorCommand({
+      rawCommand: `deploy ${JSON.stringify(buildDeployPayload())}`,
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: {
+        async getSolPriceUsd() {
+          priceCalls += 1;
+          if (priceCalls >= 2) {
+            throw new Error("second price fetch should not happen");
+          }
+          return {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          };
+        },
+      },
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.command).toBe("REQUEST_DEPLOY");
+    expect(priceCalls).toBe(1);
+  });
+
   it("manual rebalance requests pass through portfolio risk guard before queueing", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
@@ -458,6 +584,67 @@ describe("operator commands", () => {
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("REBALANCE");
     expect(actions[0]?.status).toBe("QUEUED");
+  });
+
+  it("manual rebalance uses portfolio.solPriceUsd and does not require a second price fetch", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    let priceCalls = 0;
+    await stateRepository.upsert(buildPosition());
+
+    const result = await handleCliOperatorCommand({
+      rawCommand: `rebalance pos_001 ${JSON.stringify({
+        reason: "operator rebalance",
+        redeploy: buildDeployPayload(),
+      })}`,
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: {
+        async getSolPriceUsd() {
+          priceCalls += 1;
+          if (priceCalls >= 2) {
+            throw new Error("second price fetch should not happen");
+          }
+          return {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          };
+        },
+      },
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.command).toBe("REQUEST_REBALANCE");
+    expect(priceCalls).toBe(1);
   });
 
   it("blocks manual deploy requests that violate portfolio risk guardrails", async () => {
