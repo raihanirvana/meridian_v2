@@ -11,7 +11,10 @@ import {
   buildDlmmMicrostructureSnapshot,
   buildMarketFeatureSnapshot,
 } from "../../src/domain/rules/poolFeatureRules.js";
-import { type ScreeningCandidateInput } from "../../src/domain/scoring/candidateScore.js";
+import {
+  type ScreeningCandidateInput,
+  scoreCandidate,
+} from "../../src/domain/scoring/candidateScore.js";
 
 const now = "2026-04-21T00:00:00.000Z";
 
@@ -372,6 +375,92 @@ describe("screening rules", () => {
     ]);
   });
 
+  it("includes hard-filter rejection reasons alongside cooldown reason", () => {
+    const result = screenAndScoreCandidates({
+      candidates: [
+        buildCandidate({
+          candidateId: "cand_blocked_cooldown",
+          poolAddress: "pool_blocked_cooldown",
+          tokenXMint: "blocked_token",
+          tokenYMint: "mint_usdc",
+        }),
+      ],
+      portfolio: buildPortfolio(),
+      screeningPolicy: {
+        ...screeningPolicy,
+        blockedTokenMints: ["blocked_token"],
+      },
+      scoringPolicy,
+      poolMemoryMap: {
+        pool_blocked_cooldown: {
+          cooldownUntil: "2026-04-21T01:00:00.000Z",
+        },
+      },
+      createdAt: now,
+      now,
+    });
+
+    const candidate = result.candidates.find(
+      (c) => c.candidateId === "cand_blocked_cooldown",
+    );
+    expect(candidate?.decision).toBe("REJECTED_COOLDOWN");
+    expect(candidate?.decisionReason).toMatch(/cooldown/i);
+    expect(
+      result.candidates
+        .find((c) => c.candidateId === "cand_blocked_cooldown")
+        ?.hardFilterPassed,
+    ).toBe(false);
+  });
+
+  it("derives baseMint/quoteMint from preferredQuoteMints when explicit base/quote is absent", () => {
+    const result = screenAndScoreCandidates({
+      candidates: [
+        buildCandidate({
+          candidateId: "cand_preferred_quote",
+          poolAddress: "pool_preferred_quote",
+          tokenXMint: "mint_usdc",
+          tokenYMint: "mint_meme",
+          preferredQuoteMints: ["mint_usdc"],
+        }),
+      ],
+      portfolio: buildPortfolio(),
+      screeningPolicy,
+      scoringPolicy,
+      createdAt: now,
+    });
+
+    const candidate = result.candidates.find(
+      (c) => c.candidateId === "cand_preferred_quote",
+    );
+    expect(candidate?.baseMint).toBe("mint_meme");
+    expect(candidate?.quoteMint).toBe("mint_usdc");
+  });
+
+  it("uses explicit baseMint/quoteMint from input when provided", () => {
+    const result = screenAndScoreCandidates({
+      candidates: [
+        buildCandidate({
+          candidateId: "cand_explicit_base_quote",
+          poolAddress: "pool_explicit_base_quote",
+          tokenXMint: "mint_usdc",
+          tokenYMint: "mint_meme",
+          baseMint: "mint_meme",
+          quoteMint: "mint_usdc",
+        }),
+      ],
+      portfolio: buildPortfolio(),
+      screeningPolicy,
+      scoringPolicy,
+      createdAt: now,
+    });
+
+    const candidate = result.candidates.find(
+      (c) => c.candidateId === "cand_explicit_base_quote",
+    );
+    expect(candidate?.baseMint).toBe("mint_meme");
+    expect(candidate?.quoteMint).toBe("mint_usdc");
+  });
+
   it("does not apply empty-string launchpad penalties to null launchpad candidates", () => {
     const result = screenAndScoreCandidates({
       candidates: [
@@ -393,5 +482,34 @@ describe("screening rules", () => {
     });
 
     expect(result.candidates[0]?.scoreBreakdown.launchpadPenalty).toBe(90);
+  });
+
+  it("below_target_volume flag only fires when volume is materially below target (>20% gap)", () => {
+    const portfolio = buildPortfolio();
+    const policy = {
+      ...scoringPolicy,
+      targetVolumeUsd: 20_000,
+    } as const;
+
+    const withinTolerance = scoreCandidate({
+      candidate: buildCandidate({ volumeUsd: 17_000 }),
+      portfolio,
+      policy,
+    });
+    expect(withinTolerance.riskFlags).not.toContain("below_target_volume");
+
+    const atThreshold = scoreCandidate({
+      candidate: buildCandidate({ volumeUsd: 15_999 }),
+      portfolio,
+      policy,
+    });
+    expect(atThreshold.riskFlags).toContain("below_target_volume");
+
+    const materiallyBelow = scoreCandidate({
+      candidate: buildCandidate({ volumeUsd: 10_000 }),
+      portfolio,
+      policy,
+    });
+    expect(materiallyBelow.riskFlags).toContain("below_target_volume");
   });
 });

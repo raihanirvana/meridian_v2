@@ -383,6 +383,28 @@ export function evaluateScreeningHardFilters(input: {
   });
 }
 
+function deriveBaseMintAndQuoteMint(candidate: {
+  tokenXMint: string;
+  tokenYMint: string;
+  baseMint?: string;
+  quoteMint?: string;
+  preferredQuoteMints?: string[];
+}): { baseMint: string; quoteMint: string } {
+  if (candidate.baseMint !== undefined && candidate.quoteMint !== undefined) {
+    return { baseMint: candidate.baseMint, quoteMint: candidate.quoteMint };
+  }
+
+  const preferredQuoteMints = candidate.preferredQuoteMints ?? [];
+  if (preferredQuoteMints.includes(candidate.tokenYMint)) {
+    return { baseMint: candidate.tokenXMint, quoteMint: candidate.tokenYMint };
+  }
+  if (preferredQuoteMints.includes(candidate.tokenXMint)) {
+    return { baseMint: candidate.tokenYMint, quoteMint: candidate.tokenXMint };
+  }
+
+  return { baseMint: candidate.tokenXMint, quoteMint: candidate.tokenYMint };
+}
+
 function buildCandidateEntity(input: {
   candidate: z.infer<typeof ScreeningCandidateInputSchema>;
   hardFilter: HardFilterEvaluation;
@@ -414,14 +436,16 @@ function buildCandidateEntity(input: {
       input.screeningPolicy.maxEstimatedSlippageBps ?? 300,
   });
 
+  const { baseMint, quoteMint } = deriveBaseMintAndQuoteMint(input.candidate);
+
   return CandidateSchema.parse({
     candidateId: input.candidate.candidateId,
     poolAddress: input.candidate.poolAddress,
     symbolPair: input.candidate.symbolPair,
     tokenXMint: input.candidate.tokenXMint,
     tokenYMint: input.candidate.tokenYMint,
-    baseMint: input.candidate.tokenXMint,
-    quoteMint: input.candidate.tokenYMint,
+    baseMint,
+    quoteMint,
     screeningSnapshot: {
       marketCapUsd: input.candidate.marketCapUsd,
       tvlUsd: input.candidate.tvlUsd,
@@ -516,6 +540,12 @@ export function screenAndScoreCandidates(input: {
       createdAt,
     );
 
+    const hardFilter = evaluateScreeningHardFilters({
+      candidate: featureEnrichedCandidate,
+      portfolio,
+      policy: screeningPolicy,
+    });
+
     if (
       isCandidateCoolingDown({
         poolAddress: featureEnrichedCandidate.poolAddress,
@@ -531,18 +561,15 @@ export function screenAndScoreCandidates(input: {
           hardFilterPassed: false,
           decision: "REJECTED_COOLDOWN",
           decisionReason: "Pool cooldown is active",
-          rejectionReasons: ["pool cooldown active"],
+          rejectionReasons: [
+            ...hardFilter.rejectionReasons,
+            "pool cooldown active",
+          ],
         },
         createdAt,
         screeningPolicy,
       });
     }
-
-    const hardFilter = evaluateScreeningHardFilters({
-      candidate: featureEnrichedCandidate,
-      portfolio,
-      policy: screeningPolicy,
-    });
 
     if (!hardFilter.hardFilterPassed) {
       return buildCandidateEntity({

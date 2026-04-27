@@ -35,6 +35,9 @@ export const ScreeningCandidateInputSchema = z
     symbolPair: z.string().min(1),
     tokenXMint: z.string().min(1),
     tokenYMint: z.string().min(1),
+    baseMint: z.string().min(1).optional(),
+    quoteMint: z.string().min(1).optional(),
+    preferredQuoteMints: z.array(z.string().min(1)).optional(),
     marketCapUsd: z.number().nonnegative(),
     tvlUsd: z.number().nonnegative(),
     volumeUsd: z.number().nonnegative(),
@@ -288,7 +291,7 @@ export function scoreCandidate(input: {
   if (candidate.launchpad !== null && launchpadPenaltyScore >= 40) {
     riskFlags.push("launchpad_or_narrative_penalty");
   }
-  if (candidate.volumeUsd < policy.targetVolumeUsd) {
+  if (candidate.volumeUsd < policy.targetVolumeUsd * 0.8) {
     riskFlags.push("below_target_volume");
   }
 
