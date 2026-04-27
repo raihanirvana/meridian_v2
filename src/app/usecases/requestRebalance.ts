@@ -18,10 +18,12 @@ import {
   type DeployActionRequestPayload,
 } from "./requestDeploy.js";
 
-export const RebalanceActionRequestPayloadSchema = z.object({
-  reason: z.string().min(1),
-  redeploy: DeployActionRequestPayloadSchema,
-});
+export const RebalanceActionRequestPayloadSchema = z
+  .object({
+    reason: z.string().min(1),
+    redeploy: DeployActionRequestPayloadSchema,
+  })
+  .strict();
 
 export type RebalanceActionRequestPayload = z.infer<
   typeof RebalanceActionRequestPayloadSchema
@@ -42,7 +44,8 @@ export interface RequestRebalanceInput {
     portfolio: PortfolioState;
     policy: PortfolioRiskPolicy;
     solPriceUsd?: number;
-  };
+  } | null;
+  allowRiskGuardBypass?: boolean;
 }
 
 const REBALANCE_REQUESTABLE_STATUSES = new Set<Position["status"]>([
@@ -109,7 +112,13 @@ export async function requestRebalance(input: RequestRebalanceInput) {
     );
   }
 
-  if (input.riskGuard !== undefined) {
+  if (input.riskGuard === null && !input.allowRiskGuardBypass) {
+    throw new Error(
+      "riskGuard bypass requires allowRiskGuardBypass: true to be explicitly set",
+    );
+  }
+
+  if (input.riskGuard != null) {
     const riskResult = evaluatePortfolioRisk({
       action: "REBALANCE",
       portfolio: input.riskGuard.portfolio,

@@ -306,6 +306,18 @@ function inferCloseConfirmedPosition(
     });
   }
 
+  // RECONCILIATION_REQUIRED is a valid close-confirmed candidate when the
+  // gateway read model is open_only and the position is no longer visible —
+  // the state machine allows RECONCILIATION_REQUIRED → RECONCILING → CLOSED.
+  if (
+    useOpenOnlyReadModel &&
+    confirmedPosition === null &&
+    closingPosition !== null &&
+    closingPosition.status === "RECONCILIATION_REQUIRED"
+  ) {
+    return closingPosition;
+  }
+
   return null;
 }
 
@@ -436,11 +448,12 @@ function buildOpenRedeployedPosition(input: {
   return PositionSchema.parse({
     ...input.pendingPosition,
     ...input.confirmedPosition,
-    // pendingPosition.strategy comes from the redeploy request payload and
-    // is authoritative; confirmedPosition.strategy from listPositionsForWallet
-    // may be an adapter-level default that would otherwise corrupt
-    // PerformanceRecord/lesson tracking on the new leg.
+    // pendingPosition fields below are authoritative — confirmedPosition values
+    // come from a live gateway read and may carry adapter defaults that would
+    // corrupt strategy-tracking, accounting, and base/quote side logic.
     strategy: input.pendingPosition.strategy,
+    baseMint: input.pendingPosition.baseMint,
+    quoteMint: input.pendingPosition.quoteMint,
     status:
       input.pendingPosition.status === "OPEN"
         ? "OPEN"
@@ -473,8 +486,11 @@ function validateRedeployConfirmationIdentity(input: {
   confirmedPosition: Position;
 }): string | null {
   const fields: Array<
-    keyof Pick<Position, "poolAddress" | "tokenXMint" | "tokenYMint" | "wallet">
-  > = ["poolAddress", "tokenXMint", "tokenYMint", "wallet"];
+    keyof Pick<
+      Position,
+      "poolAddress" | "tokenXMint" | "tokenYMint" | "wallet" | "baseMint" | "quoteMint"
+    >
+  > = ["poolAddress", "tokenXMint", "tokenYMint", "wallet", "baseMint", "quoteMint"];
 
   for (const field of fields) {
     if (input.pendingPosition[field] !== input.confirmedPosition[field]) {
@@ -661,33 +677,13 @@ async function finalizeCloseLeg(input: {
   const closingPosition = await input.stateRepository.get(
     input.latestAction.positionId,
   );
-  const confirmedPosition = await input.dlmmGateway.getPosition(
-    input.latestAction.positionId,
-  );
-  const closeConfirmedPositionLike = inferCloseConfirmedPosition(
-    closingPosition,
-    confirmedPosition,
-    input.dlmmGateway.reconciliationReadModel === "open_only",
-    input.latestAction.actionId,
-    input.now,
-  );
   const recordedPerformanceSnapshot = input.closeSubmitted.performanceSnapshot;
 
+  // Early return when the old leg is already CLOSED (idempotent retry).
+  // We skip the gateway call entirely to avoid any CLOSED → CLOSE_CONFIRMED
+  // transition attempt inside inferCloseConfirmedPosition.
   if (closingPosition !== null && closingPosition.status === "CLOSED") {
-    const closeConfirmedPosition =
-      recordedPerformanceSnapshot ?? closeConfirmedPositionLike;
-
-    if (closeConfirmedPosition === null) {
-      throw Object.assign(
-        new Error(
-          `Rebalance close finalization requires reconciliation because closed old leg ${input.latestAction.positionId} has no performance snapshot`,
-        ),
-        {
-          reconciliationSourcePosition: closingPosition,
-        },
-      );
-    }
-
+    const closeConfirmedPosition = recordedPerformanceSnapshot ?? closingPosition;
     return {
       closingPosition,
       closeConfirmedPosition,
@@ -711,9 +707,25 @@ async function finalizeCloseLeg(input: {
     };
   }
 
+  const confirmedPosition = await input.dlmmGateway.getPosition(
+    input.latestAction.positionId,
+  );
+  const closeConfirmedPositionLike = inferCloseConfirmedPosition(
+    closingPosition,
+    confirmedPosition,
+    input.dlmmGateway.reconciliationReadModel === "open_only",
+    input.latestAction.actionId,
+    input.now,
+  );
+
+  const isClosingStatusValid =
+    closingPosition !== null &&
+    (closingPosition.status === "CLOSING_FOR_REBALANCE" ||
+      (closingPosition.status === "RECONCILIATION_REQUIRED" &&
+        input.closeSubmitted.closeResult.submissionAmbiguous === true));
+
   if (
-    closingPosition === null ||
-    closingPosition.status !== "CLOSING_FOR_REBALANCE" ||
+    !isClosingStatusValid ||
     closeConfirmedPositionLike === null
   ) {
     const sourcePosition = closingPosition ?? confirmedPosition;
@@ -1883,6 +1895,116 @@ export async function finalizeRebalance(
                 action: latestActionAfterRedeployLock,
                 oldPosition,
                 confirmedPosition,
+              }),
+              after: toJournalRecord({
+                action: doneAction,
+                oldPosition,
+                newPosition: openPosition,
+              }),
+              txIds: doneAction.txIds,
+              resultStatus: doneAction.status,
+              error: null,
+            });
+
+            return {
+              action: doneAction,
+              oldPosition,
+              newPosition: openPosition,
+              outcome: "FINALIZED" as const,
+            };
+          }
+
+          if (
+            pendingPosition !== null &&
+            pendingPosition.status === "RECONCILIATION_REQUIRED" &&
+            confirmedPosition !== null &&
+            confirmedPosition.status === "OPEN"
+          ) {
+            const identityError = validateRedeployConfirmationIdentity({
+              pendingPosition,
+              confirmedPosition,
+            });
+            if (identityError !== null) {
+              const reconciliationPosition = buildReconciliationRequiredPosition(
+                pendingPosition,
+                latestActionAfterRedeployLock.actionId,
+                now,
+              );
+              await input.stateRepository.upsert(reconciliationPosition);
+
+              const timedOutAction = {
+                ...latestActionAfterRedeployLock,
+                status: transitionActionStatus(
+                  latestActionAfterRedeployLock.status,
+                  "TIMED_OUT",
+                ),
+                error: identityError,
+                completedAt: now,
+              } satisfies Action;
+              await input.actionRepository.upsert(timedOutAction);
+
+              return {
+                action: timedOutAction,
+                oldPosition,
+                newPosition: reconciliationPosition,
+                outcome: "TIMED_OUT" as const,
+              };
+            }
+
+            // RECONCILIATION_REQUIRED → RECONCILING → OPEN
+            const reconciledPending = PositionSchema.parse({
+              ...pendingPosition,
+              status: transitionPositionStatus(
+                pendingPosition.status,
+                "RECONCILING",
+              ),
+              lastSyncedAt: now,
+              lastWriteActionId: latestActionAfterRedeployLock.actionId,
+            });
+            const openPosition = buildOpenRedeployedPosition({
+              pendingPosition: reconciledPending,
+              confirmedPosition,
+              actionId: latestActionAfterRedeployLock.actionId,
+              now,
+            });
+            await input.stateRepository.upsert(openPosition);
+
+            const reconcilingAction =
+              latestActionAfterRedeployLock.status === "RECONCILING"
+                ? latestActionAfterRedeployLock
+                : ({
+                    ...latestActionAfterRedeployLock,
+                    status: transitionActionStatus(
+                      latestActionAfterRedeployLock.status,
+                      "RECONCILING",
+                    ),
+                  } satisfies Action);
+            await input.actionRepository.upsert(reconcilingAction);
+
+            const completedPayload = buildCompletedPayload({
+              redeploySubmitted: latestPayload,
+              confirmedPositionId: openPosition.positionId,
+            });
+            const doneAction = {
+              ...reconcilingAction,
+              status: transitionActionStatus(reconcilingAction.status, "DONE"),
+              resultPayload: toJournalRecord(completedPayload),
+              completedAt: now,
+              error: null,
+            } satisfies Action;
+            await input.actionRepository.upsert(doneAction);
+
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "REBALANCE_FINALIZED_RECONCILIATION_REQUIRED",
+              actor: latestActionAfterRedeployLock.requestedBy,
+              wallet: latestActionAfterRedeployLock.wallet,
+              positionId: openPosition.positionId,
+              actionId: latestActionAfterRedeployLock.actionId,
+              before: toJournalRecord({
+                action: latestActionAfterRedeployLock,
+                oldPosition,
+                newPosition: pendingPosition,
               }),
               after: toJournalRecord({
                 action: doneAction,
