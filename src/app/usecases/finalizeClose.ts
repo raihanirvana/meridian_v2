@@ -75,6 +75,15 @@ export interface FinalizeCloseResult {
   outcome: "FINALIZED" | "TIMED_OUT" | "RECONCILIATION_REQUIRED" | "UNCHANGED";
 }
 
+const PostCloseSwapPhaseSchema = z
+  .object({
+    phase: z
+      .enum(["POST_CLOSE_SWAP_IN_PROGRESS", "POST_CLOSE_SWAP_DONE"])
+      .optional(),
+    swapIntentId: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     return error.message.trim().length > 0 ? error.message : fallback;
@@ -264,15 +273,6 @@ function inferCloseConfirmedPosition(
     useOpenOnlyReadModel &&
     confirmedPosition === null &&
     closingPosition !== null &&
-    closingPosition.status === "CLOSED"
-  ) {
-    return closingPosition;
-  }
-
-  if (
-    useOpenOnlyReadModel &&
-    confirmedPosition === null &&
-    closingPosition !== null &&
     (closingPosition.status === "CLOSING" ||
       closingPosition.status === "CLOSE_CONFIRMED" ||
       closingPosition.status === "RECONCILING")
@@ -286,6 +286,21 @@ function inferCloseConfirmedPosition(
   }
 
   return null;
+}
+
+function buildSyntheticCloseConfirmedPosition(input: {
+  closingPosition: Position;
+  actionId: string;
+  now: string;
+}): Position {
+  return PositionSchema.parse({
+    ...input.closingPosition,
+    status: "CLOSE_CONFIRMED",
+    closedAt: input.closingPosition.closedAt ?? input.now,
+    lastSyncedAt: input.now,
+    lastWriteActionId: input.actionId,
+    needsReconciliation: false,
+  });
 }
 
 function buildReconcilingPosition(
@@ -395,6 +410,66 @@ export async function finalizeClose(
     };
   }
 
+  if (action.status === "RECONCILING") {
+    const swapPhase = PostCloseSwapPhaseSchema.safeParse(action.resultPayload);
+    if (
+      swapPhase.success &&
+      swapPhase.data.phase === "POST_CLOSE_SWAP_IN_PROGRESS"
+    ) {
+      const existingPosition = await input.stateRepository.get(action.positionId);
+      if (existingPosition === null) {
+        throw new Error(
+          `Close reconciliation position missing during swap recovery: ${action.positionId}`,
+        );
+      }
+
+      const reconciliationPosition =
+        existingPosition.status === "RECONCILIATION_REQUIRED"
+          ? existingPosition
+          : buildReconciliationRequiredPosition(
+              existingPosition,
+              action.actionId,
+              now,
+            );
+      await input.stateRepository.upsert(reconciliationPosition);
+
+      const failedAction = {
+        ...action,
+        status: transitionActionStatus(action.status, "FAILED"),
+        error:
+          "Close finalization stopped after post-close swap started; manual reconciliation required before retry",
+        completedAt: now,
+      } satisfies Action;
+      await input.actionRepository.upsert(failedAction);
+
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "CLOSE_FINALIZATION_FAILED",
+        actor: action.requestedBy,
+        wallet: action.wallet,
+        positionId: action.positionId,
+        actionId: action.actionId,
+        before: toJournalRecord({
+          action,
+          position: existingPosition,
+        }),
+        after: toJournalRecord({
+          action: failedAction,
+          position: reconciliationPosition,
+        }),
+        txIds: failedAction.txIds,
+        resultStatus: failedAction.status,
+        error: failedAction.error,
+      });
+
+      return {
+        action: failedAction,
+        position: reconciliationPosition,
+        outcome: "RECONCILIATION_REQUIRED",
+      };
+    }
+  }
+
   if (action.status !== "WAITING_CONFIRMATION") {
     throw new Error(
       `Close finalization expected WAITING_CONFIRMATION, received ${action.status}`,
@@ -475,13 +550,93 @@ export async function finalizeClose(
       const confirmedPosition = await input.dlmmGateway.getPosition(
         latestAction.positionId,
       );
+      const canRecoverAmbiguousOpenOnlyClose =
+        input.dlmmGateway.reconciliationReadModel === "open_only" &&
+        confirmedPosition === null &&
+        closingPosition !== null &&
+        closingPosition.status === "RECONCILIATION_REQUIRED" &&
+        closeResult.submissionAmbiguous === true;
+      const syntheticCloseConfirmedPosition =
+        canRecoverAmbiguousOpenOnlyClose && closingPosition !== null
+          ? buildSyntheticCloseConfirmedPosition({
+              closingPosition,
+              actionId: latestAction.actionId,
+              now,
+            })
+          : null;
       const closeConfirmedPositionLike = inferCloseConfirmedPosition(
         closingPosition,
         confirmedPosition,
         input.dlmmGateway.reconciliationReadModel === "open_only",
         latestAction.actionId,
         now,
-      );
+      ) ?? syntheticCloseConfirmedPosition;
+
+      if (closingPosition !== null && closingPosition.status === "CLOSED") {
+        const accounting = buildCloseAccountingSummary(
+          closingPosition,
+          null,
+          closeProceedsFromResult(closeResult),
+        );
+        const reconcilingAction = {
+          ...latestAction,
+          status: transitionActionStatus(latestAction.status, "RECONCILING"),
+        } satisfies Action;
+        await input.actionRepository.upsert(reconcilingAction);
+
+        const doneAction = {
+          ...reconcilingAction,
+          status: transitionActionStatus(reconcilingAction.status, "DONE"),
+          resultPayload: toJournalRecord({
+            ...closeResult,
+            accounting,
+            performanceSnapshot: closingPosition,
+          }),
+          completedAt: now,
+          error: null,
+        } satisfies Action;
+        await input.actionRepository.upsert(doneAction);
+
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "CLOSE_FINALIZED",
+          actor: latestAction.requestedBy,
+          wallet: latestAction.wallet,
+          positionId: latestAction.positionId,
+          actionId: latestAction.actionId,
+          before: toJournalRecord({
+            action: latestAction,
+            position: closingPosition,
+          }),
+          after: toJournalRecord({
+            action: doneAction,
+            position: closingPosition,
+          }),
+          txIds: doneAction.txIds,
+          resultStatus: doneAction.status,
+          error: null,
+        });
+
+        await runLessonHookIdempotent({
+          ...(input.lessonHook === undefined
+            ? {}
+            : { lessonHook: input.lessonHook }),
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          position: closingPosition,
+          performanceSnapshotPosition: closingPosition,
+          closedAction: doneAction,
+          reason: payload.reason,
+          now,
+        });
+
+        return {
+          action: doneAction,
+          position: closingPosition,
+          outcome: "FINALIZED",
+        };
+      }
 
       if (
         closingPosition !== null &&
@@ -558,6 +713,12 @@ export async function finalizeClose(
         closingPosition.status === "RECONCILING" &&
         closeConfirmedPositionLike !== null
           ? closingPosition
+          : syntheticCloseConfirmedPosition !== null
+            ? buildReconcilingPosition(
+                syntheticCloseConfirmedPosition,
+                latestAction.actionId,
+                now,
+              )
           : null;
 
       if (
@@ -652,18 +813,21 @@ export async function finalizeClose(
         resultPayload: toJournalRecord({
           ...closeResult,
           performanceSnapshot: performanceSnapshotPosition,
+          phase: "POST_CLOSE_SWAP_IN_PROGRESS",
+          swapIntentId: `${latestAction.actionId}:POST_CLOSE_SWAP`,
         }),
       } satisfies Action;
 
       try {
         await input.stateRepository.upsert(reconcilingPosition);
         await input.actionRepository.upsert(reconcilingAction);
+        const swapIntentId = `${reconcilingAction.actionId}:POST_CLOSE_SWAP`;
 
         const postCloseSwap =
           (await input.postCloseSwapHook?.(
             PostCloseSwapInputSchema.parse({
               actionId: reconcilingAction.actionId,
-              swapIntentId: `${reconcilingAction.actionId}:POST_CLOSE_SWAP`,
+              swapIntentId,
               wallet: reconcilingAction.wallet,
               reason: payload.reason,
               position: reconcilingPosition,
@@ -689,6 +853,9 @@ export async function finalizeClose(
             ...closeResult,
             accounting,
             performanceSnapshot: performanceSnapshotPosition,
+            phase: "POST_CLOSE_SWAP_DONE",
+            swapIntentId,
+            postCloseSwap,
           }),
           completedAt: now,
           error: null,

@@ -31,6 +31,14 @@ export const DeployActionRequestPayloadSchema = z
     entryMetadata: PositionEntryMetadataSchema.optional(),
   })
   .superRefine((payload, ctx) => {
+    if (payload.amountBase <= 0 && payload.amountQuote <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountBase"],
+        message: "amountBase or amountQuote must be greater than zero",
+      });
+    }
+
     if (payload.rangeLowerBin >= payload.rangeUpperBin) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

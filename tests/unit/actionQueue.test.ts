@@ -372,6 +372,152 @@ describe("ActionQueue", () => {
     ]);
   });
 
+  it("preserves WAITING_CONFIRMATION when final journal append fails after state persistence", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    let appendCount = 0;
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: {
+        append: async (event) => {
+          appendCount += 1;
+          if (event.eventType === "ACTION_FINALIZED") {
+            throw new Error("journal unavailable");
+          }
+        },
+      } as JournalRepository,
+    });
+
+    const action = await actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_001",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+      requestedBy: "system",
+    });
+
+    const processed = await actionQueue.processNext(async () => ({
+      nextStatus: "WAITING_CONFIRMATION",
+      txIds: ["tx_001"],
+    }));
+
+    const persisted = await actionRepository.get(action.actionId);
+
+    expect(appendCount).toBeGreaterThanOrEqual(2);
+    expect(processed?.status).toBe("WAITING_CONFIRMATION");
+    expect(processed?.txIds).toEqual(["tx_001"]);
+    expect(persisted?.status).toBe("WAITING_CONFIRMATION");
+    expect(persisted?.txIds).toEqual(["tx_001"]);
+  });
+
+  it("still runs the handler when ACTION_RUNNING journal append fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    let handlerCalls = 0;
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: {
+        append: async (event) => {
+          if (event.eventType === "ACTION_RUNNING") {
+            throw new Error("journal unavailable");
+          }
+        },
+      } as JournalRepository,
+    });
+
+    const action = await actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_001",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+      requestedBy: "system",
+    });
+
+    const processed = await actionQueue.processNext(async () => {
+      handlerCalls += 1;
+      return {
+        nextStatus: "WAITING_CONFIRMATION",
+      };
+    });
+
+    const persisted = await actionRepository.get(action.actionId);
+
+    expect(handlerCalls).toBe(1);
+    expect(processed?.status).toBe("WAITING_CONFIRMATION");
+    expect(persisted?.status).toBe("WAITING_CONFIRMATION");
+  });
+
+  it("allows only one queue instance to claim the same queued action", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const firstQueue = new ActionQueue({ actionRepository });
+    const secondQueue = new ActionQueue({ actionRepository });
+
+    await firstQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_001",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_001",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_001",
+      },
+      requestedBy: "system",
+    });
+
+    let handlerCalls = 0;
+    const handler = async () => {
+      handlerCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return {
+        nextStatus: "WAITING_CONFIRMATION" as const,
+      };
+    };
+
+    const [firstResult, secondResult] = await Promise.all([
+      firstQueue.processNext(handler),
+      secondQueue.processNext(handler),
+    ]);
+
+    expect(handlerCalls).toBe(1);
+    expect([firstResult?.status ?? null, secondResult?.status ?? null]).toContain(
+      "WAITING_CONFIRMATION",
+    );
+    expect([firstResult, secondResult]).toContain(null);
+  });
+
   it("clears claimed action ids when processing fails before the handler runs", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

@@ -606,6 +606,151 @@ describe("close flow", () => {
     expect(finalized.position?.status).toBe("CLOSED");
   });
 
+  it("finalizes an ambiguous close from RECONCILIATION_REQUIRED when open_only returns null", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_ambiguous_close"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_ambiguous_close",
+      payload: {
+        reason: "operator close",
+      },
+      requestedBy: "operator",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    const ambiguousError = new AmbiguousSubmissionError(
+      "rpc submit timed out after broadcast",
+      {
+        operation: "CLOSE",
+        positionId: "pos_ambiguous_close",
+        txIds: ["tx_close_maybe_sent"],
+      },
+    );
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: { type: "fail", error: ambiguousError },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: Object.assign(buildGateway({}), {
+        reconciliationReadModel: "open_only" as const,
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("CLOSED");
+  });
+
+  it("finalizes safely when local position is already CLOSED and open_only returns null", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_closed_local"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_closed_local",
+      payload: {
+        reason: "operator close",
+      },
+      requestedBy: "operator",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_closed_local",
+              txIds: ["tx_close_done"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    await stateRepository.upsert({
+      ...buildOpenPosition("pos_closed_local"),
+      status: "CLOSED",
+      closedAt: "2026-04-20T00:05:00.000Z",
+      currentValueBase: 0,
+      currentValueUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      needsReconciliation: false,
+    });
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: Object.assign(buildGateway({}), {
+        reconciliationReadModel: "open_only" as const,
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("CLOSED");
+  });
+
   it("records performance and lesson via lesson hook after close finalization", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -1227,5 +1372,194 @@ describe("close flow", () => {
     expect(
       (await journalRepository.list()).map((event) => event.eventType),
     ).toContain("CLOSE_FINALIZED");
+  });
+
+  it("does not invoke post-close swap hook again after a restart in POST_CLOSE_SWAP_IN_PROGRESS", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+
+    await stateRepository.upsert({
+      ...buildCloseConfirmedPosition("pos_swap_resume"),
+      status: "RECONCILING",
+      needsReconciliation: true,
+      lastWriteActionId: "act_swap_resume",
+    });
+
+    await actionRepository.upsert({
+      actionId: "act_swap_resume",
+      type: "CLOSE",
+      status: "RECONCILING",
+      wallet: "wallet_001",
+      positionId: "pos_swap_resume",
+      idempotencyKey: "wallet_001:CLOSE:pos_swap_resume",
+      requestPayload: {
+        reason: "operator close",
+      },
+      resultPayload: {
+        actionType: "CLOSE",
+        closedPositionId: "pos_swap_resume",
+        txIds: ["tx_swap_resume"],
+        phase: "POST_CLOSE_SWAP_IN_PROGRESS",
+        swapIntentId: "act_swap_resume:POST_CLOSE_SWAP",
+      },
+      txIds: ["tx_swap_resume"],
+      error: null,
+      requestedAt: "2026-04-20T00:01:00.000Z",
+      startedAt: "2026-04-20T00:02:00.000Z",
+      completedAt: null,
+      requestedBy: "operator",
+    });
+
+    let hookCalls = 0;
+    const finalized = await finalizeClose({
+      actionId: "act_swap_resume",
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({}),
+      postCloseSwapHook: async () => {
+        hookCalls += 1;
+        return { txId: "tx_swap_duplicate" };
+      },
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(hookCalls).toBe(0);
+    expect(finalized.outcome).toBe("RECONCILIATION_REQUIRED");
+    expect(finalized.action.status).toBe("FAILED");
+    expect(finalized.position?.status).toBe("RECONCILIATION_REQUIRED");
+  });
+
+  it("does not execute post-close swap hook twice after hook success followed by persistence failure", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_swap_persist_fail"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_swap_persist_fail",
+      payload: {
+        reason: "operator close",
+      },
+      requestedBy: "operator",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_swap_persist_fail",
+              txIds: ["tx_swap_persist_fail"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    let hookCalls = 0;
+    let failClosedWrite = true;
+    const flakyStateRepository = {
+      get: (positionId: string) => stateRepository.get(positionId),
+      list: () => stateRepository.list(),
+      replaceAll: (positions: Position[]) => stateRepository.replaceAll(positions),
+      upsert: async (position: Position) => {
+        if (
+          failClosedWrite &&
+          position.positionId === "pos_swap_persist_fail" &&
+          position.status === "CLOSED"
+        ) {
+          failClosedWrite = false;
+          throw new Error("simulated closed position write failure");
+        }
+
+        return stateRepository.upsert(position);
+      },
+    } as StateRepository;
+
+    const first = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository: flakyStateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_swap_persist_fail"),
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_swap_persist_fail",
+            txIds: ["tx_swap_persist_fail"],
+          },
+        },
+      }),
+      journalRepository,
+      postCloseSwapHook: async () => {
+        hookCalls += 1;
+        return { txId: "tx_swap_once" };
+      },
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(first.outcome).toBe("RECONCILIATION_REQUIRED");
+    expect(hookCalls).toBe(1);
+
+    const second = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_swap_persist_fail"),
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_swap_persist_fail",
+            txIds: ["tx_swap_persist_fail"],
+          },
+        },
+      }),
+      journalRepository,
+      postCloseSwapHook: async () => {
+        hookCalls += 1;
+        return { txId: "tx_swap_twice_should_not_happen" };
+      },
+      now: () => "2026-04-20T00:06:00.000Z",
+    });
+
+    expect(second.outcome).toBe("UNCHANGED");
+    expect(second.action.status).toBe("FAILED");
+    expect(hookCalls).toBe(1);
   });
 });

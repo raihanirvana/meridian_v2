@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  CandidateSchema,
   DataFreshnessSnapshotSchema,
   DlmmMicrostructureSnapshotSchema,
   MarketFeatureSnapshotSchema,
@@ -31,7 +32,9 @@ export const CandidateDetailsSchema = z.object({
 });
 
 export type ListCandidatesRequest = z.infer<typeof ListCandidatesRequestSchema>;
+export type CandidateInput = z.input<typeof CandidateSchema>;
 export type CandidateDetails = z.infer<typeof CandidateDetailsSchema>;
+export type CandidateDetailsInput = z.input<typeof CandidateDetailsSchema>;
 
 export interface ScreeningGateway {
   listCandidates(request: ListCandidatesRequest): Promise<Candidate[]>;
@@ -39,8 +42,8 @@ export interface ScreeningGateway {
 }
 
 export interface MockScreeningGatewayBehaviors {
-  listCandidates: MockBehavior<Candidate[]>;
-  getCandidateDetails: MockBehavior<CandidateDetails>;
+  listCandidates: MockBehavior<CandidateInput[]>;
+  getCandidateDetails: MockBehavior<CandidateDetailsInput>;
 }
 
 export class MockScreeningGateway implements ScreeningGateway {
@@ -52,7 +55,9 @@ export class MockScreeningGateway implements ScreeningGateway {
     request: ListCandidatesRequest,
   ): Promise<Candidate[]> {
     ListCandidatesRequestSchema.parse(request);
-    return resolveMockBehavior(this.behaviors.listCandidates);
+    return CandidateSchema.array().parse(
+      await resolveMockBehavior(this.behaviors.listCandidates),
+    );
   }
 
   public async getCandidateDetails(

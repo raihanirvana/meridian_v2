@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   AmbiguousSubmissionError,
+  DeployLiquidityRequestSchema,
   MockDlmmGateway,
 } from "../../src/adapters/dlmm/DlmmGateway.js";
 import { ActionRepository } from "../../src/adapters/storage/ActionRepository.js";
@@ -114,6 +115,180 @@ afterEach(async () => {
 });
 
 describe("deploy flow", () => {
+  it("DeployLiquidityRequestSchema rejects invalid strategy", () => {
+    expect(() =>
+      DeployLiquidityRequestSchema.parse({
+        ...deployPayload,
+        wallet: "wallet_001",
+        strategy: "random",
+      } as never),
+    ).toThrow();
+  });
+
+  it("DeployLiquidityRequestSchema rejects amountBase=0 and amountQuote=0", () => {
+    expect(() =>
+      DeployLiquidityRequestSchema.parse({
+        ...deployPayload,
+        wallet: "wallet_001",
+        amountBase: 0,
+        amountQuote: 0,
+      }),
+    ).toThrow(/amountBase or amountQuote must be greater than zero/i);
+  });
+
+  it("DeployLiquidityRequestSchema rejects rangeLowerBin >= rangeUpperBin", () => {
+    expect(() =>
+      DeployLiquidityRequestSchema.parse({
+        ...deployPayload,
+        wallet: "wallet_001",
+        rangeLowerBin: 20,
+        rangeUpperBin: 20,
+      }),
+    ).toThrow(/must be greater than rangeLowerBin/i);
+  });
+
+  it("rejects deploy requests when both amountBase and amountQuote are zero", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    await expect(
+      requestDeploy({
+        actionQueue,
+        wallet: "wallet_001",
+        payload: {
+          ...deployPayload,
+          amountBase: 0,
+          amountQuote: 0,
+        },
+        requestedBy: "system",
+      }),
+    ).rejects.toThrow(/amountBase or amountQuote must be greater than zero/i);
+  });
+
+  it("rejects non-canonical strategy values at the gateway boundary", async () => {
+    const gateway = new MockDlmmGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_invalid_strategy",
+          txIds: ["tx_invalid_strategy"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: { wallet: "wallet_001", positions: [] },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    await expect(
+      gateway.deployLiquidity({
+        ...(deployPayload as unknown as Record<string, unknown>),
+        wallet: "wallet_001",
+        strategy: "random",
+      } as never),
+    ).rejects.toThrow();
+  });
+
+  it("rejects invalid deploy bin ranges at the gateway boundary", async () => {
+    const gateway = new MockDlmmGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_invalid_range",
+          txIds: ["tx_invalid_range"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: { wallet: "wallet_001", positions: [] },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    await expect(
+      gateway.deployLiquidity({
+        ...deployPayload,
+        wallet: "wallet_001",
+        rangeLowerBin: 20,
+        rangeUpperBin: 20,
+      }),
+    ).rejects.toThrow(/must be greater than rangeLowerBin/i);
+  });
+
   it("processes a deploy from request to confirmed OPEN position", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -1344,7 +1519,7 @@ describe("deploy flow", () => {
     );
   });
 
-  it("keeps deploy in WAITING_CONFIRMATION when on-chain submit succeeds but local position write fails", async () => {
+  it("recovers a confirmed deploy when local pending state fell back to reconciliation", async () => {
     const directory = await makeTempDir();
     const actionsPath = path.join(directory, "actions.json");
     const positionsPath = path.join(directory, "positions.json");
@@ -1474,9 +1649,116 @@ describe("deploy flow", () => {
       now: () => "2026-04-20T01:05:00.000Z",
     });
 
-    expect(confirmation.outcome).toBe("TIMED_OUT");
-    expect(confirmation.action.status).toBe("TIMED_OUT");
-    expect(confirmation.position?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(confirmation.outcome).toBe("CONFIRMED");
+    expect(confirmation.action.status).toBe("DONE");
+    expect(confirmation.position?.status).toBe("OPEN");
+    expect(confirmation.position?.positionId).toBe("pos_recover");
+  });
+
+  it("reconstructs an OPEN position when confirmation succeeds but local pending state is missing", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: buildConfirmedPosition("pos_recover_missing"),
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_recover_missing",
+          txIds: ["tx_recover_missing"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [buildConfirmedPosition("pos_recover_missing")],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    await stateRepository.replaceAll([]);
+
+    const confirmation = await confirmDeployAction({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway,
+      journalRepository,
+      now: () => "2026-04-20T01:05:00.000Z",
+    });
+
+    expect(confirmation.outcome).toBe("CONFIRMED");
+    expect(confirmation.action.status).toBe("DONE");
+    expect(confirmation.position?.status).toBe("OPEN");
+    expect(confirmation.position?.positionId).toBe("pos_recover_missing");
   });
 
   it("does not mark action TIMED_OUT if reconciliation position write fails during timeout handling", async () => {

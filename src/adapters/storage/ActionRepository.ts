@@ -1,4 +1,5 @@
 import { ActionSchema, type Action } from "../../domain/entities/Action.js";
+import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 
 import { FileStore, type FileStoreOptions } from "./FileStore.js";
 
@@ -9,6 +10,11 @@ export interface ActionRepositoryOptions extends FileStoreOptions {
 export interface UpsertByIdempotencyKeyResult {
   action: Action;
   created: boolean;
+}
+
+export interface ClaimNextForProcessingResult {
+  previousAction: Action;
+  claimedAction: Action;
 }
 
 export class ActionStoreCorruptError extends Error {
@@ -164,5 +170,56 @@ export class ActionRepository {
       this.filePath,
       JSON.stringify(stableOrder, null, 2),
     );
+  }
+
+  public async claimNextForProcessing(
+    statuses: Action["status"][],
+    startedAt: string,
+  ): Promise<ClaimNextForProcessingResult | null> {
+    const allowedStatuses = new Set(statuses);
+    let claimResult: ClaimNextForProcessingResult | null = null;
+
+    await this.fileStore.updateTextAtomic(this.filePath, async (raw) => {
+      const actions = raw === null ? [] : parseActions(raw, this.filePath);
+      const sortedActions = [...actions].sort((left, right) => {
+        const requestedAtOrder = left.requestedAt.localeCompare(
+          right.requestedAt,
+        );
+        if (requestedAtOrder !== 0) {
+          return requestedAtOrder;
+        }
+
+        return left.actionId.localeCompare(right.actionId);
+      });
+      const nextAction =
+        sortedActions.find((action) => allowedStatuses.has(action.status)) ??
+        null;
+
+      if (nextAction === null) {
+        return raw ?? JSON.stringify([], null, 2);
+      }
+
+      const claimedAction = ActionSchema.parse({
+        ...nextAction,
+        status: transitionActionStatus(nextAction.status, "RUNNING"),
+        startedAt,
+        completedAt: null,
+      });
+      claimResult = {
+        previousAction: nextAction,
+        claimedAction,
+      };
+
+      const nextActions = actions.map((action) =>
+        action.actionId === claimedAction.actionId ? claimedAction : action,
+      );
+      const stableOrder = [...ActionSchema.array().parse(nextActions)].sort(
+        (left, right) => left.actionId.localeCompare(right.actionId),
+      );
+
+      return JSON.stringify(stableOrder, null, 2);
+    });
+
+    return claimResult;
   }
 }

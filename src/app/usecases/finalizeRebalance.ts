@@ -612,6 +612,13 @@ function validatePostCloseRedeploySettlement(
   }
 
   if (
+    (closeResult.releasedAmountBase ?? 0) <= 0 &&
+    (closeResult.releasedAmountQuote ?? 0) <= 0
+  ) {
+    return "Rebalance redeploy validation failed because closed position released no usable token amounts";
+  }
+
+  if (
     requestedRedeploy.amountBase > 0 &&
     closeResult.releasedAmountBase === undefined
   ) {

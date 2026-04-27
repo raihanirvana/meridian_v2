@@ -4,6 +4,7 @@ import {
   PositionSchema,
   type Position,
 } from "../../domain/entities/Position.js";
+import { StrategySchema } from "../../domain/types/enums.js";
 import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 
 export type AmbiguousSubmissionOperation =
@@ -51,21 +52,43 @@ export function isAmbiguousSubmissionError(
   return error instanceof AmbiguousSubmissionError;
 }
 
-export const DeployLiquidityRequestSchema = z.object({
-  wallet: z.string().min(1),
-  poolAddress: z.string().min(1),
-  tokenXMint: z.string().min(1).optional(),
-  tokenYMint: z.string().min(1).optional(),
-  baseMint: z.string().min(1).optional(),
-  quoteMint: z.string().min(1).optional(),
-  amountBase: z.number().nonnegative(),
-  amountQuote: z.number().nonnegative(),
-  slippageBps: z.number().int().positive().max(10_000).optional(),
-  strategy: z.string().min(1),
-  rangeLowerBin: z.number().int().optional(),
-  rangeUpperBin: z.number().int().optional(),
-  initialActiveBin: z.number().int().nullable().optional(),
-});
+export const DeployLiquidityRequestSchema = z
+  .object({
+    wallet: z.string().min(1),
+    poolAddress: z.string().min(1),
+    tokenXMint: z.string().min(1).optional(),
+    tokenYMint: z.string().min(1).optional(),
+    baseMint: z.string().min(1).optional(),
+    quoteMint: z.string().min(1).optional(),
+    amountBase: z.number().nonnegative(),
+    amountQuote: z.number().nonnegative(),
+    slippageBps: z.number().int().positive().max(10_000).optional(),
+    strategy: StrategySchema,
+    rangeLowerBin: z.number().int().optional(),
+    rangeUpperBin: z.number().int().optional(),
+    initialActiveBin: z.number().int().nullable().optional(),
+  })
+  .superRefine((payload, ctx) => {
+    if (payload.amountBase <= 0 && payload.amountQuote <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountBase"],
+        message: "amountBase or amountQuote must be greater than zero",
+      });
+    }
+
+    if (
+      payload.rangeLowerBin !== undefined &&
+      payload.rangeUpperBin !== undefined &&
+      payload.rangeLowerBin >= payload.rangeUpperBin
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rangeUpperBin"],
+        message: "must be greater than rangeLowerBin",
+      });
+    }
+  });
 
 export const DeployLiquidityResultSchema = z.object({
   actionType: z.literal("DEPLOY"),
@@ -158,14 +181,22 @@ export type DeployLiquidityRequest = z.infer<
   typeof DeployLiquidityRequestSchema
 >;
 export type DeployLiquidityResult = z.infer<typeof DeployLiquidityResultSchema>;
+export type DeployLiquidityResultInput = z.input<
+  typeof DeployLiquidityResultSchema
+>;
 export type ClosePositionRequest = z.infer<typeof ClosePositionRequestSchema>;
 export type ClosePositionResult = z.infer<typeof ClosePositionResultSchema>;
+export type ClosePositionResultInput = z.input<typeof ClosePositionResultSchema>;
 export type ClaimFeesRequest = z.infer<typeof ClaimFeesRequestSchema>;
 export type ClaimFeesResult = z.infer<typeof ClaimFeesResultSchema>;
+export type ClaimFeesResultInput = z.input<typeof ClaimFeesResultSchema>;
 export type PartialClosePositionRequest = z.infer<
   typeof PartialClosePositionRequestSchema
 >;
 export type PartialClosePositionResult = z.infer<
+  typeof PartialClosePositionResultSchema
+>;
+export type PartialClosePositionResultInput = z.input<
   typeof PartialClosePositionResultSchema
 >;
 export type DlmmSimulationResult = z.infer<typeof DlmmSimulationResultSchema>;
@@ -197,12 +228,12 @@ export interface DlmmGateway {
 
 export interface MockDlmmGatewayBehaviors {
   getPosition: MockBehavior<Position | null>;
-  deployLiquidity: MockBehavior<DeployLiquidityResult>;
+  deployLiquidity: MockBehavior<DeployLiquidityResultInput>;
   simulateDeployLiquidity?: MockBehavior<DlmmSimulationResult>;
-  closePosition: MockBehavior<ClosePositionResult>;
+  closePosition: MockBehavior<ClosePositionResultInput>;
   simulateClosePosition?: MockBehavior<DlmmSimulationResult>;
-  claimFees: MockBehavior<ClaimFeesResult>;
-  partialClosePosition: MockBehavior<PartialClosePositionResult>;
+  claimFees: MockBehavior<ClaimFeesResultInput>;
+  partialClosePosition: MockBehavior<PartialClosePositionResultInput>;
   listPositionsForWallet: MockBehavior<WalletPositionsSnapshot>;
   getPoolInfo: MockBehavior<PoolInfo>;
 }

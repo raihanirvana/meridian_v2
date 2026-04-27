@@ -769,7 +769,6 @@ describe("screening worker", () => {
         },
       },
       aiMode: "disabled",
-      enrichmentConcurrency: 1,
       now: () => now,
     });
 

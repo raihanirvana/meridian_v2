@@ -158,6 +158,18 @@ function buildOpenPosition(input: {
     input.pendingPosition.rangeUpperBin;
   const activeBin =
     input.confirmedPosition.activeBin ?? input.pendingPosition.activeBin;
+  const openStatus =
+    input.pendingPosition.status === "OPEN"
+      ? "OPEN"
+      : input.pendingPosition.status === "RECONCILIATION_REQUIRED"
+        ? transitionPositionStatus(
+            transitionPositionStatus(
+              input.pendingPosition.status,
+              "RECONCILING",
+            ),
+            "OPEN",
+          )
+        : transitionPositionStatus(input.pendingPosition.status, "OPEN");
 
   return PositionSchema.parse({
     ...input.pendingPosition,
@@ -169,10 +181,7 @@ function buildOpenPosition(input: {
     // PerformanceRecord/lesson learning sees the strategy that was actually
     // deployed.
     strategy: input.pendingPosition.strategy,
-    status:
-      input.pendingPosition.status === "OPEN"
-        ? "OPEN"
-        : transitionPositionStatus(input.pendingPosition.status, "OPEN"),
+    status: openStatus,
     openedAt:
       input.confirmedPosition.openedAt ??
       input.pendingPosition.openedAt ??
@@ -528,16 +537,27 @@ export async function confirmDeployAction(
       const confirmedPosition = await input.dlmmGateway.getPosition(
         deployResult.positionId,
       );
+      const recoverablePendingPosition =
+        pendingPosition === null
+          ? buildPendingDeployPosition({
+              action: latestAction,
+              payload,
+              positionId: deployResult.positionId,
+              now,
+            })
+          : pendingPosition;
 
       if (
-        pendingPosition !== null &&
-        pendingPosition.status === "OPEN" &&
         confirmedPosition !== null &&
-        confirmedPosition.status === "OPEN"
+        confirmedPosition.status === "OPEN" &&
+        (pendingPosition === null ||
+          pendingPosition.status === "DEPLOYING" ||
+          pendingPosition.status === "RECONCILIATION_REQUIRED" ||
+          pendingPosition.status === "OPEN")
       ) {
         const openPosition = buildOpenPosition({
           confirmedPosition,
-          pendingPosition,
+          pendingPosition: recoverablePendingPosition,
           actionId: latestAction.actionId,
           now,
         });
@@ -589,10 +609,12 @@ export async function confirmDeployAction(
       }
 
       if (
-        pendingPosition === null ||
-        pendingPosition.status !== "DEPLOYING" ||
         confirmedPosition === null ||
-        confirmedPosition.status !== "OPEN"
+        confirmedPosition.status !== "OPEN" ||
+        (pendingPosition !== null &&
+          pendingPosition.status !== "DEPLOYING" &&
+          pendingPosition.status !== "RECONCILIATION_REQUIRED" &&
+          pendingPosition.status !== "OPEN")
       ) {
         const nextPosition = buildReconciliationRequiredPositionFromDeployData({
           action: latestAction,
@@ -607,13 +629,17 @@ export async function confirmDeployAction(
           ...latestAction,
           status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
           error:
-            pendingPosition === null
-              ? `Deploy confirmation requires reconciliation because local pending position is missing for ${deployResult.positionId}`
-              : pendingPosition.status !== "DEPLOYING"
+            confirmedPosition === null
+              ? `Deploy confirmation not found for position ${deployResult.positionId}`
+              : confirmedPosition.status !== "OPEN"
+                ? `Deploy confirmation returned non-open status ${confirmedPosition.status} for ${deployResult.positionId}`
+                : pendingPosition === null
+                  ? `Deploy confirmation requires reconciliation because local pending position is missing for ${deployResult.positionId}`
+                  : pendingPosition.status !== "DEPLOYING" &&
+                      pendingPosition.status !== "RECONCILIATION_REQUIRED" &&
+                      pendingPosition.status !== "OPEN"
                 ? `Deploy confirmation requires reconciliation because local position status is ${pendingPosition.status} for ${deployResult.positionId}`
-                : confirmedPosition === null
-                  ? `Deploy confirmation not found for position ${deployResult.positionId}`
-                  : `Deploy confirmation returned non-open status ${confirmedPosition.status} for ${deployResult.positionId}`,
+                : `Deploy confirmation requires reconciliation for ${deployResult.positionId}`,
           completedAt: now,
         } satisfies Action;
 
@@ -648,7 +674,7 @@ export async function confirmDeployAction(
 
       const openPosition = buildOpenPosition({
         confirmedPosition,
-        pendingPosition,
+        pendingPosition: recoverablePendingPosition,
         actionId: latestAction.actionId,
         now,
       });

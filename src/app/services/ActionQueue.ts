@@ -6,6 +6,7 @@ import { transitionActionStatus } from "../../domain/stateMachines/actionLifecyc
 import { type ActionStatus } from "../../domain/types/enums.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
+import { logger } from "../../infra/logging/logger.js";
 
 import {
   createQueuedAction,
@@ -59,7 +60,6 @@ export class ActionQueue {
   private readonly walletLock: WalletLock;
   private readonly positionLock: PositionLock;
   private readonly now: () => string;
-  private readonly claimedActionIds = new Set<string>();
   private paused = false;
 
   public constructor(options: ActionQueueOptions) {
@@ -91,7 +91,7 @@ export class ActionQueue {
       return enqueueResult.action;
     }
 
-    await this.appendJournalEvent({
+    await this.appendJournalEventBestEffort({
       timestamp: this.now(),
       eventType: "ACTION_ENQUEUED",
       actor: enqueueResult.action.requestedBy,
@@ -122,12 +122,14 @@ export class ActionQueue {
     try {
       return await this.walletLock.withLock(runningAction.wallet, async () => {
         const runAction = async (): Promise<Action> => {
+          let executionResult: QueueExecutionResult;
           try {
-            const executionResult = await handler(runningAction);
-            return this.finalizeAction(runningAction, executionResult);
+            executionResult = await handler(runningAction);
           } catch (error) {
             return this.failAction(runningAction, error);
           }
+
+          return this.finalizeAction(runningAction, executionResult);
         };
 
         if (runningAction.positionId !== null) {
@@ -142,8 +144,6 @@ export class ActionQueue {
     } catch (error) {
       await this.requeueRunningAction(runningAction, error);
       throw error;
-    } finally {
-      this.claimedActionIds.delete(runningAction.actionId);
     }
   }
 
@@ -163,49 +163,28 @@ export class ActionQueue {
   }
 
   private async claimNextAction(): Promise<Action | null> {
-    const queuedActions = await this.actionRepository.listByStatuses([
-      ...PROCESSABLE_STATUSES,
-    ]);
-    const nextAction = queuedActions.find(
-      (action) => !this.claimedActionIds.has(action.actionId),
+    const claimed = await this.actionRepository.claimNextForProcessing(
+      [...PROCESSABLE_STATUSES] as ActionStatus[],
+      this.now(),
     );
-
-    if (!nextAction) {
+    if (claimed === null) {
       return null;
     }
 
-    this.claimedActionIds.add(nextAction.actionId);
-    try {
-      return await this.markRunning(nextAction);
-    } catch (error) {
-      this.claimedActionIds.delete(nextAction.actionId);
-      throw error;
-    }
-  }
-
-  private async markRunning(action: Action): Promise<Action> {
-    const runningStatus = transitionActionStatus(action.status, "RUNNING");
-    const runningAction: Action = {
-      ...action,
-      status: runningStatus,
-      startedAt: this.now(),
-    };
-
-    await this.actionRepository.upsert(runningAction);
-    await this.appendJournalEvent({
+    await this.appendJournalEventBestEffort({
       timestamp: this.now(),
       eventType: "ACTION_RUNNING",
-      actor: runningAction.requestedBy,
-      wallet: runningAction.wallet,
-      positionId: runningAction.positionId,
-      actionId: runningAction.actionId,
-      before: action as unknown as Record<string, unknown>,
-      after: runningAction as unknown as Record<string, unknown>,
+      actor: claimed.claimedAction.requestedBy,
+      wallet: claimed.claimedAction.wallet,
+      positionId: claimed.claimedAction.positionId,
+      actionId: claimed.claimedAction.actionId,
+      before: claimed.previousAction as unknown as Record<string, unknown>,
+      after: claimed.claimedAction as unknown as Record<string, unknown>,
       txIds: [],
-      resultStatus: runningAction.status,
+      resultStatus: claimed.claimedAction.status,
       error: null,
     });
-    return runningAction;
+    return claimed.claimedAction;
   }
 
   private async requeueRunningAction(
@@ -222,7 +201,7 @@ export class ActionQueue {
     };
 
     await this.actionRepository.upsert(retryAction);
-    await this.appendJournalEvent({
+    await this.appendJournalEventBestEffort({
       timestamp: this.now(),
       eventType: "ACTION_RETRY_QUEUED",
       actor: retryAction.requestedBy,
@@ -257,7 +236,7 @@ export class ActionQueue {
     };
 
     await this.actionRepository.upsert(finalizedAction);
-    await this.appendJournalEvent({
+    await this.appendJournalEventBestEffort({
       timestamp: this.now(),
       eventType: "ACTION_FINALIZED",
       actor: finalizedAction.requestedBy,
@@ -286,7 +265,7 @@ export class ActionQueue {
     };
 
     await this.actionRepository.upsert(failedAction);
-    await this.appendJournalEvent({
+    await this.appendJournalEventBestEffort({
       timestamp: this.now(),
       eventType: "ACTION_FAILED",
       actor: failedAction.requestedBy,
@@ -308,5 +287,23 @@ export class ActionQueue {
     }
 
     await this.journalRepository.append(event);
+  }
+
+  private async appendJournalEventBestEffort(
+    event: JournalEvent,
+  ): Promise<void> {
+    try {
+      await this.appendJournalEvent(event);
+    } catch (error) {
+      logger.warn(
+        {
+          err: error,
+          eventType: event.eventType,
+          actionId: event.actionId,
+          wallet: event.wallet,
+        },
+        "action queue journal append failed after state persistence",
+      );
+    }
   }
 }

@@ -194,6 +194,7 @@ function buildGateway(closePosition: Position) {
         actionType: "DEPLOY",
         positionId: "unused",
         txIds: ["tx_deploy"],
+        submissionStatus: "submitted",
       },
     },
     closePosition: {
@@ -202,6 +203,7 @@ function buildGateway(closePosition: Position) {
         actionType: "CLOSE",
         closedPositionId: closePosition.positionId,
         txIds: ["tx_close"],
+        submissionStatus: "submitted",
       },
     },
     claimFees: {
@@ -210,6 +212,7 @@ function buildGateway(closePosition: Position) {
         actionType: "CLAIM_FEES",
         claimedBaseAmount: 0,
         txIds: ["tx_claim"],
+        submissionStatus: "submitted",
       },
     },
     partialClosePosition: {
@@ -274,6 +277,7 @@ class RebalanceIntegrationGateway implements DlmmGateway {
       actionType: "DEPLOY",
       positionId: "pos_new",
       txIds: ["tx_deploy"],
+      submissionStatus: "submitted",
     };
   }
 
@@ -288,6 +292,7 @@ class RebalanceIntegrationGateway implements DlmmGateway {
       actionType: "CLOSE",
       closedPositionId: "pos_old",
       txIds: ["tx_close"],
+      submissionStatus: "submitted",
       estimatedReleasedValueUsd: 120,
       releasedAmountBase: 1,
       releasedAmountQuote: 0.5,
@@ -304,6 +309,7 @@ class RebalanceIntegrationGateway implements DlmmGateway {
       actionType: "CLAIM_FEES",
       claimedBaseAmount: 0,
       txIds: ["tx_claim"],
+      submissionStatus: "submitted",
     };
   }
 
