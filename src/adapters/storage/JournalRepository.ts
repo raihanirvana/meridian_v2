@@ -49,9 +49,23 @@ export class JournalRepository {
 
   public async append(event: JournalEvent): Promise<void> {
     const validated = JournalEventSchema.parse(event);
-    await this.repairMalformedTrailingLineIfNeeded();
-    await this.fileStore.appendLine(this.filePath, JSON.stringify(validated));
+
+    await this.fileStore.updateTextAtomic(
+      this.filePath,
+      async (raw) => {
+        const parsed =
+          raw === null
+            ? { events: [], repaired: false }
+            : this.parseEvents(raw);
+
+        const nextEvents = [...parsed.events, validated];
+        return nextEvents.length === 0
+          ? ""
+          : `${nextEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
+      },
+    );
   }
+
 
   public async list(options: JournalListOptions = {}): Promise<JournalEvent[]> {
     const raw = await this.fileStore.readText(this.filePath);
@@ -60,9 +74,26 @@ export class JournalRepository {
     }
 
     const parsed = this.parseEvents(raw);
-    if (parsed.repaired && options.repairTrailingLine === true) {
-      await this.rewriteValidEvents(parsed.events);
+
+    if (options.repairTrailingLine === true && parsed.repaired) {
+      await this.fileStore.updateTextAtomic(
+        this.filePath,
+        async (currentRaw) => {
+          const currentParsed =
+            currentRaw === null
+              ? { events: [], repaired: false }
+              : this.parseEvents(currentRaw);
+          const contents =
+            currentParsed.events.length === 0
+              ? ""
+              : `${currentParsed.events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+          return contents;
+        },
+      );
+
+      return parsed.events;
     }
+
     return parsed.events;
   }
 
@@ -75,14 +106,16 @@ export class JournalRepository {
     events: JournalEvent[];
     repaired: boolean;
   } {
-    const lines = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
+    const rawLines = raw.split(/\r?\n/);
     const events: JournalEvent[] = [];
     let repaired = false;
-    for (const [index, line] of lines.entries()) {
+
+    for (const [physicalIndex, rawLine] of rawLines.entries()) {
+      const line = rawLine.trim();
+      if (line.length === 0) {
+        continue;
+      }
+
       try {
         events.push(JournalEventSchema.parse(JSON.parse(line)));
       } catch (error) {
@@ -90,41 +123,30 @@ export class JournalRepository {
           error instanceof Error && error.message.trim().length > 0
             ? error.message
             : "unknown parse failure";
-        const isTrailingLine = index === lines.length - 1;
+        const remainingLines = rawLines.slice(physicalIndex + 1);
+        const isTrailingLine = remainingLines.every(
+          (l) => l.trim().length === 0,
+        );
         if (isTrailingLine) {
           repaired = true;
           this.emitRecovery({
             type: "JOURNAL_TRAILING_LINE_SKIPPED",
             filePath: this.filePath,
-            lineNumber: index + 1,
+            lineNumber: physicalIndex + 1,
             reason,
           });
           continue;
         }
 
         throw new JournalStoreCorruptError(
-          `journal file is corrupt at line ${index + 1}: ${reason}`,
+          `journal file is corrupt at line ${physicalIndex + 1}: ${reason}`,
           this.filePath,
-          index + 1,
+          physicalIndex + 1,
         );
       }
     }
 
     return { events, repaired };
-  }
-
-  private async repairMalformedTrailingLineIfNeeded(): Promise<void> {
-    const raw = await this.fileStore.readText(this.filePath);
-    if (raw === null) {
-      return;
-    }
-
-    const parsed = this.parseEvents(raw);
-    if (!parsed.repaired) {
-      return;
-    }
-
-    await this.rewriteValidEvents(parsed.events);
   }
 
   private async rewriteValidEvents(events: JournalEvent[]): Promise<void> {
