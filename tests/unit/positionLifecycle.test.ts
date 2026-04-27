@@ -362,7 +362,7 @@ describe("positionLifecycle", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects in-range positions that still carry outOfRangeSince", () => {
+  it("allows in-range positions to carry stale outOfRangeSince for later management cleanup", () => {
     const result = PositionSchema.safeParse({
       positionId: "pos_002",
       poolAddress: "pool_001",
@@ -398,6 +398,6 @@ describe("positionLifecycle", () => {
       needsReconciliation: false,
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });

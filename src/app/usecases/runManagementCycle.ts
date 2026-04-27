@@ -7,6 +7,7 @@ import type { PriceGateway } from "../../adapters/pricing/PriceGateway.js";
 import type { WalletGateway } from "../../adapters/wallet/WalletGateway.js";
 import type { LlmGateway } from "../../adapters/llm/LlmGateway.js";
 import type { DlmmGateway, PoolInfo } from "../../adapters/dlmm/DlmmGateway.js";
+import type { Action } from "../../domain/entities/Action.js";
 import type { Position } from "../../domain/entities/Position.js";
 import type { PortfolioState } from "../../domain/entities/PortfolioState.js";
 import type { RebalanceReviewInput } from "../../domain/entities/RebalanceDecision.js";
@@ -346,6 +347,31 @@ export interface RunManagementCycleResult {
   positionResults: ManagementCyclePositionResult[];
 }
 
+const ACTIVE_WRITE_ACTION_STATUSES: Action["status"][] = [
+  "QUEUED",
+  "RUNNING",
+  "WAITING_CONFIRMATION",
+  "RECONCILING",
+  "RETRY_QUEUED",
+];
+
+async function findActiveWriteActionForPosition(input: {
+  actionRepository: ActionRepository;
+  wallet: string;
+  positionId: string;
+}): Promise<Action | null> {
+  const pendingActions = await input.actionRepository.listByStatuses(
+    ACTIVE_WRITE_ACTION_STATUSES,
+  );
+
+  return (
+    pendingActions.find(
+      (action) =>
+        action.wallet === input.wallet && action.positionId === input.positionId,
+    ) ?? null
+  );
+}
+
 async function appendJournalEvent(
   journalRepository: JournalRepository,
   event: {
@@ -609,6 +635,52 @@ export async function runManagementCycle(
         continue;
       }
 
+      const activeWriteAction = await findActiveWriteActionForPosition({
+        actionRepository: input.actionRepository,
+        wallet: input.wallet,
+        positionId: managedPosition.positionId,
+      });
+      if (activeWriteAction !== null) {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: activeWriteAction.actionId,
+          before: null,
+          after: {
+            action: evaluation.action,
+            reason: evaluation.reason,
+            triggerReasons: evaluation.triggerReasons,
+            blockingActionId: activeWriteAction.actionId,
+            blockingActionType: activeWriteAction.type,
+            blockingActionStatus: activeWriteAction.status,
+          },
+          txIds: activeWriteAction.txIds,
+          resultStatus: "BLOCKED_BY_RISK",
+          error: "wallet already has an active write action",
+        });
+
+        positionResults.push({
+          positionId: managedPosition.positionId,
+          managementAction: evaluation.action,
+          status: "BLOCKED_BY_RISK",
+          reason: "wallet already has an active write action",
+          triggerReasons: [
+            ...evaluation.triggerReasons,
+            "wallet already has an active write action",
+          ],
+          actionId: null,
+          riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
+        });
+        continue;
+      }
+
       const action = await requestClaimFees({
         actionQueue: input.actionQueue,
         stateRepository: input.stateRepository,
@@ -662,6 +734,52 @@ export async function runManagementCycle(
           status: "DRY_RUN",
           reason: evaluation.reason,
           triggerReasons: evaluation.triggerReasons,
+          actionId: null,
+          riskResult: null,
+          aiMode,
+          aiSource: aiAdvisory.source,
+          aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+          aiReasoning: aiAdvisory.aiReasoning,
+        });
+        continue;
+      }
+
+      const activeWriteAction = await findActiveWriteActionForPosition({
+        actionRepository: input.actionRepository,
+        wallet: input.wallet,
+        positionId: managedPosition.positionId,
+      });
+      if (activeWriteAction !== null) {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: activeWriteAction.actionId,
+          before: null,
+          after: {
+            action: evaluation.action,
+            reason: evaluation.reason,
+            triggerReasons: evaluation.triggerReasons,
+            blockingActionId: activeWriteAction.actionId,
+            blockingActionType: activeWriteAction.type,
+            blockingActionStatus: activeWriteAction.status,
+          },
+          txIds: activeWriteAction.txIds,
+          resultStatus: "BLOCKED_BY_RISK",
+          error: "wallet already has an active write action",
+        });
+
+        positionResults.push({
+          positionId: managedPosition.positionId,
+          managementAction: evaluation.action,
+          status: "BLOCKED_BY_RISK",
+          reason: "wallet already has an active write action",
+          triggerReasons: [
+            ...evaluation.triggerReasons,
+            "wallet already has an active write action",
+          ],
           actionId: null,
           riskResult: null,
           aiMode,
@@ -861,6 +979,51 @@ export async function runManagementCycle(
             continue;
           }
 
+          const activeWriteAction = await findActiveWriteActionForPosition({
+            actionRepository: input.actionRepository,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+          });
+          if (activeWriteAction !== null) {
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION",
+              actor: requestedBy,
+              wallet: input.wallet,
+              positionId: managedPosition.positionId,
+              actionId: activeWriteAction.actionId,
+              before: null,
+              after: {
+                action: "CLAIM_FEES",
+                reason: "AI rebalance planner selected claim only",
+                triggerReasons: aiRebalanceReview.validation.reasonCodes,
+                blockingActionId: activeWriteAction.actionId,
+                blockingActionType: activeWriteAction.type,
+                blockingActionStatus: activeWriteAction.status,
+              },
+              txIds: activeWriteAction.txIds,
+              resultStatus: "BLOCKED_BY_RISK",
+              error: "wallet already has an active write action",
+            });
+            positionResults.push({
+              positionId: managedPosition.positionId,
+              managementAction: "CLAIM_FEES",
+              status: "BLOCKED_BY_RISK",
+              reason: "wallet already has an active write action",
+              triggerReasons: [
+                ...aiRebalanceReview.validation.reasonCodes,
+                "wallet already has an active write action",
+              ],
+              actionId: null,
+              riskResult: null,
+              aiMode,
+              aiSource: aiAdvisory.source,
+              aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+              aiReasoning: aiAdvisory.aiReasoning,
+            });
+            continue;
+          }
+
           const action = await requestClaimFees({
             actionQueue: input.actionQueue,
             stateRepository: input.stateRepository,
@@ -899,6 +1062,51 @@ export async function runManagementCycle(
               status: "DRY_RUN",
               reason: "AI rebalance planner selected exit",
               triggerReasons: aiRebalanceReview.validation.reasonCodes,
+              actionId: null,
+              riskResult: null,
+              aiMode,
+              aiSource: aiAdvisory.source,
+              aiSuggestedAction: aiAdvisory.aiSuggestedAction,
+              aiReasoning: aiAdvisory.aiReasoning,
+            });
+            continue;
+          }
+
+          const activeWriteAction = await findActiveWriteActionForPosition({
+            actionRepository: input.actionRepository,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+          });
+          if (activeWriteAction !== null) {
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION",
+              actor: requestedBy,
+              wallet: input.wallet,
+              positionId: managedPosition.positionId,
+              actionId: activeWriteAction.actionId,
+              before: null,
+              after: {
+                action: "CLOSE",
+                reason: "AI rebalance planner selected exit",
+                triggerReasons: aiRebalanceReview.validation.reasonCodes,
+                blockingActionId: activeWriteAction.actionId,
+                blockingActionType: activeWriteAction.type,
+                blockingActionStatus: activeWriteAction.status,
+              },
+              txIds: activeWriteAction.txIds,
+              resultStatus: "BLOCKED_BY_RISK",
+              error: "wallet already has an active write action",
+            });
+            positionResults.push({
+              positionId: managedPosition.positionId,
+              managementAction: "CLOSE",
+              status: "BLOCKED_BY_RISK",
+              reason: "wallet already has an active write action",
+              triggerReasons: [
+                ...aiRebalanceReview.validation.reasonCodes,
+                "wallet already has an active write action",
+              ],
               actionId: null,
               riskResult: null,
               aiMode,

@@ -150,18 +150,6 @@ export const PositionSchema = z
       });
     }
 
-    const activeBinInRange =
-      position.activeBin !== null &&
-      position.activeBin >= position.rangeLowerBin &&
-      position.activeBin <= position.rangeUpperBin;
-    if (activeBinInRange && position.outOfRangeSince !== null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["outOfRangeSince"],
-        message: "must be null when activeBin is inside the current range",
-      });
-    }
-
     if (
       position.peakPnlPct !== undefined &&
       position.peakPnlPct !== null &&

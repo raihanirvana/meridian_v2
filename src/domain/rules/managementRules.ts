@@ -140,12 +140,16 @@ function isRangeInvalid(input: ManagementEvaluationInput): boolean {
   const { activeBin, rangeLowerBin, rangeUpperBin, outOfRangeSince } =
     input.position;
 
-  if (outOfRangeSince !== null) {
-    return true;
+  if (activeBin === null) {
+    return outOfRangeSince !== null;
   }
 
-  if (activeBin === null) {
+  if (activeBin >= rangeLowerBin && activeBin <= rangeUpperBin) {
     return false;
+  }
+
+  if (outOfRangeSince !== null) {
+    return true;
   }
 
   return activeBin < rangeLowerBin || activeBin > rangeUpperBin;

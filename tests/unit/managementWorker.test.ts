@@ -89,6 +89,28 @@ function buildDeployAction(overrides: Partial<Action> = {}): Action {
   };
 }
 
+function buildClaimFeesAction(overrides: Partial<Action> = {}): Action {
+  return {
+    actionId: "act_claim",
+    type: "CLAIM_FEES",
+    status: "QUEUED",
+    wallet: "wallet_001",
+    positionId: "pos_001",
+    idempotencyKey: "wallet_001:CLAIM_FEES:pos_001:seed",
+    requestPayload: {
+      reason: "seed claim",
+    },
+    resultPayload: null,
+    txIds: [],
+    error: null,
+    requestedAt: "2026-04-21T11:55:00.000Z",
+    startedAt: null,
+    completedAt: null,
+    requestedBy: "system",
+    ...overrides,
+  };
+}
+
 function buildRiskPolicy(
   overrides: Partial<PortfolioRiskPolicy> = {},
 ): PortfolioRiskPolicy {
@@ -199,6 +221,78 @@ describe("management worker", () => {
     const actions = await actionRepository.list();
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("CLOSE");
+  });
+
+  it("blocks management CLOSE enqueue when the position already has a pending write action", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition());
+    await actionRepository.upsert(buildClaimFeesAction());
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy(),
+      signalProvider: () => ({
+        forcedManualClose: true,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      journalRepository,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.managementAction).toBe("CLOSE");
+    expect(result.positionResults[0]?.status).toBe("BLOCKED_BY_RISK");
+    expect(result.positionResults[0]?.actionId).toBeNull();
+
+    const actions = await actionRepository.list();
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.type).toBe("CLAIM_FEES");
+
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION");
   });
 
   it("dispatches REBALANCE even when recent deploys are at the limit", async () => {
@@ -461,6 +555,86 @@ describe("management worker", () => {
     const actions = await actionRepository.list();
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("CLAIM_FEES");
+  });
+
+  it("blocks management CLAIM_FEES enqueue when the position already has a pending write action", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition());
+    await actionRepository.upsert(buildClaimFeesAction());
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        claimFeesThresholdUsd: 10,
+      }),
+      claimConfig: {
+        autoSwapAfterClaim: false,
+        swapOutputMint: "So11111111111111111111111111111111111111112",
+        autoCompoundFees: false,
+        compoundToSide: "quote",
+      },
+      signalProvider: () => ({
+        forcedManualClose: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 25,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      journalRepository,
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.managementAction).toBe("CLAIM_FEES");
+    expect(result.positionResults[0]?.status).toBe("BLOCKED_BY_RISK");
+    expect(result.positionResults[0]?.actionId).toBeNull();
+
+    const actions = await actionRepository.list();
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.type).toBe("CLAIM_FEES");
+
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION");
   });
 
   it("persists peak pnl state and later closes on trailing retrace", async () => {

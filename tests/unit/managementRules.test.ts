@@ -230,6 +230,27 @@ describe("management rules", () => {
     expect(result.priority).toBe("MAINTENANCE_REBALANCE");
   });
 
+  it("does not return REBALANCE when outOfRangeSince is stale but activeBin is back inside range", () => {
+    const result = evaluateManagementAction(
+      buildInput({
+        position: {
+          activeBin: 15,
+          outOfRangeSince: "2026-04-20T00:30:00.000Z",
+        },
+        signals: {
+          expectedRebalanceImprovement: true,
+        },
+        policy: {
+          claimFeesThresholdUsd: 999,
+          partialCloseEnabled: false,
+        },
+      }),
+    );
+
+    expect(result.action).not.toBe("REBALANCE");
+    expect(result.action).toBe("HOLD");
+  });
+
   it("returns CLOSE when trailing take profit retraces from persisted peak", () => {
     const result = evaluateManagementAction(
       buildInput({
