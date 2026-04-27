@@ -81,6 +81,10 @@ export const UserConfigSchema = z
         minHolderCount: z.number().int().positive(),
         allowedBinSteps: z.array(z.number().int().positive()).min(1),
         blockedLaunchpads: z.array(z.string().min(1)),
+        maxTopHolderPct: PercentNumber.default(35),
+        maxBotHolderPct: PercentNumber.default(20),
+        maxBundleRiskPct: PercentNumber.default(20),
+        maxWashTradingRiskPct: PercentNumber.default(20),
         intervalTimezone: z.string().min(1).default("UTC"),
         peakHours: z
           .array(

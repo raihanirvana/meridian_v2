@@ -159,6 +159,31 @@ function toJournalRecord(value: unknown): Record<string, unknown> {
     .parse(JSON.parse(JSON.stringify(value)));
 }
 
+function closeProceedsFromResult(
+  closeResult: z.infer<typeof CloseActionResultPayloadSchema>,
+): Parameters<typeof buildCloseAccountingSummary>[2] | undefined {
+  return {
+    ...(closeResult.releasedAmountBase === undefined
+      ? {}
+      : { releasedAmountBase: closeResult.releasedAmountBase }),
+    ...(closeResult.releasedAmountQuote === undefined
+      ? {}
+      : { releasedAmountQuote: closeResult.releasedAmountQuote }),
+    ...(closeResult.estimatedReleasedValueUsd === undefined
+      ? {}
+      : { estimatedReleasedValueUsd: closeResult.estimatedReleasedValueUsd }),
+    ...(closeResult.releasedAmountSource === undefined
+      ? {}
+      : { releasedAmountSource: closeResult.releasedAmountSource }),
+    ...(closeResult.preCloseFeesClaimed === undefined
+      ? {}
+      : { preCloseFeesClaimed: closeResult.preCloseFeesClaimed }),
+    ...(closeResult.preCloseFeesClaimError === undefined
+      ? {}
+      : { preCloseFeesClaimError: closeResult.preCloseFeesClaimError }),
+  };
+}
+
 async function appendJournalEvent(
   journalRepository: JournalRepository | undefined,
   event: JournalEvent,
@@ -260,10 +285,18 @@ function inferCloseConfirmedPosition(
     useOpenOnlyReadModel &&
     confirmedPosition === null &&
     closingPosition !== null &&
+    closingPosition.status === "CLOSED"
+  ) {
+    return closingPosition;
+  }
+
+  if (
+    useOpenOnlyReadModel &&
+    confirmedPosition === null &&
+    closingPosition !== null &&
     (closingPosition.status === "CLOSING_FOR_REBALANCE" ||
       closingPosition.status === "CLOSE_CONFIRMED" ||
-      closingPosition.status === "RECONCILING" ||
-      closingPosition.status === "CLOSED")
+      closingPosition.status === "RECONCILING")
   ) {
     return buildCloseConfirmedPosition({
       confirmedPosition: closingPosition,
@@ -654,7 +687,13 @@ async function finalizeCloseLeg(input: {
       closedPosition: closingPosition,
       closeAccounting:
         input.closeSubmitted.closeAccounting ??
-        toJournalRecord(buildCloseAccountingSummary(closingPosition, null)),
+        toJournalRecord(
+          buildCloseAccountingSummary(
+            closingPosition,
+            null,
+            closeProceedsFromResult(input.closeSubmitted.closeResult),
+          ),
+        ),
       availableCapitalUsd:
         input.closeSubmitted.availableCapitalUsd ??
         resolveUsableEstimatedReleasedValueUsd({
@@ -703,7 +742,11 @@ async function finalizeCloseLeg(input: {
     actionId: input.latestAction.actionId,
     now: input.now,
   });
-  const closeAccounting = buildCloseAccountingSummary(closedPosition, null);
+  const closeAccounting = buildCloseAccountingSummary(
+    closedPosition,
+    null,
+    closeProceedsFromResult(input.closeSubmitted.closeResult),
+  );
 
   return {
     closingPosition,
@@ -1571,6 +1614,8 @@ export async function finalizeRebalance(
           const oldPosition = await input.stateRepository.get(
             latestActionAfterRedeployLock.positionId,
           );
+          const oldPositionForReconstruction =
+            oldPosition ?? latestPayload.performanceSnapshot ?? null;
 
           if (
             pendingPosition !== null &&
@@ -1674,6 +1719,112 @@ export async function finalizeRebalance(
                 action: latestActionAfterRedeployLock,
                 oldPosition,
                 newPosition: pendingPosition,
+              }),
+              after: toJournalRecord({
+                action: doneAction,
+                oldPosition,
+                newPosition: openPosition,
+              }),
+              txIds: doneAction.txIds,
+              resultStatus: doneAction.status,
+              error: null,
+            });
+
+            return {
+              action: doneAction,
+              oldPosition,
+              newPosition: openPosition,
+              outcome: "FINALIZED" as const,
+            };
+          }
+
+          if (
+            pendingPosition === null &&
+            confirmedPosition !== null &&
+            confirmedPosition.status === "OPEN" &&
+            latestPayload.redeployRequest !== undefined &&
+            oldPositionForReconstruction !== null
+          ) {
+            const reconstructedPendingPosition = buildPendingRedeployPosition({
+              action: latestActionAfterRedeployLock,
+              closedPosition: oldPositionForReconstruction,
+              redeployPayload: latestPayload.redeployRequest,
+              redeployResult: latestPayload.redeployResult,
+              now,
+            });
+            const identityError = validateRedeployConfirmationIdentity({
+              pendingPosition: reconstructedPendingPosition,
+              confirmedPosition,
+            });
+            if (identityError !== null) {
+              const reconciliationPosition =
+                buildReconciliationRequiredPosition(
+                  confirmedPosition,
+                  latestActionAfterRedeployLock.actionId,
+                  now,
+                );
+              await input.stateRepository.upsert(reconciliationPosition);
+
+              const timedOutAction = {
+                ...latestActionAfterRedeployLock,
+                status: transitionActionStatus(
+                  latestActionAfterRedeployLock.status,
+                  "TIMED_OUT",
+                ),
+                error: identityError,
+                completedAt: now,
+              } satisfies Action;
+              await input.actionRepository.upsert(timedOutAction);
+
+              return {
+                action: timedOutAction,
+                oldPosition,
+                newPosition: reconciliationPosition,
+                outcome: "TIMED_OUT" as const,
+              };
+            }
+
+            const openPosition = buildOpenRedeployedPosition({
+              pendingPosition: reconstructedPendingPosition,
+              confirmedPosition,
+              actionId: latestActionAfterRedeployLock.actionId,
+              now,
+            });
+            await input.stateRepository.upsert(openPosition);
+
+            const reconcilingAction = {
+              ...latestActionAfterRedeployLock,
+              status: transitionActionStatus(
+                latestActionAfterRedeployLock.status,
+                "RECONCILING",
+              ),
+            } satisfies Action;
+            await input.actionRepository.upsert(reconcilingAction);
+
+            const completedPayload = buildCompletedPayload({
+              redeploySubmitted: latestPayload,
+              confirmedPositionId: openPosition.positionId,
+            });
+            const doneAction = {
+              ...reconcilingAction,
+              status: transitionActionStatus(reconcilingAction.status, "DONE"),
+              resultPayload: toJournalRecord(completedPayload),
+              completedAt: now,
+              error: null,
+            } satisfies Action;
+            await input.actionRepository.upsert(doneAction);
+
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "REBALANCE_FINALIZED_RECONSTRUCTED",
+              actor: latestActionAfterRedeployLock.requestedBy,
+              wallet: latestActionAfterRedeployLock.wallet,
+              positionId: openPosition.positionId,
+              actionId: latestActionAfterRedeployLock.actionId,
+              before: toJournalRecord({
+                action: latestActionAfterRedeployLock,
+                oldPosition,
+                confirmedPosition,
               }),
               after: toJournalRecord({
                 action: doneAction,

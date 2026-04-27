@@ -34,7 +34,7 @@ export const ScreeningPolicySchema = z
     minVolumeUsd: z.number().positive(),
     minVolumeTrendPct: z.number().optional(),
     minFeeActiveTvlRatio: z.number().positive(),
-    minFeePerTvl24h: z.number().positive(),
+    minFeePerTvl24h: z.number().nonnegative(),
     minOrganic: z.number().min(0).max(100),
     minTokenAgeHours: z.number().nonnegative().optional(),
     maxTokenAgeHours: z.number().nonnegative().optional(),
@@ -243,10 +243,12 @@ export function evaluateScreeningHardFilters(input: {
   if (candidate.feeToTvlRatio < policy.minFeeActiveTvlRatio) {
     rejectionReasons.push("fee-to-tvl ratio below minimum");
   }
-  if (candidate.feePerTvl24h === undefined) {
-    rejectionReasons.push("24h fee-per-tvl unavailable");
-  } else if (candidate.feePerTvl24h < policy.minFeePerTvl24h) {
-    rejectionReasons.push("24h fee-per-tvl below minimum");
+  if (policy.minFeePerTvl24h > 0) {
+    if (candidate.feePerTvl24h === undefined) {
+      rejectionReasons.push("24h fee-per-tvl unavailable");
+    } else if (candidate.feePerTvl24h < policy.minFeePerTvl24h) {
+      rejectionReasons.push("24h fee-per-tvl below minimum");
+    }
   }
   if (candidate.organicScore < policy.minOrganic) {
     rejectionReasons.push("organic score below minimum");

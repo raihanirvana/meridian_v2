@@ -543,8 +543,55 @@ describe("real adapters", () => {
     expect(candidates[0]?.poolAddress).toBe("pool_001");
     expect(candidates[0]?.tokenRiskSnapshot.tokenXMint).toBe("mint_meme");
     expect(candidates[0]?.screeningSnapshot.binStep).toBe(100);
-    expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBe(1);
+    expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBeUndefined();
     expect(candidates[0]?.smartMoneySnapshot.tokenAgeHours).toBe(24);
+  });
+
+  it("does not infer 24h fee-per-TVL from a timeframe-window fee", async () => {
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      now: () => "2026-04-24T00:00:00.000Z",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                pool_address: "pool_001",
+                name: "MEME-SOL",
+                active_tvl: 25_000,
+                volume: 80_000,
+                fee: 250,
+                fee_active_tvl_ratio: 1,
+                base_token_holders: 1_200,
+                dlmm_params: { bin_step: 100 },
+                token_x: {
+                  address: "mint_meme",
+                  symbol: "MEME",
+                  organic_score: 72,
+                  market_cap: 500_000,
+                },
+                token_y: {
+                  address: "So11111111111111111111111111111111111111112",
+                  symbol: "SOL",
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    });
+
+    const candidates = await screening.listCandidates({
+      limit: 3,
+      timeframe: "5m",
+    });
+
+    expect(candidates[0]?.screeningSnapshot.feeToTvlRatio).toBe(1);
+    expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBeUndefined();
+    expect(candidates[0]?.marketFeatureSnapshot.volume5mUsd).toBe(80_000);
+    expect(candidates[0]?.marketFeatureSnapshot.fees5mUsd).toBe(250);
+    expect(candidates[0]?.marketFeatureSnapshot.volume24hUsd).toBe(0);
+    expect(candidates[0]?.marketFeatureSnapshot.fees24hUsd).toBe(0);
   });
 
   it("maps Meteora Pool Discovery details for enrichment", async () => {

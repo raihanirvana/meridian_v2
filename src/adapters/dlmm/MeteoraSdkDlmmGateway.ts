@@ -21,6 +21,7 @@ import {
 } from "../../domain/entities/Position.js";
 import { StrategySchema, type Strategy } from "../../domain/types/enums.js";
 import {
+  AmbiguousSubmissionError,
   ClaimFeesRequestSchema,
   ClaimFeesResultSchema,
   ClosePositionRequestSchema,
@@ -44,6 +45,7 @@ import {
   type PartialClosePositionResult,
   type PoolInfo,
   type WalletPositionsSnapshot,
+  type AmbiguousSubmissionOperation,
 } from "./DlmmGateway.js";
 
 const DefaultDataApiBaseUrl = "https://dlmm.datapi.meteora.ag";
@@ -55,6 +57,12 @@ const GatewayEntryCacheTtlMs = 60 * 60 * 1000;
 const WideRangeBinThreshold = 69;
 const FullCloseBps = 10_000;
 const RpcSubmitRetryDelaysMs = [250, 750];
+
+interface SubmitTransactionContext {
+  operation: AmbiguousSubmissionOperation;
+  positionId: string;
+  txIds?: string[];
+}
 
 type StrategyTypeValue = unknown;
 
@@ -176,6 +184,26 @@ function asNumber(value: unknown): number | null {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function rawAmountStringToUiNumber(
+  rawAmount: string,
+  decimals: number,
+): number {
+  if (!/^\d+$/.test(rawAmount)) {
+    return 0;
+  }
+
+  const raw = BigInt(rawAmount);
+  const scale = 10n ** BigInt(decimals);
+  const whole = raw / scale;
+  const fraction = raw % scale;
+  const fractionText =
+    decimals === 0 ? "" : fraction.toString().padStart(decimals, "0");
+  const valueText =
+    decimals === 0 ? whole.toString() : `${whole.toString()}.${fractionText}`;
+  const parsed = Number(valueText);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function extractActiveBinFromPool(
@@ -497,6 +525,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       amountY,
     );
     const positionKeypair = Keypair.generate();
+    const positionId = positionKeypair.publicKey.toBase58();
     const totalBins = upperBin - lowerBin + 1;
     const txIds: string[] = [];
     const slippageBps = parsedRequest.slippageBps ?? this.defaultSlippageBps;
@@ -512,7 +541,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       for (const [index, tx] of createTxArray.entries()) {
         const signers =
           index === 0 ? [this.wallet, positionKeypair] : [this.wallet];
-        txIds.push(await this.sendTransactionWithPreflight(tx, signers));
+        txIds.push(
+          await this.sendTransactionWithPreflight(tx, signers, {
+            operation: "DEPLOY",
+            positionId,
+            txIds,
+          }),
+        );
       }
 
       const addTxs = await pool.addLiquidityByStrategyChunkable({
@@ -529,7 +564,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       });
       const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
       for (const tx of addTxArray) {
-        txIds.push(await this.sendTransactionWithPreflight(tx, [this.wallet]));
+        txIds.push(
+          await this.sendTransactionWithPreflight(tx, [this.wallet], {
+            operation: "DEPLOY",
+            positionId,
+            txIds,
+          }),
+        );
       }
     } else {
       const tx = await pool.initializePositionAndAddLiquidityByStrategy({
@@ -545,14 +586,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         slippage: slippageBps,
       });
       txIds.push(
-        await this.sendTransactionWithPreflight(tx, [
-          this.wallet,
-          positionKeypair,
-        ]),
+        await this.sendTransactionWithPreflight(
+          tx,
+          [this.wallet, positionKeypair],
+          {
+            operation: "DEPLOY",
+            positionId,
+            txIds,
+          },
+        ),
       );
     }
 
-    const positionId = positionKeypair.publicKey.toBase58();
     this.recentDeploys.set(positionId, {
       value: parsedRequest,
       cachedAtMs: Date.now(),
@@ -692,11 +737,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       });
       for (const tx of claimTxs) {
         claimTxIds.push(
-          await this.sendTransactionWithPreflight(tx, [this.wallet]),
+          await this.sendTransactionWithPreflight(tx, [this.wallet], {
+            operation: "CLOSE",
+            positionId: parsed.positionId,
+            txIds: [...claimTxIds, ...closeTxIds],
+          }),
         );
       }
       preCloseFeesClaimed = true;
     } catch (error) {
+      if (error instanceof AmbiguousSubmissionError) {
+        throw error;
+      }
       preCloseFeesClaimError = errorMessage(
         error,
         "failed to claim fees before close",
@@ -720,7 +772,11 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       });
       for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
         closeTxIds.push(
-          await this.sendTransactionWithPreflight(tx, [this.wallet]),
+          await this.sendTransactionWithPreflight(tx, [this.wallet], {
+            operation: "CLOSE",
+            positionId: parsed.positionId,
+            txIds: [...claimTxIds, ...closeTxIds],
+          }),
         );
       }
     } else {
@@ -729,7 +785,11 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         position: { publicKey: positionPubkey },
       });
       closeTxIds.push(
-        await this.sendTransactionWithPreflight(closeTx, [this.wallet]),
+        await this.sendTransactionWithPreflight(closeTx, [this.wallet], {
+          operation: "CLOSE",
+          positionId: parsed.positionId,
+          txIds: [...claimTxIds, ...closeTxIds],
+        }),
       );
     }
 
@@ -862,7 +922,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     const txIds: string[] = [];
     for (const tx of claimTxs) {
-      txIds.push(await this.sendTransactionWithPreflight(tx, [this.wallet]));
+      txIds.push(
+        await this.sendTransactionWithPreflight(tx, [this.wallet], {
+          operation: "CLAIM_FEES",
+          positionId: parsed.positionId,
+          txIds,
+        }),
+      );
     }
     const postTxClaimedBaseAmount =
       await this.resolveClaimedBaseAmountFromTransactions({
@@ -921,7 +987,13 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
 
     const txIds: string[] = [];
     for (const tx of Array.isArray(txs) ? txs : [txs]) {
-      txIds.push(await this.sendTransactionWithPreflight(tx, [this.wallet]));
+      txIds.push(
+        await this.sendTransactionWithPreflight(tx, [this.wallet], {
+          operation: "PARTIAL_CLOSE",
+          positionId: parsed.positionId,
+          txIds,
+        }),
+      );
     }
 
     this.openPositionsCache = null;
@@ -972,6 +1044,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     const positions = mappedPositions.map((position) => {
       const mintMapping = this.resolvePositionMintMapping(position);
       const recentDeploy = this.recentDeploys.get(position.positionId)?.value;
+      const currentValueUsd = clampNonNegative(position.currentValueUsd);
+      const deployedBase = recentDeploy?.amountBase ?? 0;
+      const deployedQuote = recentDeploy?.amountQuote ?? 0;
+
       return PositionSchema.parse({
         positionId: position.positionId,
         poolAddress: position.poolAddress,
@@ -984,15 +1060,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         openedAt: position.openedAt ?? now,
         lastSyncedAt: now,
         closedAt: null,
-        deployAmountBase: recentDeploy?.amountBase ?? 0,
-        deployAmountQuote: recentDeploy?.amountQuote ?? 0,
-        currentValueBase: recentDeploy?.amountBase ?? 0,
-        ...(recentDeploy?.amountQuote === undefined
-          ? {}
-          : { currentValueQuote: recentDeploy.amountQuote }),
-        currentValueUsd: clampNonNegative(position.currentValueUsd),
+        deployAmountBase: deployedBase,
+        deployAmountQuote: deployedQuote,
+        // The data API gives USD value, not live token balances. Do not reuse
+        // deploy amounts as current balances; reconciliation preserves the
+        // local token counters when a trusted local position already exists.
+        currentValueBase: 0,
+        currentValueUsd,
         feesClaimedBase: 0,
-        feesClaimedUsd: clampNonNegative(position.feesClaimedUsd),
+        // This API field is "all time fees" on some Meteora responses, not a
+        // strict claimed-fees counter. Reconciliation preserves local claimed
+        // accounting rather than trusting this snapshot field.
+        feesClaimedUsd: 0,
         realizedPnlBase: 0,
         realizedPnlUsd: 0,
         unrealizedPnlBase: 0,
@@ -1635,6 +1714,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
   private async sendTransactionWithPreflight(
     tx: unknown,
     signers: Keypair[],
+    context: SubmitTransactionContext,
   ): Promise<string> {
     await this.simulateOrThrow(tx, signers);
     let attempt = 0;
@@ -1652,6 +1732,17 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
           retryDelayMs === undefined ||
           !this.isTransientRpcSubmitError(message)
         ) {
+          if (this.isAmbiguousRpcSubmitError(message)) {
+            throw new AmbiguousSubmissionError(
+              `${context.operation} transaction submission is ambiguous: ${message}`,
+              {
+                operation: context.operation,
+                positionId: context.positionId,
+                txIds: context.txIds ?? [],
+              },
+              { cause: error },
+            );
+          }
           throw error;
         }
 
@@ -1673,6 +1764,18 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       normalized.includes("node is behind") ||
       normalized.includes("connection closed") ||
       normalized.includes("temporarily unavailable")
+    );
+  }
+
+  private isAmbiguousRpcSubmitError(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("not confirmed") ||
+      normalized.includes("confirmation") ||
+      normalized.includes("timed out") ||
+      normalized.includes("timeout") ||
+      normalized.includes("block height exceeded") ||
+      normalized.includes("connection closed")
     );
   }
 
@@ -1820,7 +1923,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       return directAmount;
     }
 
-    const rawAmount = asNumber(uiTokenAmount.amount);
+    const rawAmount = asString(uiTokenAmount.amount);
     const decimals = asNumber(uiTokenAmount.decimals);
     if (
       rawAmount !== null &&
@@ -1828,7 +1931,7 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       Number.isInteger(decimals) &&
       decimals >= 0
     ) {
-      return rawAmount / 10 ** decimals;
+      return rawAmountStringToUiNumber(rawAmount, decimals);
     }
 
     return null;

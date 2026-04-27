@@ -189,25 +189,38 @@ function extractActiveBin(pool: Record<string, unknown>): number | undefined {
   );
 }
 
+function windowedValueForTimeframe(
+  value: number,
+  timeframe: "5m" | "1h" | "24h" | undefined,
+): {
+  value5m?: number;
+  value1h?: number;
+  value24h?: number;
+} {
+  switch (timeframe) {
+    case "5m":
+      return { value5m: value };
+    case "1h":
+      return { value1h: value };
+    case "24h":
+      return { value24h: value };
+    default:
+      return {};
+  }
+}
+
 function extractFeePerTvl(input: {
   pool: Record<string, unknown>;
-  feeToTvlRatio: number;
-  feeUsd: number;
-  tvlUsd: number;
-}): number {
-  return (
-    normalizeRatio(
-      firstNumber(
-        input.pool.fee_per_tvl_24h,
-        input.pool.feePerTvl24h,
-        input.pool.fee_tvl_24h,
-        input.pool.feeTvl24h,
-      ),
-    ) ||
-    (input.tvlUsd > 0
-      ? (input.feeUsd / input.tvlUsd) * 100
-      : input.feeToTvlRatio)
+}): number | undefined {
+  const explicitFeePerTvl24h = firstNumber(
+    input.pool.fee_per_tvl_24h,
+    input.pool.feePerTvl24h,
+    input.pool.fee_tvl_24h,
+    input.pool.feeTvl24h,
   );
+  return explicitFeePerTvl24h === undefined
+    ? undefined
+    : normalizeRatio(explicitFeePerTvl24h);
 }
 
 function extractPools(
@@ -274,7 +287,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     });
 
     return extractPools(response)
-      .map((pool) => this.toCandidate(pool))
+      .map((pool) => this.toCandidate(pool, false, parsedRequest.timeframe))
       .filter((candidate): candidate is Candidate => candidate !== null);
   }
 
@@ -314,7 +327,6 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
         poolAddress: parsedPoolAddress,
         pairLabel: parsedPoolAddress,
         feeToTvlRatio: 0,
-        feePerTvl24h: 0,
         organicScore: 0,
         holderCount: 0,
       });
@@ -326,6 +338,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
   private toCandidate(
     pool: Record<string, unknown>,
     detailFetched: boolean = false,
+    timeframe?: "5m" | "1h" | "24h",
   ): Candidate | null {
     const poolAddress = extractPoolAddress(pool);
     const { tokenX, tokenY } = pickTokenRecords(pool);
@@ -433,22 +446,27 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       0,
       100,
     );
-    const feePerTvl24h = extractFeePerTvl({
-      pool,
-      feeToTvlRatio,
-      feeUsd,
-      tvlUsd,
-    });
+    const feePerTvl24h = extractFeePerTvl({ pool });
+    const timeframeVolume = windowedValueForTimeframe(volumeUsd, timeframe);
+    const timeframeFee = windowedValueForTimeframe(feeUsd, timeframe);
     const volume5mUsd = firstNumber(pool.volume_5m, pool.volume5mUsd);
     const volume15mUsd = firstNumber(pool.volume_15m, pool.volume15mUsd);
     const volume1hUsd = firstNumber(pool.volume_1h, pool.volume1hUsd);
     const volume24hUsd = firstNumber(
       pool.volume_24h,
       pool.volume24hUsd,
-      volumeUsd,
+      timeframeVolume.value24h,
     );
-    const fees24hUsd = firstNumber(pool.fee_24h, pool.fees24hUsd, feeUsd);
-    const fees1hUsd = firstNumber(pool.fee_1h, pool.fees1hUsd);
+    const fees24hUsd = firstNumber(
+      pool.fee_24h,
+      pool.fees24hUsd,
+      timeframeFee.value24h,
+    );
+    const fees1hUsd = firstNumber(
+      pool.fee_1h,
+      pool.fees1hUsd,
+      timeframeFee.value1h,
+    );
     const priceChange5mPct = firstNumber(
       pool.price_change_5m,
       pool.priceChange5mPct,
@@ -507,11 +525,20 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       pool.mean_reversion_score,
       pool.meanReversionScore,
     );
+    const effectiveVolume5mUsd = volume5mUsd ?? timeframeVolume.value5m;
+    const effectiveVolume1hUsd = volume1hUsd ?? timeframeVolume.value1h;
     const marketFeatureSnapshot = buildMarketFeatureSnapshot({
-      ...(volume5mUsd === undefined ? {} : { volume5mUsd }),
+      ...(effectiveVolume5mUsd === undefined
+        ? {}
+        : { volume5mUsd: effectiveVolume5mUsd }),
       ...(volume15mUsd === undefined ? {} : { volume15mUsd }),
-      ...(volume1hUsd === undefined ? {} : { volume1hUsd }),
+      ...(effectiveVolume1hUsd === undefined
+        ? {}
+        : { volume1hUsd: effectiveVolume1hUsd }),
       ...(volume24hUsd === undefined ? {} : { volume24hUsd }),
+      ...(timeframeFee.value5m === undefined
+        ? {}
+        : { fees5mUsd: timeframeFee.value5m }),
       ...(fees1hUsd === undefined ? {} : { fees1hUsd }),
       ...(fees24hUsd === undefined ? {} : { fees24hUsd }),
       tvlUsd,
@@ -598,7 +625,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
           100,
         ),
         feeToTvlRatio,
-        feePerTvl24h,
+        ...(feePerTvl24h === undefined ? {} : { feePerTvl24h }),
         organicScore,
         holderCount,
         binStep,
@@ -667,7 +694,6 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
         poolAddress,
         pairLabel: poolAddress,
         feeToTvlRatio: 0,
-        feePerTvl24h: 0,
         organicScore: 0,
         holderCount: 0,
       });

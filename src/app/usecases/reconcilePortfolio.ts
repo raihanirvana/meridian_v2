@@ -61,6 +61,7 @@ const TRACKED_SNAPSHOT_STATUSES = new Set<Position["status"]>([
   "CLOSE_CONFIRMED",
   "REDEPLOY_REQUESTED",
   "REDEPLOYING",
+  "RECONCILIATION_REQUIRED",
   "RECONCILING",
 ]);
 
@@ -156,7 +157,8 @@ function shouldSyncLiveSnapshot(position: Position): boolean {
   return (
     position.status === "OPEN" ||
     position.status === "HOLD" ||
-    position.status === "MANAGEMENT_REVIEW"
+    position.status === "MANAGEMENT_REVIEW" ||
+    position.status === "RECONCILIATION_REQUIRED"
   );
 }
 
@@ -165,12 +167,38 @@ function mergeLiveSnapshotPosition(input: {
   snapshotPosition: Position;
   now: string;
 }): Position {
+  const liveCurrentValueBase =
+    input.snapshotPosition.currentValueBase > 0
+      ? input.snapshotPosition.currentValueBase
+      : input.localPosition.currentValueBase;
+  const liveCurrentValueQuote =
+    input.snapshotPosition.currentValueQuote !== undefined &&
+    input.snapshotPosition.currentValueQuote > 0
+      ? input.snapshotPosition.currentValueQuote
+      : input.localPosition.currentValueQuote;
+  const syncedStatus =
+    input.localPosition.status === "RECONCILIATION_REQUIRED"
+      ? transitionPositionStatus(
+          transitionPositionStatus(input.localPosition.status, "RECONCILING"),
+          "OPEN",
+        )
+      : input.localPosition.status;
+
   return PositionSchema.parse({
     ...input.localPosition,
+    status: syncedStatus,
     tokenXMint: input.snapshotPosition.tokenXMint,
     tokenYMint: input.snapshotPosition.tokenYMint,
+    currentValueBase: liveCurrentValueBase,
+    ...(liveCurrentValueQuote === undefined
+      ? {}
+      : { currentValueQuote: liveCurrentValueQuote }),
     currentValueUsd: input.snapshotPosition.currentValueUsd,
-    feesClaimedUsd: input.snapshotPosition.feesClaimedUsd,
+    // Live DLMM snapshots can expose all-time earned fees rather than strictly
+    // claimed fees. Preserve the local accounting counters; claim finalization
+    // is the authoritative path for incrementing them.
+    feesClaimedBase: input.localPosition.feesClaimedBase,
+    feesClaimedUsd: input.localPosition.feesClaimedUsd,
     unrealizedPnlUsd: input.snapshotPosition.unrealizedPnlUsd,
     rangeLowerBin: input.snapshotPosition.rangeLowerBin,
     rangeUpperBin: input.snapshotPosition.rangeUpperBin,
@@ -1001,6 +1029,21 @@ export async function reconcilePortfolio(
               now,
             });
             await input.stateRepository.upsert(syncedPosition);
+            if (latestPosition.status === "RECONCILIATION_REQUIRED") {
+              await appendJournalEvent(input.journalRepository, {
+                timestamp: now,
+                eventType: "POSITION_RECONCILED_FROM_LIVE_SNAPSHOT",
+                actor: "system",
+                wallet,
+                positionId: syncedPosition.positionId,
+                actionId: syncedPosition.lastWriteActionId,
+                before: toJournalRecord({ position: latestPosition }),
+                after: toJournalRecord({ position: syncedPosition }),
+                txIds: [],
+                resultStatus: syncedPosition.status,
+                error: null,
+              });
+            }
             records.push(
               createRecord({
                 scope: "POSITION",
@@ -1009,7 +1052,10 @@ export async function reconcilePortfolio(
                 positionId: syncedPosition.positionId,
                 actionId: syncedPosition.lastWriteActionId,
                 outcome: "RECONCILED_OK",
-                detail: "Local open position synced from live DLMM snapshot",
+                detail:
+                  latestPosition.status === "RECONCILIATION_REQUIRED"
+                    ? "Local reconciliation-required position restored from live DLMM snapshot"
+                    : "Local open position synced from live DLMM snapshot",
               }),
             );
           }

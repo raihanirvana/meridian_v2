@@ -114,31 +114,36 @@ export class ActionQueue {
       return null;
     }
 
-    const nextAction = await this.claimNextAction();
-    if (nextAction === null) {
+    const runningAction = await this.claimNextAction();
+    if (runningAction === null) {
       return null;
     }
 
     try {
-      return await this.walletLock.withLock(nextAction.wallet, async () => {
+      return await this.walletLock.withLock(runningAction.wallet, async () => {
         const runAction = async (): Promise<Action> => {
-          const runnable = await this.markRunning(nextAction);
           try {
-            const executionResult = await handler(runnable);
-            return this.finalizeAction(runnable, executionResult);
+            const executionResult = await handler(runningAction);
+            return this.finalizeAction(runningAction, executionResult);
           } catch (error) {
-            return this.failAction(runnable, error);
+            return this.failAction(runningAction, error);
           }
         };
 
-        if (nextAction.positionId !== null) {
-          return this.positionLock.withLock(nextAction.positionId, runAction);
+        if (runningAction.positionId !== null) {
+          return this.positionLock.withLock(
+            runningAction.positionId,
+            runAction,
+          );
         }
 
         return runAction();
       });
+    } catch (error) {
+      await this.requeueRunningAction(runningAction, error);
+      throw error;
     } finally {
-      this.claimedActionIds.delete(nextAction.actionId);
+      this.claimedActionIds.delete(runningAction.actionId);
     }
   }
 
@@ -170,7 +175,12 @@ export class ActionQueue {
     }
 
     this.claimedActionIds.add(nextAction.actionId);
-    return nextAction;
+    try {
+      return await this.markRunning(nextAction);
+    } catch (error) {
+      this.claimedActionIds.delete(nextAction.actionId);
+      throw error;
+    }
   }
 
   private async markRunning(action: Action): Promise<Action> {
@@ -196,6 +206,36 @@ export class ActionQueue {
       error: null,
     });
     return runningAction;
+  }
+
+  private async requeueRunningAction(
+    runningAction: Action,
+    error: unknown,
+  ): Promise<Action> {
+    const failedStatus = transitionActionStatus(runningAction.status, "FAILED");
+    const retryStatus = transitionActionStatus(failedStatus, "RETRY_QUEUED");
+    const retryAction: Action = {
+      ...runningAction,
+      status: retryStatus,
+      error: toSafeErrorMessage(error),
+      completedAt: null,
+    };
+
+    await this.actionRepository.upsert(retryAction);
+    await this.appendJournalEvent({
+      timestamp: this.now(),
+      eventType: "ACTION_RETRY_QUEUED",
+      actor: retryAction.requestedBy,
+      wallet: retryAction.wallet,
+      positionId: retryAction.positionId,
+      actionId: retryAction.actionId,
+      before: runningAction as unknown as Record<string, unknown>,
+      after: retryAction as unknown as Record<string, unknown>,
+      txIds: retryAction.txIds,
+      resultStatus: retryAction.status,
+      error: retryAction.error,
+    });
+    return retryAction;
   }
 
   private async finalizeAction(

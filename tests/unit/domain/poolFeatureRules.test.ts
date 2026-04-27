@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDlmmMicrostructureSnapshot } from "../../../src/domain/rules/poolFeatureRules.js";
+import {
+  buildDlmmMicrostructureSnapshot,
+  buildMarketFeatureSnapshot,
+} from "../../../src/domain/rules/poolFeatureRules.js";
 
 describe("pool feature rules", () => {
   it("computes DLMM active bin age from the provided clock", () => {
@@ -23,5 +26,20 @@ describe("pool feature rules", () => {
         now: "not-a-date",
       }),
     ).toThrow("requires a valid ISO timestamp");
+  });
+
+  it("does not upscale short-window volume or fee into 24h fields", () => {
+    const snapshot = buildMarketFeatureSnapshot({
+      volume5mUsd: 1_000,
+      fees5mUsd: 10,
+      tvlUsd: 100_000,
+    });
+
+    expect(snapshot.volume5mUsd).toBe(1_000);
+    expect(snapshot.fees5mUsd).toBe(10);
+    expect(snapshot.volume24hUsd).toBe(0);
+    expect(snapshot.fees24hUsd).toBe(0);
+    expect(snapshot.volumeTvlRatio24h).toBe(0);
+    expect(snapshot.feeTvlRatio24h).toBe(0);
   });
 });

@@ -152,6 +152,33 @@ export async function processCloseAction(
   assertCloseRequestablePosition(currentPosition);
 
   let closeResult: z.infer<typeof CloseActionResultPayloadSchema> | null = null;
+  const closingPosition = buildClosingPosition({
+    currentPosition,
+    actionId: input.action.actionId,
+    reason: payload.reason,
+    now,
+  });
+
+  await input.stateRepository.upsert(closingPosition);
+  await appendJournalEvent(input.journalRepository, {
+    timestamp: now,
+    eventType: "CLOSE_SUBMITTING",
+    actor: input.action.requestedBy,
+    wallet: input.action.wallet,
+    positionId: input.action.positionId,
+    actionId: input.action.actionId,
+    before: toJournalRecord({
+      actionId: input.action.actionId,
+      position: currentPosition,
+    }),
+    after: toJournalRecord({
+      actionId: input.action.actionId,
+      position: closingPosition,
+    }),
+    txIds: [],
+    resultStatus: "RUNNING",
+    error: null,
+  });
 
   try {
     closeResult = CloseActionResultPayloadSchema.parse(
@@ -170,7 +197,7 @@ export async function processCloseAction(
   } catch (error) {
     if (isAmbiguousSubmissionError(error)) {
       const reconciliationPosition = buildReconciliationRequiredPosition(
-        currentPosition,
+        closingPosition,
         input.action.actionId,
         now,
       );
@@ -191,7 +218,7 @@ export async function processCloseAction(
         before: toJournalRecord({
           actionId: input.action.actionId,
           requestPayload: payload,
-          position: currentPosition,
+          position: closingPosition,
         }),
         after: toJournalRecord({ position: reconciliationPosition }),
         txIds: error.txIds,
@@ -216,6 +243,18 @@ export async function processCloseAction(
       };
     }
 
+    const reconciliationPosition = buildReconciliationRequiredPosition(
+      closingPosition,
+      input.action.actionId,
+      now,
+    );
+
+    try {
+      await input.stateRepository.upsert(reconciliationPosition);
+    } catch {
+      // Best effort; reconciliation can still rediscover the position later.
+    }
+
     await appendJournalEvent(input.journalRepository, {
       timestamp: now,
       eventType: "CLOSE_SUBMISSION_FAILED",
@@ -226,8 +265,9 @@ export async function processCloseAction(
       before: toJournalRecord({
         actionId: input.action.actionId,
         requestPayload: payload,
+        position: closingPosition,
       }),
-      after: null,
+      after: toJournalRecord({ position: reconciliationPosition }),
       txIds: [],
       resultStatus: "FAILED",
       error: errorMessage(error, "close submission failed"),
@@ -236,14 +276,6 @@ export async function processCloseAction(
   }
 
   try {
-    const closingPosition = buildClosingPosition({
-      currentPosition,
-      actionId: input.action.actionId,
-      reason: payload.reason,
-      now,
-    });
-
-    await input.stateRepository.upsert(closingPosition);
     await appendJournalEvent(input.journalRepository, {
       timestamp: now,
       eventType: "CLOSE_SUBMITTED",
@@ -273,7 +305,7 @@ export async function processCloseAction(
     };
   } catch (error) {
     const reconciliationPosition = buildReconciliationRequiredPosition(
-      currentPosition,
+      closingPosition,
       input.action.actionId,
       now,
     );

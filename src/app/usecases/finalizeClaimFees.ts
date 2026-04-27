@@ -78,6 +78,7 @@ const ClaimConfirmationPayloadSchema = z
   .object({
     actionType: z.literal("CLAIM_FEES"),
     claimedBaseAmount: z.number().nonnegative(),
+    claimedBaseAmountUsd: z.number().nonnegative().optional(),
     claimedBaseAmountSource: z
       .enum(["post_tx", "cache", "pnl_estimate", "unavailable"])
       .optional(),
@@ -181,6 +182,7 @@ function assertClaimAction(action: Action): asserts action is Action & {
 function buildClaimConfirmedPosition(input: {
   confirmedPosition: Position;
   claimingPosition: Position;
+  claimResult: z.infer<typeof ClaimConfirmationPayloadSchema>;
   actionId: string;
   reason: string;
   now: string;
@@ -192,6 +194,16 @@ function buildClaimConfirmedPosition(input: {
   return PositionSchema.parse({
     ...input.claimingPosition,
     ...input.confirmedPosition,
+    feesClaimedBase: Math.max(
+      input.confirmedPosition.feesClaimedBase,
+      input.claimingPosition.feesClaimedBase +
+        input.claimResult.claimedBaseAmount,
+    ),
+    feesClaimedUsd: Math.max(
+      input.confirmedPosition.feesClaimedUsd,
+      input.claimingPosition.feesClaimedUsd +
+        (input.claimResult.claimedBaseAmountUsd ?? 0),
+    ),
     status: claimConfirmedStatus,
     lastSyncedAt: input.now,
     lastManagementDecision: "CLAIM_FEES",
@@ -916,6 +928,7 @@ export async function finalizeClaimFees(
         const claimConfirmedPosition = buildClaimConfirmedPosition({
           confirmedPosition: claimConfirmedLikePosition,
           claimingPosition,
+          claimResult,
           actionId: latestAction.actionId,
           reason: claimResult.reason,
           now,

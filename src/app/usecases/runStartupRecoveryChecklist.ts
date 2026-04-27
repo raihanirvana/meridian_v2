@@ -7,6 +7,9 @@ import type { StateRepository } from "../../adapters/storage/StateRepository.js"
 import type { SignalWeightsStore } from "../../adapters/storage/SignalWeightsStore.js";
 import type { RuntimePolicyStore } from "../../adapters/config/RuntimePolicyStore.js";
 import type { SchedulerMetadataStore } from "../../infra/scheduler/SchedulerMetadataStore.js";
+import type { Action } from "../../domain/entities/Action.js";
+import type { JournalEvent } from "../../domain/entities/JournalEvent.js";
+import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 
 import {
   generateRuntimeReport,
@@ -60,6 +63,104 @@ async function checkItem(
   }
 }
 
+function staleRunningRecoveryPayload(action: Action): Record<string, unknown> {
+  const txIds: string[] = [];
+
+  switch (action.type) {
+    case "DEPLOY":
+      return {
+        actionType: "DEPLOY",
+        positionId: `stale-running:${action.actionId}`,
+        txIds,
+        submissionStatus: "maybe_submitted",
+        submissionAmbiguous: true,
+      };
+    case "CLOSE":
+      return {
+        actionType: "CLOSE",
+        closedPositionId:
+          action.positionId ?? `stale-running:${action.actionId}`,
+        txIds,
+        submissionStatus: "maybe_submitted",
+        submissionAmbiguous: true,
+      };
+    case "CLAIM_FEES":
+      return {
+        actionType: "CLAIM_FEES",
+        claimedBaseAmount: 0,
+        claimedBaseAmountSource: "unavailable",
+        txIds,
+        submissionStatus: "maybe_submitted",
+        submissionAmbiguous: true,
+      };
+    case "REBALANCE":
+      return {
+        phase: "CLOSE_SUBMITTED",
+        closeResult: {
+          actionType: "CLOSE",
+          closedPositionId:
+            action.positionId ?? `stale-running:${action.actionId}`,
+          txIds,
+          submissionStatus: "maybe_submitted",
+          submissionAmbiguous: true,
+        },
+      };
+    default:
+      return {
+        actionType: action.type,
+        txIds,
+        submissionStatus: "maybe_submitted",
+        submissionAmbiguous: true,
+      };
+  }
+}
+
+async function appendJournalEvent(
+  journalRepository: JournalRepository,
+  event: JournalEvent,
+): Promise<void> {
+  await journalRepository.append(event);
+}
+
+async function recoverStaleRunningActions(input: {
+  actionRepository: ActionRepository;
+  journalRepository: JournalRepository;
+  checkedAt: string;
+}): Promise<number> {
+  const runningActions = (await input.actionRepository.list()).filter(
+    (action) => action.status === "RUNNING",
+  );
+
+  for (const action of runningActions) {
+    const recoveredAction: Action = {
+      ...action,
+      status: transitionActionStatus(action.status, "WAITING_CONFIRMATION"),
+      resultPayload: staleRunningRecoveryPayload(action),
+      txIds: action.txIds,
+      error:
+        "stale RUNNING action recovered at startup; submission status unknown",
+      completedAt: null,
+    };
+
+    await input.actionRepository.upsert(recoveredAction);
+    await appendJournalEvent(input.journalRepository, {
+      timestamp: input.checkedAt,
+      eventType: "ACTION_STALE_RUNNING_RECOVERED",
+      actor: action.requestedBy,
+      wallet: action.wallet,
+      positionId: action.positionId,
+      actionId: action.actionId,
+      before: action as unknown as Record<string, unknown>,
+      after: recoveredAction as unknown as Record<string, unknown>,
+      txIds: recoveredAction.txIds,
+      resultStatus: recoveredAction.status,
+      error: recoveredAction.error,
+    });
+  }
+
+  return runningActions.length;
+}
+
 export async function runStartupRecoveryChecklist(
   input: RunStartupRecoveryChecklistInput,
 ): Promise<StartupRecoveryChecklistResult> {
@@ -76,6 +177,18 @@ export async function runStartupRecoveryChecklist(
     await checkItem("actions_store", async () => {
       const actions = await input.actionRepository.list();
       return `${actions.length} action(s) readable`;
+    }),
+  );
+  checklist.push(
+    await checkItem("actions_running_recovery", async () => {
+      const recovered = await recoverStaleRunningActions({
+        actionRepository: input.actionRepository,
+        journalRepository: input.journalRepository,
+        checkedAt,
+      });
+      return recovered === 0
+        ? "no stale RUNNING action found"
+        : `recovered ${recovered} stale RUNNING action(s)`;
     }),
   );
   checklist.push(

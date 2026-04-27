@@ -351,6 +351,7 @@ export async function runScreeningCycle(
   } = screeningPolicy;
   const coarsePolicy: ScreeningPolicy = {
     ...coarsePolicyBase,
+    minFeePerTvl24h: 0,
     requireFreshSnapshot: false,
   };
   const coarse = screenAndScoreCandidates({
@@ -453,7 +454,9 @@ export async function runScreeningCycle(
       await input.detailRateLimiter?.beforeRequest(detailRequestNow);
     if (limiterDecision !== undefined && !limiterDecision.allowed) {
       rateLimitCooldownUntil =
-        (await input.detailRateLimiter?.getCooldownUntil()) ?? null;
+        limiterDecision.reason === "window_budget_exhausted"
+          ? addMs(detailRequestNow, limiterDecision.retryAfterMs)
+          : ((await input.detailRateLimiter?.getCooldownUntil()) ?? null);
       const remainingDetailsSkipped =
         enrichmentPlan.selectedForDetail.length - index;
       await input.journalRepository.append({
@@ -659,11 +662,6 @@ export async function runScreeningCycle(
     now,
   });
 
-  const candidateById = new Map(
-    deterministic.candidates.map(
-      (candidate) => [candidate.candidateId, candidate] as const,
-    ),
-  );
   const aiMode = input.aiMode ?? "disabled";
   const lessonPromptService: LessonPromptService =
     aiMode === "disabled"
@@ -674,9 +672,7 @@ export async function runScreeningCycle(
         }
       : (input.lessonPromptService ?? {
           async buildLessonsPrompt(): Promise<string | null> {
-            throw new Error(
-              "LessonPromptService is required for AI shortlist ranking",
-            );
+            return null;
           },
         });
   const aiShortlist = await rankShortlistWithAi({
@@ -720,8 +716,13 @@ export async function runScreeningCycle(
       },
     });
   });
+  const finalCandidateById = new Map(
+    finalCandidates.map(
+      (candidate) => [candidate.candidateId, candidate] as const,
+    ),
+  );
   const finalShortlist = aiShortlist.shortlist.map(
-    (candidate) => candidateById.get(candidate.candidateId) ?? candidate,
+    (candidate) => finalCandidateById.get(candidate.candidateId) ?? candidate,
   );
   const snapshotOnlyWatchCount = enrichedResults.filter(
     (item) =>

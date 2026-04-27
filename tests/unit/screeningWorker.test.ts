@@ -384,6 +384,10 @@ describe("screening worker", () => {
       "cand_002",
       "cand_001",
     ]);
+    expect(
+      result.shortlist.find((candidate) => candidate.candidateId === "cand_001")
+        ?.smartMoneySnapshot.narrativeSummary,
+    ).toBe("Meme with fresh organic interest");
 
     const observingGateway: LlmGateway = {
       async rankCandidates(input) {

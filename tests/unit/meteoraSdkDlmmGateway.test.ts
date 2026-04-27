@@ -92,6 +92,7 @@ vi.mock("@meteora-ag/dlmm", () => ({
 }));
 
 import { MeteoraSdkDlmmGateway } from "../../src/adapters/dlmm/MeteoraSdkDlmmGateway.js";
+import { AmbiguousSubmissionError } from "../../src/adapters/dlmm/DlmmGateway.js";
 
 function createGateway(
   overrides: Partial<
@@ -701,5 +702,41 @@ describe("MeteoraSdkDlmmGateway", () => {
 
     expect(sendAndConfirmTransactionMock).toHaveBeenCalledTimes(2);
     expect(result.txIds).toEqual(["tx_retry_ok"]);
+  });
+
+  it("throws ambiguous submission errors for confirmation timeouts", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    sendAndConfirmTransactionMock.mockRejectedValue(
+      new Error("Transaction was not confirmed in 30 seconds"),
+    );
+    const gateway = createGateway();
+
+    let caughtError: unknown;
+    try {
+      await gateway.deployLiquidity({
+        wallet: "wallet_001",
+        poolAddress: "pool_001",
+        tokenXMint: "mint_x",
+        tokenYMint: "mint_y",
+        baseMint: "mint_x",
+        quoteMint: "mint_y",
+        amountBase: 1,
+        amountQuote: 0,
+        strategy: "bid_ask",
+        rangeLowerBin: 10,
+        rangeUpperBin: 20,
+        initialActiveBin: 15,
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toMatchObject({
+      name: "AmbiguousSubmissionError",
+      operation: "DEPLOY",
+      positionId: "generated_position",
+    });
+    expect(caughtError).toBeInstanceOf(AmbiguousSubmissionError);
   });
 });

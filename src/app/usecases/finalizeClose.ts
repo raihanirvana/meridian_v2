@@ -264,10 +264,18 @@ function inferCloseConfirmedPosition(
     useOpenOnlyReadModel &&
     confirmedPosition === null &&
     closingPosition !== null &&
+    closingPosition.status === "CLOSED"
+  ) {
+    return closingPosition;
+  }
+
+  if (
+    useOpenOnlyReadModel &&
+    confirmedPosition === null &&
+    closingPosition !== null &&
     (closingPosition.status === "CLOSING" ||
       closingPosition.status === "CLOSE_CONFIRMED" ||
-      closingPosition.status === "RECONCILING" ||
-      closingPosition.status === "CLOSED")
+      closingPosition.status === "RECONCILING")
   ) {
     return buildCloseConfirmedPosition({
       confirmedPosition: closingPosition,

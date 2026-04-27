@@ -325,7 +325,7 @@ describe("reconciliation worker", () => {
 
     expect(persistedPosition?.status).toBe("OPEN");
     expect(persistedPosition?.currentValueUsd).toBe(75);
-    expect(persistedPosition?.feesClaimedUsd).toBe(3);
+    expect(persistedPosition?.feesClaimedUsd).toBe(0);
     expect(persistedPosition?.unrealizedPnlUsd).toBe(-25);
     expect(persistedPosition?.rangeLowerBin).toBe(11);
     expect(persistedPosition?.rangeUpperBin).toBe(21);
@@ -339,6 +339,74 @@ describe("reconciliation worker", () => {
           entityId: "pos_live_sync",
           outcome: "RECONCILED_OK",
           detail: "Local open position synced from live DLMM snapshot",
+        }),
+      ]),
+    );
+  });
+
+  it("self-heals reconciliation-required positions from live wallet snapshots", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const localPosition: Position = {
+      ...buildOpenPosition("pos_self_heal"),
+      status: "RECONCILIATION_REQUIRED",
+      needsReconciliation: true,
+      lastWriteActionId: "act_ambiguous",
+    };
+    const liveSnapshot: Position = {
+      ...buildOpenPosition("pos_self_heal"),
+      currentValueUsd: 95,
+      unrealizedPnlUsd: -5,
+      lastSyncedAt: "2026-04-20T00:10:00.000Z",
+    };
+    await stateRepository.upsert(localPosition);
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [liveSnapshot],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedPosition = await stateRepository.get("pos_self_heal");
+    const journal = await journalRepository.list();
+
+    expect(persistedPosition?.status).toBe("OPEN");
+    expect(persistedPosition?.needsReconciliation).toBe(false);
+    expect(persistedPosition?.currentValueUsd).toBe(95);
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "POSITION",
+          entityId: "pos_self_heal",
+          outcome: "RECONCILED_OK",
+          detail:
+            "Local reconciliation-required position restored from live DLMM snapshot",
+        }),
+      ]),
+    );
+    expect(journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "POSITION_RECONCILED_FROM_LIVE_SNAPSHOT",
+          resultStatus: "OPEN",
         }),
       ]),
     );

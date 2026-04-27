@@ -157,7 +157,10 @@ function createConservativeSignalProvider(): (input: {
       severeTokenRisk: false,
       liquidityCollapse: false,
       severeNegativeYield: false,
-      claimableFeesUsd: Math.max(0, position.feesClaimedUsd),
+      // feesClaimedUsd is cumulative already-claimed value, not pending fees.
+      // Keep auto-claim disabled until the live gateway exposes a reliable
+      // unclaimed-fee snapshot for management signals.
+      claimableFeesUsd: 0,
       expectedRebalanceImprovement: outOfRange || nearEdge,
       dataIncomplete: false,
     };
@@ -166,6 +169,7 @@ function createConservativeSignalProvider(): (input: {
 
 function createLiveAiRebalancePlanner(input: {
   dlmmGateway: Pick<DlmmGateway, "getPoolInfo">;
+  defaultSlippageBps: number;
 }): (args: {
   position: Position;
   aiRebalanceDecision?:
@@ -181,15 +185,29 @@ function createLiveAiRebalancePlanner(input: {
     | undefined;
 }) => Promise<RebalanceActionRequestPayload | null> {
   return async ({ position, aiRebalanceDecision }) => {
-    if (
-      aiRebalanceDecision?.action !== "rebalance_same_pool" ||
-      aiRebalanceDecision.rebalancePlan === null
-    ) {
-      return null;
-    }
-
     const poolInfo = await input.dlmmGateway.getPoolInfo(position.poolAddress);
-    const plan = aiRebalanceDecision.rebalancePlan;
+    const rangeWidth = Math.max(
+      2,
+      position.rangeUpperBin - position.rangeLowerBin,
+    );
+    const fallbackBinsBelow =
+      position.activeBin === null
+        ? Math.floor(rangeWidth / 2)
+        : Math.max(1, position.activeBin - position.rangeLowerBin);
+    const fallbackBinsAbove =
+      position.activeBin === null
+        ? Math.ceil(rangeWidth / 2)
+        : Math.max(1, position.rangeUpperBin - position.activeBin);
+    const plan =
+      aiRebalanceDecision?.action === "rebalance_same_pool" &&
+      aiRebalanceDecision.rebalancePlan !== null
+        ? aiRebalanceDecision.rebalancePlan
+        : {
+            strategy: position.strategy,
+            binsBelow: fallbackBinsBelow,
+            binsAbove: fallbackBinsAbove,
+            slippageBps: input.defaultSlippageBps,
+          };
     const activeBin = poolInfo.activeBin;
     const rangeLowerBin = activeBin - plan.binsBelow;
     const rangeUpperBin = activeBin + plan.binsAbove;
@@ -200,7 +218,10 @@ function createLiveAiRebalancePlanner(input: {
     }
 
     return {
-      reason: "AI rebalance planner selected same-pool redeploy",
+      reason:
+        aiRebalanceDecision?.action === "rebalance_same_pool"
+          ? "AI rebalance planner selected same-pool redeploy"
+          : "Deterministic rebalance planner selected same-pool redeploy",
       redeploy: {
         poolAddress: position.poolAddress,
         tokenXMint: position.tokenXMint,
@@ -209,7 +230,7 @@ function createLiveAiRebalancePlanner(input: {
         quoteMint: position.quoteMint,
         amountBase,
         amountQuote,
-        slippageBps: plan.slippageBps,
+        slippageBps: Math.max(1, Math.trunc(plan.slippageBps)),
         strategy: plan.strategy,
         rangeLowerBin,
         rangeUpperBin,
@@ -243,10 +264,10 @@ function toRuntimeScreeningPolicy(
     blockedTokenMints: [],
     blockedDeployers: [],
     allowedPairTypes: ["volatile", "stable"],
-    maxTopHolderPct: 35,
-    maxBotHolderPct: 20,
-    maxBundleRiskPct: 20,
-    maxWashTradingRiskPct: 20,
+    maxTopHolderPct: userScreening.maxTopHolderPct ?? 35,
+    maxBotHolderPct: userScreening.maxBotHolderPct ?? 20,
+    maxBundleRiskPct: userScreening.maxBundleRiskPct ?? 20,
+    maxWashTradingRiskPct: userScreening.maxWashTradingRiskPct ?? 20,
     rejectDuplicatePoolExposure: true,
     rejectDuplicateTokenExposure: true,
     shortlistLimit: userScreening.aiReviewPoolSize ?? 30,
@@ -724,7 +745,12 @@ async function main() {
         : {}),
     },
     signalProvider: createConservativeSignalProvider(),
-    rebalancePlanner: createLiveAiRebalancePlanner({ dlmmGateway }),
+    rebalancePlanner: createLiveAiRebalancePlanner({
+      dlmmGateway,
+      defaultSlippageBps:
+        config.user.management.maxRebalanceSlippageBps ??
+        config.user.deploy.slippageBps,
+    }),
     lessonPromptService: new DefaultLessonPromptService(
       stores.lessonRepository,
       stores.poolMemoryRepository,

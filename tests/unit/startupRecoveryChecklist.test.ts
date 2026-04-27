@@ -126,4 +126,48 @@ describe("startup recovery checklist", () => {
     );
     expect(recoveredState.lastCompletedAt).toBe("2026-04-22T10:05:00.000Z");
   });
+
+  it("recovers stale RUNNING actions into confirmation recovery", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    await actionRepository.upsert({
+      ...buildAction(),
+      status: "RUNNING",
+      startedAt: "2026-04-22T10:00:00.000Z",
+    });
+
+    const result = await runStartupRecoveryChecklist({
+      wallet: "wallet_001",
+      stateRepository: new StateRepository({
+        filePath: path.join(directory, "positions.json"),
+      }),
+      actionRepository,
+      journalRepository: new JournalRepository({
+        filePath: path.join(directory, "journal.jsonl"),
+      }),
+      now: "2026-04-22T10:05:00.000Z",
+    });
+
+    const recoveredAction = await actionRepository.get("act_recovered");
+
+    expect(result.status).toBe("HEALTHY");
+    expect(
+      result.checklist.find((item) => item.item === "actions_running_recovery"),
+    ).toMatchObject({
+      ok: true,
+      detail: "recovered 1 stale RUNNING action(s)",
+    });
+    expect(recoveredAction).toMatchObject({
+      status: "WAITING_CONFIRMATION",
+      error:
+        "stale RUNNING action recovered at startup; submission status unknown",
+      resultPayload: {
+        actionType: "DEPLOY",
+        submissionStatus: "maybe_submitted",
+        submissionAmbiguous: true,
+      },
+    });
+  });
 });

@@ -381,7 +381,7 @@ function advisoryBypassForDeterministicResult(
 
 const missingLessonPromptService: LessonPromptService = {
   async buildLessonsPrompt(): Promise<string | null> {
-    throw new Error("LessonPromptService is required for AI advisory");
+    return null;
   },
 };
 
@@ -1268,6 +1268,10 @@ export async function runManagementCycle(
       ...(input.runtimeControlStore === undefined
         ? {}
         : { runtimeControlStore: input.runtimeControlStore }),
+      riskGuard: {
+        portfolio,
+        policy: input.riskPolicy,
+      },
     });
 
     positionResults.push({
