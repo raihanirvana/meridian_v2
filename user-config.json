@@ -92,15 +92,15 @@
     "screeningModel": "openrouter/free",
     "timeoutMs": 5000,
     "strategyReviewEnabled": true,
-    "strategyReviewMode": "recommendation_only",
-    "allowAiStrategyForDeploy": false,
+    "strategyReviewMode": "guarded_auto",
+    "allowAiStrategyForDeploy": true,
     "minAiStrategyConfidence": 0.7,
     "walletRiskMode": "small"
   },
   "deploy": {
     "defaultAmountSol": 0.15,
     "minAmountSol": 0.1,
-    "autoDeployFromShortlist": false,
+    "autoDeployFromShortlist": true,
     "maxAutoDeploysPerCycle": 2,
     "strategy": "bid_ask",
     "binsBelow": 60,
