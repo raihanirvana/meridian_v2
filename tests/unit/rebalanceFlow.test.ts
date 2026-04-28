@@ -153,7 +153,7 @@ function buildRedeployedOpenPosition(positionId: string): Position {
 class RebalanceTestGateway implements DlmmGateway {
   public readonly positions = new Map<string, Position>();
 
-  public reconciliationReadModel: "open_only" | undefined = undefined;
+  public reconciliationReadModel?: "open_only";
 
   public closeResult: ClosePositionResult = {
     actionType: "CLOSE",
@@ -163,12 +163,14 @@ class RebalanceTestGateway implements DlmmGateway {
     releasedAmountQuote: 0.6,
     estimatedReleasedValueUsd: 120,
     releasedAmountSource: "post_tx",
+    submissionStatus: "submitted",
   };
 
   public deployResult: DeployLiquidityResult = {
     actionType: "DEPLOY",
     positionId: "pos_new",
     txIds: ["tx_deploy_001"],
+    submissionStatus: "submitted",
   };
 
   public readonly deployRequests: DeployLiquidityRequest[] = [];
@@ -215,6 +217,7 @@ class RebalanceTestGateway implements DlmmGateway {
       actionType: "CLAIM_FEES",
       claimedBaseAmount: 0,
       txIds: ["tx_unused"],
+      submissionStatus: "submitted",
     };
   }
 
@@ -612,6 +615,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 22.5,
       estimatedReleasedValueUsd: 123,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -829,6 +833,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.75,
       estimatedReleasedValueUsd: 0,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -894,6 +899,7 @@ describe("rebalance flow", () => {
       releasedAmountBase: 1.37,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -952,6 +958,7 @@ describe("rebalance flow", () => {
       closedPositionId: "pos_unavailable_amounts",
       txIds: ["tx_close_unavailable_amounts"],
       releasedAmountSource: "unavailable",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1011,6 +1018,7 @@ describe("rebalance flow", () => {
       actionType: "CLOSE",
       closedPositionId: "pos_timeout",
       txIds: ["tx_close_timeout"],
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1159,6 +1167,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1251,6 +1260,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0,
       estimatedReleasedValueUsd: 40,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1320,6 +1330,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
     gateway.deployError = new Error("redeploy unavailable");
 
@@ -1389,6 +1400,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1468,6 +1480,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     await stateRepository.upsert(buildOpenPosition("pos_amb_close"));
@@ -1561,6 +1574,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1633,11 +1647,13 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
     gateway.deployResult = {
       actionType: "DEPLOY",
       positionId: "pos_new_recon",
       txIds: ["tx_deploy_recon"],
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1725,11 +1741,13 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 0.6,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
     gateway.deployResult = {
       actionType: "DEPLOY",
       positionId: "pos_new_bq",
       txIds: ["tx_deploy_bq"],
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({
@@ -1811,6 +1829,7 @@ describe("rebalance flow", () => {
       releasedAmountQuote: 50,
       estimatedReleasedValueUsd: 120,
       releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
     };
 
     const action = await requestRebalance({

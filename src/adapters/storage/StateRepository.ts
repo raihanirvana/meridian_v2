@@ -20,6 +20,34 @@ export class StateStoreCorruptError extends Error {
   }
 }
 
+function migratePosition(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return raw;
+  }
+  const pos = raw as Record<string, unknown>;
+  let migrated = pos;
+
+  if (
+    migrated["peakPnlPct"] !== undefined &&
+    migrated["peakPnlPct"] !== null &&
+    migrated["peakPnlRecordedAt"] == null
+  ) {
+    const fallback =
+      typeof migrated["lastSyncedAt"] === "string"
+        ? migrated["lastSyncedAt"]
+        : typeof migrated["openedAt"] === "string"
+          ? migrated["openedAt"]
+          : null;
+    migrated = { ...migrated, peakPnlRecordedAt: fallback };
+  }
+
+  if (migrated["peakPnlPct"] == null && migrated["peakPnlRecordedAt"] != null) {
+    migrated = { ...migrated, peakPnlRecordedAt: null };
+  }
+
+  return migrated;
+}
+
 function parsePositions(raw: string, filePath: string): Position[] {
   let parsedJson: unknown;
   try {
@@ -36,7 +64,11 @@ function parsePositions(raw: string, filePath: string): Position[] {
     );
   }
 
-  const result = PositionSchema.array().safeParse(parsedJson);
+  const migrated = Array.isArray(parsedJson)
+    ? parsedJson.map(migratePosition)
+    : parsedJson;
+
+  const result = PositionSchema.array().safeParse(migrated);
   if (!result.success) {
     throw new StateStoreCorruptError(
       `state file is corrupt (schema mismatch): ${result.error.message}`,

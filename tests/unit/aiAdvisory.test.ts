@@ -381,7 +381,7 @@ describe("AI advisory service", () => {
         async append() {
           throw new Error("journal unavailable");
         },
-      } as JournalRepository,
+      } as unknown as JournalRepository,
       wallet: "wallet_001",
       now: () => "2026-04-21T12:00:00.000Z",
     });
@@ -503,7 +503,7 @@ describe("AI advisory service", () => {
         async append() {
           throw new Error("journal unavailable");
         },
-      } as JournalRepository,
+      } as unknown as JournalRepository,
       wallet: "wallet_001",
       now: () => "2026-04-21T12:00:00.000Z",
     });

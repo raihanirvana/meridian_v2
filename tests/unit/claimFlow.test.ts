@@ -1877,7 +1877,9 @@ describe("claim flow", () => {
       async executeSwap(request) {
         capturedRequest = {
           amount: request.amount,
-          amountRaw: request.amountRaw,
+          ...(request.amountRaw !== undefined
+            ? { amountRaw: request.amountRaw }
+            : {}),
         };
         return {
           txId: "tx_swap",

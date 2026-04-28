@@ -194,7 +194,7 @@ describe("maybeRecalibrateSignalWeights", () => {
     const recalibrateSpy = vi.spyOn(signalWeightRules, "recalculateWeights");
     recalibrateSpy.mockReturnValue({
       changes: {},
-      rationale: { noop: "no meaningful signal drift" },
+      rationale: {},
     });
 
     try {

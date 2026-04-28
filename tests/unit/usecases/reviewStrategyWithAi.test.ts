@@ -212,7 +212,7 @@ describe("reviewStrategyWithAi", () => {
         async append() {
           throw new Error("journal unavailable");
         },
-      } as JournalRepository,
+      } as unknown as JournalRepository,
       now: () => now,
     });
 

@@ -1126,7 +1126,7 @@ describe("operator commands", () => {
       async append() {
         throw new Error("disk full");
       },
-    } as JournalRepository;
+    } as unknown as JournalRepository;
 
     const tripResult = await executeOperatorCommand({
       command: {

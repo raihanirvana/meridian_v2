@@ -28,6 +28,28 @@ export class ActionStoreCorruptError extends Error {
   }
 }
 
+const TERMINAL_STATUSES = new Set(["DONE", "FAILED", "ABORTED", "TIMED_OUT"]);
+
+function migrateAction(raw: unknown): unknown {
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw)
+  ) {
+    return raw;
+  }
+  const action = raw as Record<string, unknown>;
+  if (
+    typeof action["status"] === "string" &&
+    TERMINAL_STATUSES.has(action["status"]) &&
+    action["completedAt"] === null &&
+    typeof action["requestedAt"] === "string"
+  ) {
+    return { ...action, completedAt: action["requestedAt"] };
+  }
+  return action;
+}
+
 function parseActions(raw: string, filePath: string): Action[] {
   let parsedJson: unknown;
   try {
@@ -44,7 +66,11 @@ function parseActions(raw: string, filePath: string): Action[] {
     );
   }
 
-  const result = ActionSchema.array().safeParse(parsedJson);
+  const migrated = Array.isArray(parsedJson)
+    ? parsedJson.map(migrateAction)
+    : parsedJson;
+
+  const result = ActionSchema.array().safeParse(migrated);
   if (!result.success) {
     throw new ActionStoreCorruptError(
       `action file is corrupt (schema mismatch): ${result.error.message}`,

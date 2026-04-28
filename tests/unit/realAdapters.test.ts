@@ -527,7 +527,7 @@ describe("real adapters", () => {
           text: async () => {
             throw new Error("body stream failed");
           },
-        }) as Response,
+        }) as unknown as Response,
     });
 
     await expect(

@@ -49,19 +49,50 @@ export class JournalRepository {
 
   public async append(event: JournalEvent): Promise<void> {
     const validated = JournalEventSchema.parse(event);
+    const newLine = JSON.stringify(validated);
 
     await this.fileStore.updateTextAtomic(
       this.filePath,
-      async (raw) => {
-        const parsed =
-          raw === null
-            ? { events: [], repaired: false }
-            : this.parseEvents(raw);
+      (raw) => {
+        if (raw === null || raw.trimEnd().length === 0) {
+          return `${newLine}\n`;
+        }
 
-        const nextEvents = [...parsed.events, validated];
-        return nextEvents.length === 0
-          ? ""
-          : `${nextEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
+        const rawLines = raw.split(/\r?\n/);
+        let lastNonEmptyIndex = -1;
+        for (let i = rawLines.length - 1; i >= 0; i--) {
+          if ((rawLines[i] ?? "").trim().length > 0) {
+            lastNonEmptyIndex = i;
+            break;
+          }
+        }
+
+        if (lastNonEmptyIndex === -1) {
+          return `${newLine}\n`;
+        }
+
+        const lastLine = rawLines[lastNonEmptyIndex] ?? "";
+        try {
+          JournalEventSchema.parse(JSON.parse(lastLine));
+          // Fast path: last line is valid, just append without re-serializing all events
+          const base = raw.endsWith("\n") ? raw : `${raw}\n`;
+          return `${base}${newLine}\n`;
+        } catch (error) {
+          // Corrupt trailing line — drop it and append
+          const reason =
+            error instanceof Error && error.message.trim().length > 0
+              ? error.message
+              : "unknown parse failure";
+          this.emitRecovery({
+            type: "JOURNAL_TRAILING_LINE_SKIPPED",
+            filePath: this.filePath,
+            lineNumber: lastNonEmptyIndex + 1,
+            reason,
+          });
+          const prefix = rawLines.slice(0, lastNonEmptyIndex).join("\n");
+          const base = prefix.length > 0 ? `${prefix}\n` : "";
+          return `${base}${newLine}\n`;
+        }
       },
     );
   }
