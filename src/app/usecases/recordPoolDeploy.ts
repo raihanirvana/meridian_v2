@@ -11,6 +11,7 @@ import {
   computePoolAggregates,
   shouldCooldown,
 } from "../../domain/rules/poolMemoryRules.js";
+import { logger } from "../../infra/logging/logger.js";
 
 export interface RecordPoolDeployInput {
   poolMemoryRepository: PoolMemoryRepository;
@@ -71,26 +72,33 @@ export async function recordPoolDeploy(
     },
   );
 
-  await input.journalRepository?.append({
-    timestamp: input.now,
-    eventType: "POOL_MEMORY_UPDATED",
-    actor: "system",
-    wallet: "system",
-    positionId: null,
-    actionId: null,
-    before: null,
-    after: {
-      poolAddress: updated.poolAddress,
-      totalDeploys: updated.totalDeploys,
-      avgPnlPct: updated.avgPnlPct,
-      winRatePct: updated.winRatePct,
-      lastOutcome: updated.lastOutcome,
-      recall: buildPoolRecallString(updated, { now: input.now }),
-    },
-    txIds: [],
-    resultStatus: alreadyRecorded ? "UNCHANGED" : "RECORDED",
-    error: null,
-  });
+  try {
+    await input.journalRepository?.append({
+      timestamp: input.now,
+      eventType: "POOL_MEMORY_UPDATED",
+      actor: "system",
+      wallet: "system",
+      positionId: null,
+      actionId: null,
+      before: null,
+      after: {
+        poolAddress: updated.poolAddress,
+        totalDeploys: updated.totalDeploys,
+        avgPnlPct: updated.avgPnlPct,
+        winRatePct: updated.winRatePct,
+        lastOutcome: updated.lastOutcome,
+        recall: buildPoolRecallString(updated, { now: input.now }),
+      },
+      txIds: [],
+      resultStatus: alreadyRecorded ? "UNCHANGED" : "RECORDED",
+      error: null,
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, poolAddress: updated.poolAddress },
+      "pool memory deploy journal append failed after persistence",
+    );
+  }
 
   return updated;
 }

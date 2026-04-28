@@ -207,4 +207,30 @@ describe("recordPositionPerformance", () => {
     expect(await performanceRepository.list()).toHaveLength(1);
     expect(await lessonRepository.list()).toHaveLength(1);
   });
+
+  it("continues lesson derivation when performance persistence succeeds but journaling fails", async () => {
+    const directory = await makeTempDir();
+    const filePath = path.join(directory, "lessons.json");
+    const lessonRepository = new FileLessonRepository({ filePath });
+    const performanceRepository = new FilePerformanceRepository({ filePath });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await recordPositionPerformance({
+      performance: buildPerformance(),
+      lessonRepository,
+      performanceRepository,
+      journalRepository: failingJournalRepository,
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FC9",
+      now: () => "2026-04-22T02:00:00.000Z",
+    });
+
+    expect(result.performance?.positionId).toBe("pos_001");
+    expect(result.lesson?.id).toBe("01ARZ3NDEKTSV4RRFFQ69G5FC9");
+    expect(await performanceRepository.list()).toHaveLength(1);
+    expect(await lessonRepository.list()).toHaveLength(1);
+  });
 });

@@ -171,6 +171,59 @@ describe("startup recovery checklist", () => {
     });
   });
 
+  it("continues recovering stale RUNNING actions even when recovery journaling fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    await actionRepository.upsert({
+      ...buildAction(),
+      actionId: "act_recovered_1",
+      status: "RUNNING",
+      startedAt: "2026-04-22T10:00:00.000Z",
+    });
+    await actionRepository.upsert({
+      ...buildAction(),
+      actionId: "act_recovered_2",
+      idempotencyKey: "wallet_001:deploy:recovered:2",
+      status: "RUNNING",
+      startedAt: "2026-04-22T10:00:30.000Z",
+    });
+
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+      async list() {
+        return [];
+      },
+    } as unknown as JournalRepository;
+
+    const result = await runStartupRecoveryChecklist({
+      wallet: "wallet_001",
+      stateRepository: new StateRepository({
+        filePath: path.join(directory, "positions.json"),
+      }),
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      now: "2026-04-22T10:05:00.000Z",
+    });
+
+    const recoveredOne = await actionRepository.get("act_recovered_1");
+    const recoveredTwo = await actionRepository.get("act_recovered_2");
+
+    expect(result.status).toBe("HEALTHY");
+    expect(
+      result.checklist.find((item) => item.item === "actions_running_recovery"),
+    ).toMatchObject({
+      ok: true,
+      detail:
+        "recovered 2 stale RUNNING action(s) with 2 journal warning(s)",
+    });
+    expect(recoveredOne?.status).toBe("WAITING_CONFIRMATION");
+    expect(recoveredTwo?.status).toBe("WAITING_CONFIRMATION");
+  });
+
   it("returns UNSAFE instead of throwing when an optional store fails report generation checks", async () => {
     const directory = await makeTempDir();
 

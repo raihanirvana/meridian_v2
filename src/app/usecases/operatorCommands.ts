@@ -1174,10 +1174,41 @@ export async function executeOperatorCommand(
       const runtimePolicyStore = requireRuntimePolicyStore(
         input.runtimePolicyStore,
       );
+      const before = await runtimePolicyStore.snapshot();
       await runtimePolicyStore.reset();
+      const after = await runtimePolicyStore.snapshot();
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
+          timestamp: requestedAt,
+          eventType: "POLICY_RESET",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: {
+            overrides: before.overrides,
+            lastEvolvedAt: before.lastEvolvedAt,
+            positionsAtEvolution: before.positionsAtEvolution,
+            rationale: before.rationale,
+          },
+          after: {
+            overrides: after.overrides,
+            lastEvolvedAt: after.lastEvolvedAt,
+            positionsAtEvolution: after.positionsAtEvolution,
+            rationale: after.rationale,
+          },
+          txIds: [],
+          resultStatus: "RESET",
+          error: null,
+        },
+      });
       return {
         command: input.command.kind,
-        text: "policy overrides reset",
+        text:
+          journalWarning === null
+            ? "policy overrides reset"
+            : `policy overrides reset, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }

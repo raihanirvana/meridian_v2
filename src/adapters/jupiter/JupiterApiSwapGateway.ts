@@ -46,11 +46,21 @@ function parseNumericString(value: string, fieldName: string): number {
   return parsed;
 }
 
+function parseRawAmountString(value: string, fieldName: string): string {
+  if (!/^\d+$/.test(value)) {
+    throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
+      `${fieldName}: invalid raw amount string`,
+    ]);
+  }
+
+  return value;
+}
+
 function pickAmount(
   primary: string | undefined,
   fallback: string | undefined,
   fieldName: string,
-): number {
+): { amount: number; raw: string } {
   const value = primary ?? fallback;
   if (value === undefined) {
     throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
@@ -58,7 +68,10 @@ function pickAmount(
     ]);
   }
 
-  return parseNumericString(value, fieldName);
+  return {
+    amount: parseNumericString(value, fieldName),
+    raw: parseRawAmountString(value, fieldName),
+  };
 }
 
 export interface JupiterApiSwapGatewayOptions {
@@ -120,6 +133,10 @@ export class JupiterApiSwapGateway implements SwapGateway {
         quoteResponse.outAmount,
         "outAmount",
       ),
+      expectedOutputAmountRaw: parseRawAmountString(
+        quoteResponse.outAmount,
+        "outAmount",
+      ),
       // Jupiter returns a fractional ratio string such as "0.0001" (= 0.01%).
       priceImpactPct: parseNumericString(
         quoteResponse.priceImpactPct,
@@ -149,19 +166,23 @@ export class JupiterApiSwapGateway implements SwapGateway {
       },
       responseSchema: JupiterExecuteResponseSchema,
     });
+    const inputAmount = pickAmount(
+      executeResponse.inputAmountResult,
+      executeResponse.totalInputAmount,
+      "inputAmountResult",
+    );
+    const outputAmount = pickAmount(
+      executeResponse.outputAmountResult,
+      executeResponse.totalOutputAmount,
+      "outputAmountResult",
+    );
 
     return ExecuteSwapResultSchema.parse({
       txId: executeResponse.signature,
-      inputAmount: pickAmount(
-        executeResponse.inputAmountResult,
-        executeResponse.totalInputAmount,
-        "inputAmountResult",
-      ),
-      outputAmount: pickAmount(
-        executeResponse.outputAmountResult,
-        executeResponse.totalOutputAmount,
-        "outputAmountResult",
-      ),
+      inputAmount: inputAmount.amount,
+      inputAmountRaw: inputAmount.raw,
+      outputAmount: outputAmount.amount,
+      outputAmountRaw: outputAmount.raw,
     });
   }
 }

@@ -8,6 +8,7 @@ import {
   evolveThresholds,
   type ThresholdEvolutionResult,
 } from "../../domain/rules/thresholdEvolutionRules.js";
+import { logger } from "../../infra/logging/logger.js";
 
 export interface MaybeEvolvePolicyInput {
   performanceRepository: PerformanceRepositoryInterface;
@@ -111,39 +112,53 @@ export async function maybeEvolvePolicy(
     rationale: evolved.rationale,
   });
 
-  await input.journalRepository?.append({
-    timestamp: now,
-    eventType: "POLICY_EVOLVED",
-    actor: "system",
-    wallet: "system",
-    positionId: null,
-    actionId: null,
-    before: null,
-    after: {
-      changes: evolved.changes,
-      rationale: evolved.rationale,
-      positionsAtEvolution,
-    },
-    txIds: [],
-    resultStatus: "APPLIED",
-    error: null,
-  });
-
-  await input.lessonRepository.append(
-    LessonSchema.parse({
-      id: input.idGen(),
-      rule: formatEvolutionRule({
-        positionsAtEvolution,
+  try {
+    await input.journalRepository?.append({
+      timestamp: now,
+      eventType: "POLICY_EVOLVED",
+      actor: "system",
+      wallet: "system",
+      positionId: null,
+      actionId: null,
+      before: null,
+      after: {
         changes: evolved.changes,
         rationale: evolved.rationale,
+        positionsAtEvolution,
+      },
+      txIds: [],
+      resultStatus: "APPLIED",
+      error: null,
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, positionsAtEvolution },
+      "policy evolution journal append failed after persistence",
+    );
+  }
+
+  try {
+    await input.lessonRepository.append(
+      LessonSchema.parse({
+        id: input.idGen(),
+        rule: formatEvolutionRule({
+          positionsAtEvolution,
+          changes: evolved.changes,
+          rationale: evolved.rationale,
+        }),
+        tags: ["evolution", "config_change"],
+        outcome: "evolution",
+        role: null,
+        pinned: false,
+        createdAt: now,
       }),
-      tags: ["evolution", "config_change"],
-      outcome: "evolution",
-      role: null,
-      pinned: false,
-      createdAt: now,
-    }),
-  );
+    );
+  } catch (error) {
+    logger.warn(
+      { err: error, positionsAtEvolution },
+      "policy evolution lesson append failed after persistence",
+    );
+  }
 
   return {
     positionsAtEvolution,

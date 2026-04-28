@@ -1210,4 +1210,136 @@ describe("operator commands", () => {
       false,
     );
   });
+
+  it("writes a POLICY_RESET audit event and warns if the journal write fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    let resetCalls = 0;
+    let snapshotCalls = 0;
+    const runtimePolicyStore = {
+      async snapshot() {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1) {
+          return {
+            policy: {},
+            overrides: { shortlistLimit: 1 },
+            lastEvolvedAt: "2026-04-21T12:00:00.000Z",
+            positionsAtEvolution: 5,
+            rationale: { shortlistLimit: "seed" },
+          };
+        }
+
+        return {
+          policy: {},
+          overrides: {},
+          lastEvolvedAt: undefined,
+          positionsAtEvolution: undefined,
+          rationale: {},
+        };
+      },
+      async reset() {
+        resetCalls += 1;
+      },
+    };
+
+    const resetResult = await executeOperatorCommand({
+      command: {
+        kind: "POLICY_RESET",
+        confirm: true,
+      },
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      runtimePolicyStore: runtimePolicyStore as never,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(resetCalls).toBe(1);
+    expect(resetResult.text).toBe("policy overrides reset");
+    expect(
+      (await journalRepository.list()).map((event) => event.eventType),
+    ).toContain("POLICY_RESET");
+
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    snapshotCalls = 0;
+    const warningResult = await executeOperatorCommand({
+      command: {
+        kind: "POLICY_RESET",
+        confirm: true,
+      },
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      runtimePolicyStore: runtimePolicyStore as never,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:05:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:05:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      requestedBy: "operator",
+      requestedAt: "2026-04-21T12:05:00.000Z",
+    });
+
+    expect(warningResult.text).toContain("policy overrides reset");
+    expect(warningResult.text).toContain("journal write failed");
+  });
 });

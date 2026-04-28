@@ -53,7 +53,7 @@ const ReplayTimeoutSchema = z.object({
 
 const ReplayAmbiguousSchema = z.object({
   type: z.literal("ambiguous"),
-  operation: z.enum(["DEPLOY", "CLOSE", "CLAIM_FEES"]),
+  operation: z.enum(["DEPLOY", "CLOSE", "CLAIM_FEES", "REBALANCE"]),
   positionId: z.string().min(1),
   txIds: z.array(z.string().min(1)).default([]),
   timeoutMs: z.number().int().positive().optional(),

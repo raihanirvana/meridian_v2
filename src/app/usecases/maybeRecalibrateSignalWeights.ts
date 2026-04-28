@@ -11,6 +11,7 @@ import {
   MIN_SIGNAL_WEIGHT_SAMPLES,
   recalculateWeights,
 } from "../../domain/rules/signalWeightRules.js";
+import { logger } from "../../infra/logging/logger.js";
 
 export const MIN_SIGNAL_RECALIBRATION_POSITIONS = 10;
 
@@ -128,39 +129,53 @@ export async function maybeRecalibrateSignalWeights(
     positionsAtRecalibration,
   });
 
-  await input.journalRepository?.append({
-    timestamp: now,
-    eventType: "SIGNAL_WEIGHTS_RECALIBRATED",
-    actor: "system",
-    wallet: "system",
-    positionId: null,
-    actionId: null,
-    before: null,
-    after: {
-      changes: recalculated.changes,
-      rationale: recalculated.rationale,
-      positionsAtRecalibration,
-    },
-    txIds: [],
-    resultStatus: "APPLIED",
-    error: null,
-  });
-
-  await input.lessonRepository.append(
-    LessonSchema.parse({
-      id: input.idGen(),
-      rule: formatDarwinRule({
-        positionsAtRecalibration,
+  try {
+    await input.journalRepository?.append({
+      timestamp: now,
+      eventType: "SIGNAL_WEIGHTS_RECALIBRATED",
+      actor: "system",
+      wallet: "system",
+      positionId: null,
+      actionId: null,
+      before: null,
+      after: {
         changes: recalculated.changes,
         rationale: recalculated.rationale,
+        positionsAtRecalibration,
+      },
+      txIds: [],
+      resultStatus: "APPLIED",
+      error: null,
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, positionsAtRecalibration },
+      "signal weights recalibration journal append failed after persistence",
+    );
+  }
+
+  try {
+    await input.lessonRepository.append(
+      LessonSchema.parse({
+        id: input.idGen(),
+        rule: formatDarwinRule({
+          positionsAtRecalibration,
+          changes: recalculated.changes,
+          rationale: recalculated.rationale,
+        }),
+        tags: ["evolution", "signal_weights", "darwin"],
+        outcome: "evolution",
+        role: null,
+        pinned: false,
+        createdAt: now,
       }),
-      tags: ["evolution", "signal_weights", "darwin"],
-      outcome: "evolution",
-      role: null,
-      pinned: false,
-      createdAt: now,
-    }),
-  );
+    );
+  } catch (error) {
+    logger.warn(
+      { err: error, positionsAtRecalibration },
+      "signal weights recalibration lesson append failed after persistence",
+    );
+  }
 
   return {
     positionsAtRecalibration,

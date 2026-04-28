@@ -10,6 +10,7 @@ import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 export type AmbiguousSubmissionOperation =
   | "DEPLOY"
   | "CLOSE"
+  | "REBALANCE"
   | "PARTIAL_CLOSE"
   | "CLAIM_FEES";
 

@@ -235,4 +235,62 @@ describe("maybeRecalibrateSignalWeights", () => {
       recalibrateSpy.mockRestore();
     }
   });
+
+  it("does not throw or lose recalibration state when journal append fails after weights are persisted", async () => {
+    const directory = await makeTempDir();
+    const lessonsFilePath = path.join(directory, "lessons.json");
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: lessonsFilePath,
+    });
+    const lessonRepository = new FileLessonRepository({
+      filePath: lessonsFilePath,
+    });
+    const signalWeightsStore = new FileSignalWeightsStore({
+      filePath: path.join(directory, "signal-weights.json"),
+    });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    for (let index = 0; index < 10; index += 1) {
+      await performanceRepository.append(
+        buildPerformance({
+          positionId: `pos_warn_${index}`,
+          feeTvlRatio: 0.1 + index * 0.02,
+          pnlPct: 1 + index * 2,
+        }),
+      );
+    }
+
+    const result = await maybeRecalibrateSignalWeights({
+      performanceRepository,
+      signalWeightsStore,
+      lessonRepository,
+      journalRepository: failingJournalRepository,
+      darwinEnabled: true,
+      now: () => "2026-04-22T12:00:00.000Z",
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FDD",
+    });
+
+    expect(result.skipped).not.toBe(true);
+    const snapshot = await signalWeightsStore.snapshot();
+    expect(snapshot.metadata.positionsAtRecalibration).toBe(10);
+
+    const retry = await maybeRecalibrateSignalWeights({
+      performanceRepository,
+      signalWeightsStore,
+      lessonRepository,
+      journalRepository: failingJournalRepository,
+      darwinEnabled: true,
+      now: () => "2026-04-22T12:01:00.000Z",
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FDE",
+    });
+
+    expect(retry).toEqual({
+      skipped: true,
+      reason: "already_recalibrated_for_position_count",
+    });
+  });
 });

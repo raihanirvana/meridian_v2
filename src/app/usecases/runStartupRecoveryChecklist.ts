@@ -157,10 +157,12 @@ async function recoverStaleRunningActions(input: {
   actionRepository: ActionRepository;
   journalRepository: JournalRepository;
   checkedAt: string;
-}): Promise<number> {
+}): Promise<{ recoveredCount: number; journalFailureCount: number }> {
   const runningActions = (await input.actionRepository.list()).filter(
     (action) => action.status === "RUNNING",
   );
+  let recoveredCount = 0;
+  let journalFailureCount = 0;
 
   for (const action of runningActions) {
     const recoveredAction: Action = {
@@ -174,22 +176,30 @@ async function recoverStaleRunningActions(input: {
     };
 
     await input.actionRepository.upsert(recoveredAction);
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: input.checkedAt,
-      eventType: "ACTION_STALE_RUNNING_RECOVERED",
-      actor: action.requestedBy,
-      wallet: action.wallet,
-      positionId: action.positionId,
-      actionId: action.actionId,
-      before: action as unknown as Record<string, unknown>,
-      after: recoveredAction as unknown as Record<string, unknown>,
-      txIds: recoveredAction.txIds,
-      resultStatus: recoveredAction.status,
-      error: recoveredAction.error,
-    });
+    recoveredCount += 1;
+    try {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: input.checkedAt,
+        eventType: "ACTION_STALE_RUNNING_RECOVERED",
+        actor: action.requestedBy,
+        wallet: action.wallet,
+        positionId: action.positionId,
+        actionId: action.actionId,
+        before: action as unknown as Record<string, unknown>,
+        after: recoveredAction as unknown as Record<string, unknown>,
+        txIds: recoveredAction.txIds,
+        resultStatus: recoveredAction.status,
+        error: recoveredAction.error,
+      });
+    } catch {
+      journalFailureCount += 1;
+    }
   }
 
-  return runningActions.length;
+  return {
+    recoveredCount,
+    journalFailureCount,
+  };
 }
 
 export async function runStartupRecoveryChecklist(
@@ -217,9 +227,11 @@ export async function runStartupRecoveryChecklist(
         journalRepository: input.journalRepository,
         checkedAt,
       });
-      return recovered === 0
+      return recovered.recoveredCount === 0
         ? "no stale RUNNING action found"
-        : `recovered ${recovered} stale RUNNING action(s)`;
+        : recovered.journalFailureCount === 0
+          ? `recovered ${recovered.recoveredCount} stale RUNNING action(s)`
+          : `recovered ${recovered.recoveredCount} stale RUNNING action(s) with ${recovered.journalFailureCount} journal warning(s)`;
     }),
   );
   checklist.push(

@@ -155,4 +155,29 @@ describe("recordPoolDeploy", () => {
     expect(entry.deploys).toHaveLength(1);
     expect(entry.avgPnlPct).toBe(5);
   });
+
+  it("returns the updated entry when pool memory persistence succeeds but journaling fails", async () => {
+    const directory = await makeTempDir();
+    const repository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const entry = await recordPoolDeploy({
+      poolMemoryRepository: repository,
+      journalRepository: failingJournalRepository,
+      poolAddress: "pool_warn",
+      name: "SOL-USDC",
+      baseMint: "mint_sol",
+      deploy: buildDeploy(),
+      now: "2026-04-22T02:00:00.000Z",
+    });
+
+    expect(entry.totalDeploys).toBe(1);
+    expect((await repository.get("pool_warn"))?.totalDeploys).toBe(1);
+  });
 });

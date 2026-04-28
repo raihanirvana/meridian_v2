@@ -10,6 +10,7 @@ export const SwapQuoteRequestSchema = z.object({
 
 export const SwapQuoteResultSchema = z.object({
   expectedOutputAmount: z.number().nonnegative(),
+  expectedOutputAmountRaw: z.string().regex(/^\d+$/).optional(),
   // Canonical unit: fractional ratio, where 0.01 = 1%.
   priceImpactPct: z.number().nonnegative(),
 });
@@ -22,7 +23,9 @@ export const ExecuteSwapRequestSchema = SwapQuoteRequestSchema.extend({
 export const ExecuteSwapResultSchema = z.object({
   txId: z.string().min(1),
   inputAmount: z.number().nonnegative(),
+  inputAmountRaw: z.string().regex(/^\d+$/).optional(),
   outputAmount: z.number().nonnegative(),
+  outputAmountRaw: z.string().regex(/^\d+$/).optional(),
 });
 
 export type SwapQuoteRequest = z.infer<typeof SwapQuoteRequestSchema>;

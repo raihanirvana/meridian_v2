@@ -145,6 +145,9 @@ export class JsonHttpClient {
     options.signal?.addEventListener("abort", abortFromParentSignal, {
       once: true,
     });
+    if (options.signal?.aborted) {
+      abortController?.abort();
+    }
 
     let response: Response;
     let text: string;

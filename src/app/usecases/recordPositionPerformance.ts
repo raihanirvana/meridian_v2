@@ -10,6 +10,7 @@ import {
   deriveLesson,
   isSuspiciousUnitMix,
 } from "../../domain/rules/lessonRules.js";
+import { logger } from "../../infra/logging/logger.js";
 
 export interface RecordPositionPerformanceInput {
   performance: PerformanceRecord;
@@ -25,6 +26,24 @@ export interface RecordPositionPerformanceResult {
   reason?: "duplicate_position" | "suspicious_unit_mix";
   performance?: PerformanceRecord;
   lesson?: Lesson | null;
+}
+
+async function appendJournalBestEffort(
+  journalRepository: JournalRepository | undefined,
+  event: Parameters<JournalRepository["append"]>[0],
+): Promise<void> {
+  if (journalRepository === undefined) {
+    return;
+  }
+
+  try {
+    await journalRepository.append(event);
+  } catch (error) {
+    logger.warn(
+      { err: error, eventType: event.eventType, positionId: event.positionId },
+      "position performance journal append failed",
+    );
+  }
 }
 
 function isSameDerivedLesson(input: {
@@ -48,7 +67,7 @@ export async function recordPositionPerformance(
   const isSuspicious = isSuspiciousUnitMix(requestedPerformance);
 
   if (isSuspicious) {
-    await input.journalRepository?.append({
+    await appendJournalBestEffort(input.journalRepository, {
       timestamp: input.now(),
       eventType: "PERFORMANCE_RECORD_SKIPPED",
       actor: "system",
@@ -76,7 +95,7 @@ export async function recordPositionPerformance(
     record: performance,
   } = await input.performanceRepository.appendIfAbsent(requestedPerformance);
   if (insertedPerformance) {
-    await input.journalRepository?.append({
+    await appendJournalBestEffort(input.journalRepository, {
       timestamp: input.now(),
       eventType: "PERFORMANCE_RECORDED",
       actor: "system",
@@ -116,7 +135,7 @@ export async function recordPositionPerformance(
       );
       lesson = insertedLesson.lesson;
       if (insertedLesson.inserted) {
-        await input.journalRepository?.append({
+        await appendJournalBestEffort(input.journalRepository, {
           timestamp: input.now(),
           eventType: "LESSON_RECORDED",
           actor: "system",

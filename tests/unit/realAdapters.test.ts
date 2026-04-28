@@ -8,6 +8,7 @@ import {
   AdapterHttpStatusError,
   AdapterResponseValidationError,
   AdapterTransportError,
+  JsonHttpClient,
 } from "../../src/adapters/http/HttpJsonClient.js";
 import { JupiterApiSwapGateway } from "../../src/adapters/jupiter/JupiterApiSwapGateway.js";
 import { JupiterSolPriceGateway } from "../../src/adapters/pricing/JupiterSolPriceGateway.js";
@@ -76,6 +77,7 @@ describe("real adapters", () => {
       }),
     ).resolves.toEqual({
       expectedOutputAmount: 17057460,
+      expectedOutputAmountRaw: "17057460",
       priceImpactPct: 0.0001,
     });
 
@@ -456,6 +458,31 @@ describe("real adapters", () => {
     ).rejects.toBeInstanceOf(AdapterTransportError);
   });
 
+  it("honors a parent AbortSignal that is already aborted before the request starts", async () => {
+    let receivedAbortedSignal = false;
+    const controller = new AbortController();
+    controller.abort();
+    const client = new JsonHttpClient({
+      adapterName: "PreAbortedClient",
+      baseUrl: "https://example.test/",
+      fetchFn: async (_url, init) => {
+        receivedAbortedSignal = init?.signal?.aborted === true;
+        throw new Error("request aborted");
+      },
+    });
+
+    await expect(
+      client.request({
+        method: "GET",
+        path: "health",
+        responseSchema: CandidateSchema.array(),
+        signal: controller.signal,
+      }),
+    ).rejects.toBeInstanceOf(AdapterTransportError);
+
+    expect(receivedAbortedSignal).toBe(true);
+  });
+
   it("aborts HttpLlmGateway requests via AbortSignal when timeout elapses", async () => {
     let aborted = false;
     const llm = new HttpLlmGateway({
@@ -533,6 +560,28 @@ describe("real adapters", () => {
     await expect(
       screening.listCandidates({ limit: 5, timeframe: "5m" }),
     ).rejects.toBeInstanceOf(AdapterTransportError);
+  });
+
+  it("preserves Jupiter raw outAmount exactly even above Number.MAX_SAFE_INTEGER", async () => {
+    const jupiterQuote = new JupiterApiSwapGateway({
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            outAmount: "9007199254740993",
+            priceImpactPct: "0.0001",
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    const result = await jupiterQuote.quoteSwap({
+      inputMint: "So11111111111111111111111111111111111111112",
+      outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      amount: 100000000,
+    });
+
+    expect(result.expectedOutputAmountRaw).toBe("9007199254740993");
   });
 
   it("aborts if response body read stalls after headers", async () => {
@@ -847,7 +896,9 @@ describe("real adapters", () => {
     ).resolves.toEqual({
       txId: "sig_001",
       inputAmount: 100000000,
+      inputAmountRaw: "100000000",
       outputAmount: 17057460,
+      outputAmountRaw: "17057460",
     });
   });
 

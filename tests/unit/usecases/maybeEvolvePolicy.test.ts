@@ -274,4 +274,61 @@ describe("maybeEvolvePolicy", () => {
     expect(await lessonRepository.list()).toHaveLength(0);
     expect(await journalRepository.list()).toHaveLength(0);
   });
+
+  it("does not throw or lose evolution state when journal append fails after policy overrides persist", async () => {
+    const directory = await makeTempDir();
+    const lessonsFilePath = path.join(directory, "lessons.json");
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: lessonsFilePath,
+    });
+    const lessonRepository = new FileLessonRepository({
+      filePath: lessonsFilePath,
+    });
+    const runtimePolicyStore = new FileRuntimePolicyStore({
+      filePath: path.join(directory, "policy-overrides.json"),
+      basePolicy: buildPolicy(),
+    });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const records = [
+      buildPerformance({ positionId: "w1", pnlPct: 10, feeTvlRatio: 0.3, organicScore: 88 }),
+      buildPerformance({ positionId: "w2", pnlPct: 9, feeTvlRatio: 0.28, organicScore: 86 }),
+      buildPerformance({ positionId: "w3", pnlPct: 8, feeTvlRatio: 0.32, organicScore: 84 }),
+      buildPerformance({ positionId: "l1", pnlPct: -8, pnlUsd: -8, feeTvlRatio: 0.07, organicScore: 61 }),
+      buildPerformance({ positionId: "l2", pnlPct: -7, pnlUsd: -7, feeTvlRatio: 0.08, organicScore: 62 }),
+    ];
+    for (const record of records) {
+      await performanceRepository.append(record);
+    }
+
+    const result = await maybeEvolvePolicy({
+      performanceRepository,
+      runtimePolicyStore,
+      lessonRepository,
+      journalRepository: failingJournalRepository,
+      now: () => "2026-04-22T12:00:00.000Z",
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FEE",
+    });
+
+    expect(result.skipped).not.toBe(true);
+    expect((await runtimePolicyStore.snapshot()).positionsAtEvolution).toBe(5);
+
+    const retry = await maybeEvolvePolicy({
+      performanceRepository,
+      runtimePolicyStore,
+      lessonRepository,
+      journalRepository: failingJournalRepository,
+      now: () => "2026-04-22T12:01:00.000Z",
+      idGen: () => "01ARZ3NDEKTSV4RRFFQ69G5FEF",
+    });
+
+    expect(retry).toEqual({
+      skipped: true,
+      reason: "already_evolved_for_position_count",
+    });
+  });
 });
