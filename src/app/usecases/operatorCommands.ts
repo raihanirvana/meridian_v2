@@ -18,6 +18,7 @@ import {
 } from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
 import { createUlid } from "../../infra/id/createUlid.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import type { PolicyProvider } from "../services/PolicyProvider.js";
 import { buildPortfolioState } from "../services/PortfolioStateBuilder.js";
@@ -701,23 +702,30 @@ export async function executeOperatorCommand(
         policy: input.riskPolicy,
       });
       if (!riskResult.allowed) {
-        await input.journalRepository.append({
-          timestamp: requestedAt,
-          eventType: "CLOSE_REQUEST_BLOCKED_BY_RISK",
-          actor: requestedBy,
-          wallet: input.wallet,
-          positionId: input.command.positionId,
-          actionId: null,
-          before: null,
-          after: {
-            requestPayload: input.command.payload,
-            riskDecision: riskResult.decision,
-            blockingRules: riskResult.blockingRules,
-          },
-          txIds: [],
-          resultStatus: "BLOCKED",
-          error: riskResult.reason,
-        });
+        try {
+          await input.journalRepository.append({
+            timestamp: requestedAt,
+            eventType: "CLOSE_REQUEST_BLOCKED_BY_RISK",
+            actor: requestedBy,
+            wallet: input.wallet,
+            positionId: input.command.positionId,
+            actionId: null,
+            before: null,
+            after: {
+              requestPayload: input.command.payload,
+              riskDecision: riskResult.decision,
+              blockingRules: riskResult.blockingRules,
+            },
+            txIds: [],
+            resultStatus: "BLOCKED",
+            error: riskResult.reason,
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, positionId: input.command.positionId },
+            "close risk-block journal append failed",
+          );
+        }
 
         throw new Error(`close blocked by risk guard: ${riskResult.reason}`);
       }

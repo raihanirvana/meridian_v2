@@ -348,8 +348,6 @@ describe("AI advisory service", () => {
   });
 
   it("still falls back for shortlist ranking when lesson loading and journal append both fail", async () => {
-    const directory = await makeTempDir();
-
     const result = await rankShortlistWithAi({
       shortlist: [
         buildCandidate({ candidateId: "cand_a" }),

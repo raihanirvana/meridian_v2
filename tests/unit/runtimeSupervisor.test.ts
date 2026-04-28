@@ -833,61 +833,6 @@ describe("runtime supervisor", () => {
       },
     });
 
-    const dlmmGateway = {
-      async getPosition() {
-        return null;
-      },
-      async deployLiquidity() {
-        return {
-          actionType: "DEPLOY" as const,
-          positionId: "pos_001",
-          txIds: ["tx_deploy"],
-        };
-      },
-      async simulateDeployLiquidity() {
-        return { ok: true, reason: null };
-      },
-      async closePosition() {
-        return {
-          actionType: "CLOSE" as const,
-          closedPositionId: "pos_001",
-          txIds: ["tx_close"],
-        };
-      },
-      async simulateClosePosition() {
-        return { ok: true, reason: null };
-      },
-      async claimFees() {
-        return {
-          actionType: "CLAIM_FEES" as const,
-          claimedBaseAmount: 0,
-          txIds: ["tx_claim"],
-        };
-      },
-      async partialClosePosition() {
-        return {
-          actionType: "PARTIAL_CLOSE" as const,
-          closedPositionId: "pos_001",
-          remainingPercentage: 50,
-          txIds: ["tx_partial"],
-        };
-      },
-      async listPositionsForWallet() {
-        return { wallet: "wallet_001", positions: [] };
-      },
-      async getPoolInfo(poolAddress: string) {
-        if (poolAddress === "pool_bad") {
-          throw new Error("pool info unavailable");
-        }
-        return {
-          poolAddress,
-          pairLabel: "GOOD-SOL",
-          binStep: 80,
-          activeBin: 1000,
-        };
-      },
-    };
-
     const supervisor = createRuntimeSupervisorFromUserConfig({
       wallet: "wallet_001",
       userConfig,
@@ -1068,6 +1013,7 @@ describe("runtime supervisor", () => {
           actionType: "DEPLOY" as const,
           positionId: "pos_001",
           txIds: ["tx_deploy"],
+          submissionStatus: "submitted" as const,
         };
       },
       async simulateDeployLiquidity() {
@@ -1078,6 +1024,7 @@ describe("runtime supervisor", () => {
           actionType: "CLOSE" as const,
           closedPositionId: "pos_001",
           txIds: ["tx_close"],
+          submissionStatus: "submitted" as const,
         };
       },
       async simulateClosePosition() {
@@ -1088,6 +1035,7 @@ describe("runtime supervisor", () => {
           actionType: "CLAIM_FEES" as const,
           claimedBaseAmount: 0,
           txIds: ["tx_claim"],
+          submissionStatus: "submitted" as const,
         };
       },
       async partialClosePosition() {

@@ -128,6 +128,15 @@ export class JournalRepository {
     return parsed.events;
   }
 
+  public async validate(): Promise<void> {
+    const raw = await this.fileStore.readText(this.filePath);
+    if (raw === null) {
+      return;
+    }
+
+    this.parseEvents(raw);
+  }
+
   public async replaceAll(events: JournalEvent[]): Promise<void> {
     const validated = JournalEventSchema.array().parse(events);
     await this.rewriteValidEvents(validated);

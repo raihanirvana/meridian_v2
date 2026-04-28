@@ -146,6 +146,22 @@ async function appendJournalEvent(
   await journalRepository.append(event);
 }
 
+async function safeAppendJournalEvent(
+  journalRepository: JournalRepository | undefined,
+  event: JournalEvent,
+  context: string,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await appendJournalEvent(journalRepository, event);
+  } catch (journalError) {
+    logger.warn(
+      { err: journalError, ...metadata },
+      `${context} journal append failed`,
+    );
+  }
+}
+
 function createRecord(input: ReconciliationRecord): ReconciliationRecord {
   return input;
 }
@@ -592,7 +608,9 @@ async function recoverReconcilingAction(
             } satisfies Action;
             await input.actionRepository.upsert(doneAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: input.now,
               eventType: "REBALANCE_FINALIZED_RECONSTRUCTED",
               actor: latestAction.requestedBy,
@@ -611,7 +629,10 @@ async function recoverReconcilingAction(
               txIds: doneAction.txIds,
               resultStatus: doneAction.status,
               error: null,
-            });
+              },
+              "startup rebalance reconstructed",
+              { actionId: doneAction.actionId },
+            );
 
             return createRecord({
               scope: "ACTION",
@@ -717,7 +738,9 @@ async function recoverReconcilingAction(
       } satisfies Action;
       await input.actionRepository.upsert(doneAction);
 
-      await appendJournalEvent(input.journalRepository, {
+      await safeAppendJournalEvent(
+        input.journalRepository,
+        {
         timestamp: input.now,
         eventType: "ACTION_STARTUP_RECOVERY_FINALIZED_CLOSED_ACTION",
         actor: latestAction.requestedBy,
@@ -735,7 +758,10 @@ async function recoverReconcilingAction(
         txIds: latestAction.txIds,
         resultStatus: doneAction.status,
         error: null,
-      });
+        },
+        "startup recovery finalized closed action",
+        { actionId: doneAction.actionId },
+      );
 
       return createRecord({
         scope: "ACTION",
@@ -758,7 +784,9 @@ async function recoverReconcilingAction(
     } satisfies Action;
     await input.actionRepository.upsert(failedAction);
 
-    await appendJournalEvent(input.journalRepository, {
+    await safeAppendJournalEvent(
+      input.journalRepository,
+      {
       timestamp: input.now,
       eventType: "ACTION_STARTUP_RECOVERY_REQUIRES_RECONCILIATION",
       actor: latestAction.requestedBy,
@@ -775,7 +803,10 @@ async function recoverReconcilingAction(
       txIds: latestAction.txIds,
       resultStatus: failedAction.status,
       error: failedAction.error,
-    });
+      },
+      "startup recovery requires reconciliation",
+      { actionId: failedAction.actionId },
+    );
 
     return createRecord({
       scope: "ACTION",

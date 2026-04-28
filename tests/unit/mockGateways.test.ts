@@ -525,5 +525,66 @@ describe("mock gateways", () => {
         message: "hello",
       }),
     ).rejects.toThrow();
+
+    const invalidPositionDlmm = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: {
+          positionId: "pos_invalid",
+          poolAddress: "pool_invalid",
+        } as never,
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_001",
+          txIds: ["tx_001"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "pos_001",
+          txIds: ["tx_002"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 1,
+          txIds: ["tx_003"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "pos_001",
+          remainingPercentage: 50,
+          txIds: ["tx_004"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 123,
+        },
+      },
+    });
+
+    await expect(invalidPositionDlmm.getPosition("pos_invalid")).rejects.toThrow();
   });
 });

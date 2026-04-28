@@ -582,7 +582,7 @@ describe("deploy flow", () => {
         value: {
           ...buildConfirmedPosition("pos_out_of_range"),
           activeBin: 30,
-          outOfRangeSince: null,
+          outOfRangeSince: "2026-04-20T01:05:00.000Z",
         },
       },
       deployLiquidity: {
@@ -2014,4 +2014,82 @@ describe("deploy flow", () => {
     expect(actions).toHaveLength(1);
     expect(actions[0]?.status).toBe("QUEUED");
   });
+
+  it("rethrows the original deploy error when failure journaling also fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository: new ActionRepository({
+        filePath: path.join(directory, "actions.json"),
+      }),
+    });
+    const failingJournal = {
+      async append() {
+        throw new Error("journal disk full");
+      },
+    } as unknown as JournalRepository;
+
+    const action = await requestDeploy({
+      actionQueue,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await expect(
+      processDeployAction({
+        action,
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "fail",
+            error: new Error("insufficient funds"),
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "unused",
+              txIds: ["tx_unused"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_unused"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "unused",
+              remainingPercentage: 50,
+              txIds: ["tx_unused"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: { wallet: "wallet_001", positions: [] },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "SOL-USDC",
+              binStep: 100,
+              activeBin: 15,
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository: failingJournal,
+      }),
+    ).rejects.toThrow(/insufficient funds/i);
+  });
+
 });

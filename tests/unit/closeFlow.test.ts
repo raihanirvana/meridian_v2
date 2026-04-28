@@ -1794,4 +1794,120 @@ describe("close flow", () => {
     const persistedAction = await actionRepository.get(action.actionId);
     expect(persistedAction?.status).toBe("QUEUED");
   });
+
+  it("rethrows the original close error when failure journaling also fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository: new ActionRepository({
+        filePath: path.join(directory, "actions.json"),
+      }),
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_close_error_mask"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_close_error_mask",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+    });
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal disk full");
+      },
+    } as unknown as JournalRepository;
+
+    await expect(
+      processCloseAction({
+        action,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "fail",
+            error: new Error("close rejected by rpc"),
+          },
+        }),
+        stateRepository,
+        journalRepository: failingJournal,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    ).rejects.toThrow(/close rejected by rpc/i);
+  });
+
+  it("returns TIMED_OUT when CLOSE_TIMED_OUT journal append fails after timeout persistence", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const realJournalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: realJournalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_timeout_journal_fail"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository: realJournalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_timeout_journal_fail",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_timeout_journal_fail",
+              txIds: ["tx_close_timeout_journal_fail"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository: realJournalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const selectiveFailJournal = {
+      async append(event: { eventType: string }) {
+        if (event.eventType === "CLOSE_TIMED_OUT") {
+          throw new Error("journal disk full on timeout");
+        }
+        await realJournalRepository.append(event as never);
+      },
+    } as unknown as JournalRepository;
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: { type: "success", value: null },
+      }),
+      journalRepository: selectiveFailJournal,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("TIMED_OUT");
+    expect(finalized.action.status).toBe("TIMED_OUT");
+    expect(finalized.position?.status).toBe("RECONCILIATION_REQUIRED");
+  });
 });

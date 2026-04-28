@@ -38,7 +38,10 @@ function migratePosition(raw: unknown): unknown {
         : typeof migrated["openedAt"] === "string"
           ? migrated["openedAt"]
           : null;
-    migrated = { ...migrated, peakPnlRecordedAt: fallback };
+    migrated =
+      fallback !== null
+        ? { ...migrated, peakPnlRecordedAt: fallback }
+        : { ...migrated, peakPnlPct: null, peakPnlRecordedAt: null };
   }
 
   if (migrated["peakPnlPct"] == null && migrated["peakPnlRecordedAt"] != null) {

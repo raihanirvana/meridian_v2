@@ -322,22 +322,29 @@ export async function processDeployAction(
         // Best effort; reconciliation worker will rediscover via wallet snapshot.
       }
 
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "DEPLOY_SUBMISSION_AMBIGUOUS",
-        actor: input.action.requestedBy,
-        wallet: input.action.wallet,
-        positionId: error.positionId,
-        actionId: input.action.actionId,
-        before: toJournalRecord({
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "DEPLOY_SUBMISSION_AMBIGUOUS",
+          actor: input.action.requestedBy,
+          wallet: input.action.wallet,
+          positionId: error.positionId,
           actionId: input.action.actionId,
-          requestPayload: payload,
-        }),
-        after: toJournalRecord({ position: reconciliationPosition }),
-        txIds: error.txIds,
-        resultStatus: "WAITING_CONFIRMATION",
-        error: errorMessage(error, "deploy submission ambiguous"),
-      });
+          before: toJournalRecord({
+            actionId: input.action.actionId,
+            requestPayload: payload,
+          }),
+          after: toJournalRecord({ position: reconciliationPosition }),
+          txIds: error.txIds,
+          resultStatus: "WAITING_CONFIRMATION",
+          error: errorMessage(error, "deploy submission ambiguous"),
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, actionId: input.action.actionId },
+          "deploy ambiguous journal append failed",
+        );
+      }
 
       return {
         nextStatus: "WAITING_CONFIRMATION",
@@ -356,22 +363,29 @@ export async function processDeployAction(
       };
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "DEPLOY_SUBMISSION_FAILED",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: null,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    try {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "DEPLOY_SUBMISSION_FAILED",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: null,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: null,
-      txIds: [],
-      resultStatus: "FAILED",
-      error: errorMessage(error, "deploy submission failed"),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: null,
+        txIds: [],
+        resultStatus: "FAILED",
+        error: errorMessage(error, "deploy submission failed"),
+      });
+    } catch (journalError) {
+      logger.warn(
+        { err: journalError, actionId: input.action.actionId },
+        "deploy failure journal append failed",
+      );
+    }
     throw error;
   }
 
@@ -589,25 +603,32 @@ export async function confirmDeployAction(
         } satisfies Action;
         await input.actionRepository.upsert(doneAction);
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "DEPLOY_CONFIRMED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: openPosition.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: pendingPosition,
-          }),
-          after: toJournalRecord({
-            action: doneAction,
-            position: openPosition,
-          }),
-          txIds: doneAction.txIds,
-          resultStatus: doneAction.status,
-          error: null,
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "DEPLOY_CONFIRMED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: openPosition.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              position: pendingPosition,
+            }),
+            after: toJournalRecord({
+              action: doneAction,
+              position: openPosition,
+            }),
+            txIds: doneAction.txIds,
+            resultStatus: doneAction.status,
+            error: null,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, actionId: latestAction.actionId },
+            "deploy confirmed journal append failed",
+          );
+        }
 
         return {
           action: doneAction,
@@ -653,25 +674,32 @@ export async function confirmDeployAction(
 
         await input.actionRepository.upsert(timedOutAction);
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "DEPLOY_TIMED_OUT",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: deployResult.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: pendingPosition,
-          }),
-          after: toJournalRecord({
-            action: timedOutAction,
-            position: nextPosition,
-          }),
-          txIds: latestAction.txIds,
-          resultStatus: timedOutAction.status,
-          error: timedOutAction.error,
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "DEPLOY_TIMED_OUT",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: deployResult.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              position: pendingPosition,
+            }),
+            after: toJournalRecord({
+              action: timedOutAction,
+              position: nextPosition,
+            }),
+            txIds: latestAction.txIds,
+            resultStatus: timedOutAction.status,
+            error: timedOutAction.error,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, actionId: latestAction.actionId },
+            "deploy timed out journal append failed",
+          );
+        }
 
         return {
           action: timedOutAction,
@@ -706,25 +734,32 @@ export async function confirmDeployAction(
       } satisfies Action;
       await input.actionRepository.upsert(doneAction);
 
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "DEPLOY_CONFIRMED",
-        actor: latestAction.requestedBy,
-        wallet: latestAction.wallet,
-        positionId: openPosition.positionId,
-        actionId: latestAction.actionId,
-        before: toJournalRecord({
-          action: latestAction,
-          position: pendingPosition,
-        }),
-        after: toJournalRecord({
-          action: doneAction,
-          position: openPosition,
-        }),
-        txIds: doneAction.txIds,
-        resultStatus: doneAction.status,
-        error: null,
-      });
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "DEPLOY_CONFIRMED",
+          actor: latestAction.requestedBy,
+          wallet: latestAction.wallet,
+          positionId: openPosition.positionId,
+          actionId: latestAction.actionId,
+          before: toJournalRecord({
+            action: latestAction,
+            position: pendingPosition,
+          }),
+          after: toJournalRecord({
+            action: doneAction,
+            position: openPosition,
+          }),
+          txIds: doneAction.txIds,
+          resultStatus: doneAction.status,
+          error: null,
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, actionId: latestAction.actionId },
+          "deploy confirmed journal append failed",
+        );
+      }
 
       return {
         action: doneAction,

@@ -144,6 +144,35 @@ describe("storage repositories", () => {
     expect(actions[0]?.actionId).toBe("act_001");
   });
 
+  it("migrates legacy terminal actions missing completedAt and startedAt", async () => {
+    const directory = await makeTempDir();
+    const actionsPath = path.join(directory, "actions.json");
+    await fs.writeFile(
+      actionsPath,
+      JSON.stringify([
+        {
+          ...buildAction("act_legacy"),
+          status: "FAILED",
+          startedAt: null,
+          completedAt: null,
+          error: "legacy failure",
+        },
+      ]),
+      "utf8",
+    );
+
+    const actionRepository = new ActionRepository({ filePath: actionsPath });
+    const actions = await actionRepository.list();
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      actionId: "act_legacy",
+      status: "FAILED",
+      startedAt: "2026-04-20T00:00:00.000Z",
+      completedAt: "2026-04-20T00:00:00.000Z",
+    });
+  });
+
   it("appends journal events in order and reloads them from disk", async () => {
     const directory = await makeTempDir();
     const journalPath = path.join(directory, "journal.jsonl");
@@ -380,6 +409,30 @@ describe("storage repositories", () => {
     ]);
   });
 
+  it("preserves both events when concurrent appends repair trailing corruption", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      `${JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001"))}\n{bad json}\n`,
+      "utf8",
+    );
+
+    const journalRepository = new JournalRepository({ filePath: journalPath });
+    await Promise.all([
+      journalRepository.append(buildJournalEvent("ACTION_STARTED", "act_001")),
+      journalRepository.append(buildJournalEvent("ACTION_RUNNING", "act_001")),
+    ]);
+
+    const events = await journalRepository.list();
+
+    expect(events.map((event) => event.eventType).sort()).toEqual([
+      "ACTION_QUEUED",
+      "ACTION_RUNNING",
+      "ACTION_STARTED",
+    ]);
+  });
+
   it("cleans orphan unique temp files even when the target file does not exist", async () => {
     const directory = await makeTempDir();
     const filePath = path.join(directory, "positions.json");
@@ -420,6 +473,36 @@ describe("storage repositories", () => {
     await expect(stateRepository.list()).rejects.toBeInstanceOf(
       StateStoreCorruptError,
     );
+  });
+
+  it("drops legacy peakPnlPct when no timestamp fallback exists", async () => {
+    const directory = await makeTempDir();
+    const positionsPath = path.join(directory, "positions.json");
+    await fs.writeFile(
+      positionsPath,
+      JSON.stringify([
+        {
+          ...buildPosition("pos_legacy_peak"),
+          status: "RECONCILIATION_REQUIRED",
+          peakPnlPct: 10,
+          peakPnlRecordedAt: null,
+          lastSyncedAt: null,
+          openedAt: null,
+          needsReconciliation: true,
+        },
+      ]),
+      "utf8",
+    );
+
+    const stateRepository = new StateRepository({ filePath: positionsPath });
+    const positions = await stateRepository.list();
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]).toMatchObject({
+      positionId: "pos_legacy_peak",
+      peakPnlPct: null,
+      peakPnlRecordedAt: null,
+    });
   });
 
   it("throws ActionStoreCorruptError when actions.json contains invalid JSON", async () => {
@@ -468,6 +551,29 @@ describe("storage repositories", () => {
     const journalRepository = new JournalRepository({ filePath: journalPath });
 
     await expect(journalRepository.list()).rejects.toMatchObject({
+      name: "JournalStoreCorruptError",
+      filePath: journalPath,
+      lineNumber: 2,
+    } satisfies Partial<JournalStoreCorruptError>);
+  });
+
+  it("validate rejects middle journal corruption before startup", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      [
+        JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001")),
+        "{bad json}",
+        JSON.stringify(buildJournalEvent("ACTION_STARTED", "act_001")),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const journalRepository = new JournalRepository({ filePath: journalPath });
+
+    await expect(journalRepository.validate()).rejects.toMatchObject({
       name: "JournalStoreCorruptError",
       filePath: journalPath,
       lineNumber: 2,

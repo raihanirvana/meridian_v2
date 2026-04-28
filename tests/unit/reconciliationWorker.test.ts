@@ -951,4 +951,127 @@ describe("reconciliation worker", () => {
       ]),
     );
   });
+
+  it("keeps reconciliation outcome RECONCILED_OK when reconstructed rebalance journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_old_reconciling_warn"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old_reconciling_warn",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      allowRiskGuardBypass: true,
+    });
+
+    await actionRepository.upsert({
+      ...action,
+      status: "RECONCILING",
+      startedAt: action.requestedAt,
+      completedAt: null,
+      txIds: ["tx_redeploy_live"],
+      resultPayload: {
+        phase: "REDEPLOY_SUBMITTED",
+        closeResult: {
+          actionType: "CLOSE",
+          closedPositionId: "pos_old_reconciling_warn",
+          txIds: ["tx_rebalance_reconcile"],
+          submissionStatus: "submitted",
+          releasedAmountBase: 0.8,
+          releasedAmountQuote: 0.4,
+          estimatedReleasedValueUsd: 80,
+          releasedAmountSource: "post_tx",
+        },
+        closeAccounting: {
+          releasedAmountBase: 0.8,
+          releasedAmountQuote: 0.4,
+          estimatedReleasedValueUsd: 80,
+          releasedAmountSource: "post_tx",
+          sourceConfidence: "post_tx",
+        },
+        closedPositionId: "pos_old_reconciling_warn",
+        availableCapitalUsd: 80,
+        performanceSnapshot: buildOpenPosition("pos_old_reconciling_warn"),
+        redeployResult: {
+          actionType: "DEPLOY",
+          positionId: "pos_new_warn",
+          txIds: ["tx_redeploy_live"],
+          submissionStatus: "submitted",
+        },
+        redeployRequest: rebalancePayload.redeploy,
+      },
+    });
+
+    await stateRepository.upsert({
+      ...buildOpenPosition("pos_old_reconciling_warn"),
+      status: "CLOSED",
+      closedAt: "2026-04-20T00:05:00.000Z",
+      currentValueBase: 0,
+      currentValueUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      needsReconciliation: false,
+      lastWriteActionId: action.actionId,
+    });
+
+    const confirmedNewPosition: Position = {
+      ...buildOpenPosition("pos_new_warn"),
+      poolAddress: rebalancePayload.redeploy.poolAddress,
+      rangeLowerBin: rebalancePayload.redeploy.rangeLowerBin,
+      rangeUpperBin: rebalancePayload.redeploy.rangeUpperBin,
+      activeBin: rebalancePayload.redeploy.initialActiveBin,
+      currentValueUsd: rebalancePayload.redeploy.estimatedValueUsd,
+    };
+
+    const failingJournal = {
+      async append(event: { eventType: string }) {
+        if (event.eventType === "REBALANCE_FINALIZED_RECONSTRUCTED") {
+          throw new Error("journal unavailable");
+        }
+      },
+    } as unknown as JournalRepository;
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: confirmedNewPosition,
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [confirmedNewPosition],
+          },
+        },
+      }),
+      journalRepository: failingJournal,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    expect((await actionRepository.get(action.actionId))?.status).toBe("DONE");
+    expect((await stateRepository.get("pos_new_warn"))?.status).toBe("OPEN");
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "ACTION",
+          entityId: action.actionId,
+          outcome: "RECONCILED_OK",
+        }),
+      ]),
+    );
+  });
 });

@@ -196,6 +196,22 @@ async function appendJournalEvent(
   await journalRepository.append(event);
 }
 
+async function safeAppendJournalEvent(
+  journalRepository: JournalRepository | undefined,
+  event: JournalEvent,
+  context: string,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await appendJournalEvent(journalRepository, event);
+  } catch (journalError) {
+    logger.warn(
+      { err: journalError, ...metadata },
+      `${context} journal append failed`,
+    );
+  }
+}
+
 function assertRebalanceAction(action: Action): asserts action is Action & {
   type: "REBALANCE";
   positionId: string;
@@ -1038,7 +1054,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(timedOutAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_CLOSE_TIMED_OUT",
             actor: latestAction.requestedBy,
@@ -1055,7 +1073,10 @@ export async function finalizeRebalance(
             txIds: latestAction.txIds,
             resultStatus: timedOutAction.status,
             error: timedOutAction.error,
-          });
+            },
+            "rebalance close timed out",
+            { actionId: timedOutAction.actionId },
+          );
 
           return {
             action: timedOutAction,
@@ -1172,7 +1193,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(failedAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_ABORTED",
             actor: latestAction.requestedBy,
@@ -1189,7 +1212,10 @@ export async function finalizeRebalance(
             txIds: latestAction.txIds,
             resultStatus: failedAction.status,
             error: validationError,
-          });
+            },
+            "rebalance aborted",
+            { actionId: failedAction.actionId },
+          );
 
           return {
             action: failedAction,
@@ -1230,7 +1256,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(failedAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_ABORTED",
             actor: latestAction.requestedBy,
@@ -1247,7 +1275,10 @@ export async function finalizeRebalance(
             txIds: latestAction.txIds,
             resultStatus: failedAction.status,
             error: failureReason,
-          });
+            },
+            "rebalance aborted",
+            { actionId: failedAction.actionId },
+          );
 
           return {
             action: failedAction,
@@ -1304,7 +1335,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(failedAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_SIMULATION_FAILED",
             actor: latestAction.requestedBy,
@@ -1322,7 +1355,10 @@ export async function finalizeRebalance(
             txIds: actionAfterCloseFinalized.txIds,
             resultStatus: failedAction.status,
             error: failureReason,
-          });
+            },
+            "rebalance simulation failed",
+            { actionId: failedAction.actionId },
+          );
 
           return {
             action: failedAction,
@@ -1414,7 +1450,9 @@ export async function finalizeRebalance(
             } satisfies Action;
             await input.actionRepository.upsert(waitingAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: now,
               eventType: "REBALANCE_REDEPLOY_SUBMISSION_AMBIGUOUS",
               actor: latestAction.requestedBy,
@@ -1433,7 +1471,10 @@ export async function finalizeRebalance(
               txIds: waitingAction.txIds,
               resultStatus: waitingAction.status,
               error: waitingAction.error,
-            });
+              },
+              "rebalance redeploy submission ambiguous",
+              { actionId: waitingAction.actionId },
+            );
 
             return {
               action: waitingAction,
@@ -1465,7 +1506,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(failedAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_ABORTED",
             actor: latestAction.requestedBy,
@@ -1482,7 +1525,10 @@ export async function finalizeRebalance(
             txIds: latestAction.txIds,
             resultStatus: failedAction.status,
             error: failureReason,
-          });
+            },
+            "rebalance aborted",
+            { actionId: failedAction.actionId },
+          );
 
           return {
             action: failedAction,
@@ -1546,7 +1592,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(timedOutAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_REDEPLOY_REQUIRES_RECONCILIATION",
             actor: latestAction.requestedBy,
@@ -1565,7 +1613,10 @@ export async function finalizeRebalance(
             txIds: timedOutAction.txIds,
             resultStatus: timedOutAction.status,
             error: timedOutAction.error,
-          });
+            },
+            "rebalance redeploy requires reconciliation",
+            { actionId: timedOutAction.actionId },
+          );
 
           return {
             action: timedOutAction,
@@ -1575,26 +1626,31 @@ export async function finalizeRebalance(
           };
         }
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "REBALANCE_REDEPLOY_SUBMITTED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: pendingRedeployPosition.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            oldPosition: closeLeg.closedPosition,
-          }),
-          after: toJournalRecord({
-            action: waitingAction,
-            oldPosition: closeLeg.closedPosition,
-            newPosition: pendingRedeployPosition,
-          }),
-          txIds: waitingAction.txIds,
-          resultStatus: waitingAction.status,
-          error: null,
-        });
+        await safeAppendJournalEvent(
+          input.journalRepository,
+          {
+            timestamp: now,
+            eventType: "REBALANCE_REDEPLOY_SUBMITTED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: pendingRedeployPosition.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              oldPosition: closeLeg.closedPosition,
+            }),
+            after: toJournalRecord({
+              action: waitingAction,
+              oldPosition: closeLeg.closedPosition,
+              newPosition: pendingRedeployPosition,
+            }),
+            txIds: waitingAction.txIds,
+            resultStatus: waitingAction.status,
+            error: null,
+          },
+          "rebalance redeploy submitted",
+          { actionId: waitingAction.actionId },
+        );
 
         return {
           action: waitingAction,
@@ -1617,25 +1673,30 @@ export async function finalizeRebalance(
         } satisfies Action;
         await input.actionRepository.upsert(timedOutAction);
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "REBALANCE_REDEPLOY_SUBMITTING_RECOVERY_REQUIRED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestPayload.closedPositionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            redeployRequest: latestPayload.redeployRequest,
-          }),
-          after: toJournalRecord({
-            action: timedOutAction,
-            oldPosition,
-          }),
-          txIds: timedOutAction.txIds,
-          resultStatus: timedOutAction.status,
-          error: timedOutAction.error,
-        });
+        await safeAppendJournalEvent(
+          input.journalRepository,
+          {
+            timestamp: now,
+            eventType: "REBALANCE_REDEPLOY_SUBMITTING_RECOVERY_REQUIRED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestPayload.closedPositionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              redeployRequest: latestPayload.redeployRequest,
+            }),
+            after: toJournalRecord({
+              action: timedOutAction,
+              oldPosition,
+            }),
+            txIds: timedOutAction.txIds,
+            resultStatus: timedOutAction.status,
+            error: timedOutAction.error,
+          },
+          "rebalance redeploy submitting recovery required",
+          { actionId: timedOutAction.actionId },
+        );
 
         return {
           action: timedOutAction,
@@ -1727,7 +1788,9 @@ export async function finalizeRebalance(
               } satisfies Action;
               await input.actionRepository.upsert(timedOutAction);
 
-              await appendJournalEvent(input.journalRepository, {
+              await safeAppendJournalEvent(
+                input.journalRepository,
+                {
                 timestamp: now,
                 eventType: "REBALANCE_REDEPLOY_IDENTITY_MISMATCH",
                 actor: latestActionAfterRedeployLock.requestedBy,
@@ -1748,7 +1811,10 @@ export async function finalizeRebalance(
                 txIds: timedOutAction.txIds,
                 resultStatus: timedOutAction.status,
                 error: identityError,
-              });
+                },
+                "rebalance redeploy identity mismatch",
+                { actionId: timedOutAction.actionId },
+              );
 
               return {
                 action: timedOutAction,
@@ -1791,7 +1857,9 @@ export async function finalizeRebalance(
             } satisfies Action;
             await input.actionRepository.upsert(doneAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: now,
               eventType: "REBALANCE_FINALIZED",
               actor: latestActionAfterRedeployLock.requestedBy,
@@ -1811,7 +1879,10 @@ export async function finalizeRebalance(
               txIds: doneAction.txIds,
               resultStatus: doneAction.status,
               error: null,
-            });
+              },
+              "rebalance finalized",
+              { actionId: doneAction.actionId },
+            );
 
             return {
               action: doneAction,
@@ -1900,7 +1971,9 @@ export async function finalizeRebalance(
             } satisfies Action;
             await input.actionRepository.upsert(doneAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: now,
               eventType: "REBALANCE_FINALIZED_RECONSTRUCTED",
               actor: latestActionAfterRedeployLock.requestedBy,
@@ -1920,7 +1993,10 @@ export async function finalizeRebalance(
               txIds: doneAction.txIds,
               resultStatus: doneAction.status,
               error: null,
-            });
+              },
+              "rebalance finalized reconstructed",
+              { actionId: doneAction.actionId },
+            );
 
             return {
               action: doneAction,
@@ -2010,7 +2086,9 @@ export async function finalizeRebalance(
             } satisfies Action;
             await input.actionRepository.upsert(doneAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: now,
               eventType: "REBALANCE_FINALIZED_RECONCILIATION_REQUIRED",
               actor: latestActionAfterRedeployLock.requestedBy,
@@ -2030,7 +2108,10 @@ export async function finalizeRebalance(
               txIds: doneAction.txIds,
               resultStatus: doneAction.status,
               error: null,
-            });
+              },
+              "rebalance finalized reconciliation required",
+              { actionId: doneAction.actionId },
+            );
 
             return {
               action: doneAction,
@@ -2079,7 +2160,9 @@ export async function finalizeRebalance(
             } satisfies Action;
             await input.actionRepository.upsert(timedOutAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: now,
               eventType: "REBALANCE_REDEPLOY_TIMED_OUT",
               actor: latestActionAfterRedeployLock.requestedBy,
@@ -2099,7 +2182,10 @@ export async function finalizeRebalance(
               txIds: timedOutAction.txIds,
               resultStatus: timedOutAction.status,
               error: timedOutAction.error,
-            });
+              },
+              "rebalance redeploy timed out",
+              { actionId: timedOutAction.actionId },
+            );
 
             return {
               action: timedOutAction,
@@ -2132,7 +2218,9 @@ export async function finalizeRebalance(
             } satisfies Action;
             await input.actionRepository.upsert(timedOutAction);
 
-            await appendJournalEvent(input.journalRepository, {
+            await safeAppendJournalEvent(
+              input.journalRepository,
+              {
               timestamp: now,
               eventType: "REBALANCE_REDEPLOY_IDENTITY_MISMATCH",
               actor: latestActionAfterRedeployLock.requestedBy,
@@ -2153,7 +2241,10 @@ export async function finalizeRebalance(
               txIds: timedOutAction.txIds,
               resultStatus: timedOutAction.status,
               error: identityError,
-            });
+              },
+              "rebalance redeploy identity mismatch",
+              { actionId: timedOutAction.actionId },
+            );
 
             return {
               action: timedOutAction,
@@ -2193,7 +2284,9 @@ export async function finalizeRebalance(
           } satisfies Action;
           await input.actionRepository.upsert(doneAction);
 
-          await appendJournalEvent(input.journalRepository, {
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
             timestamp: now,
             eventType: "REBALANCE_FINALIZED",
             actor: latestActionAfterRedeployLock.requestedBy,
@@ -2213,7 +2306,10 @@ export async function finalizeRebalance(
             txIds: doneAction.txIds,
             resultStatus: doneAction.status,
             error: null,
-          });
+            },
+            "rebalance finalized",
+            { actionId: doneAction.actionId },
+          );
 
           return {
             action: doneAction,

@@ -137,8 +137,8 @@ export async function requestRebalance(input: RequestRebalanceInput) {
     });
 
     if (!riskResult.allowed) {
-      if (input.journalRepository !== undefined) {
-        await input.journalRepository.append({
+      try {
+        await input.journalRepository?.append({
           timestamp: journalTimestamp,
           eventType: "REBALANCE_REQUEST_BLOCKED_BY_RISK",
           actor: input.requestedBy,
@@ -157,6 +157,11 @@ export async function requestRebalance(input: RequestRebalanceInput) {
           resultStatus: "BLOCKED",
           error: riskResult.reason,
         });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, positionId: input.positionId },
+          "rebalance risk-block journal append failed",
+        );
       }
 
       throw new Error(`rebalance blocked by risk guard: ${riskResult.reason}`);

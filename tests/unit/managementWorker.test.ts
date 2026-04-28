@@ -1473,4 +1473,74 @@ describe("management worker", () => {
       "REBALANCE_PREFLIGHT_SIMULATED",
     );
   });
+
+  it("returns BLOCKED_BY_RISK when pending-action skip journal fails for CLOSE", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+
+    await stateRepository.upsert(buildPosition());
+    await actionRepository.upsert(
+      buildClaimFeesAction({ actionId: "act_claim_pending" }),
+    );
+
+    const failingJournal = {
+      async list() {
+        return [];
+      },
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournal,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy(),
+      signalProvider: () => ({
+        forcedManualClose: true,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        severeNegativeYield: false,
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        dataIncomplete: false,
+      }),
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults[0]?.managementAction).toBe("CLOSE");
+    expect(result.positionResults[0]?.status).toBe("BLOCKED_BY_RISK");
+  });
 });

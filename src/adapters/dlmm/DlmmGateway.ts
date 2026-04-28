@@ -244,7 +244,9 @@ export class MockDlmmGateway implements DlmmGateway {
   public constructor(private readonly behaviors: MockDlmmGatewayBehaviors) {}
 
   public async getPosition(_positionId: string): Promise<Position | null> {
-    return resolveMockBehavior(this.behaviors.getPosition);
+    return PositionSchema.nullable().parse(
+      await resolveMockBehavior(this.behaviors.getPosition),
+    );
   }
 
   public async deployLiquidity(

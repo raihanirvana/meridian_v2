@@ -217,23 +217,30 @@ export async function processCloseAction(
         // Best effort; reconciliation worker will rediscover via wallet snapshot.
       }
 
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "CLOSE_SUBMISSION_AMBIGUOUS",
-        actor: input.action.requestedBy,
-        wallet: input.action.wallet,
-        positionId: input.action.positionId,
-        actionId: input.action.actionId,
-        before: toJournalRecord({
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "CLOSE_SUBMISSION_AMBIGUOUS",
+          actor: input.action.requestedBy,
+          wallet: input.action.wallet,
+          positionId: input.action.positionId,
           actionId: input.action.actionId,
-          requestPayload: payload,
-          position: closingPosition,
-        }),
-        after: toJournalRecord({ position: reconciliationPosition }),
-        txIds: error.txIds,
-        resultStatus: "WAITING_CONFIRMATION",
-        error: errorMessage(error, "close submission ambiguous"),
-      });
+          before: toJournalRecord({
+            actionId: input.action.actionId,
+            requestPayload: payload,
+            position: closingPosition,
+          }),
+          after: toJournalRecord({ position: reconciliationPosition }),
+          txIds: error.txIds,
+          resultStatus: "WAITING_CONFIRMATION",
+          error: errorMessage(error, "close submission ambiguous"),
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, actionId: input.action.actionId },
+          "close ambiguous journal append failed",
+        );
+      }
 
       return {
         nextStatus: "WAITING_CONFIRMATION",
@@ -264,23 +271,30 @@ export async function processCloseAction(
       // Best effort; reconciliation can still rediscover the position later.
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "CLOSE_SUBMISSION_FAILED",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    try {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "CLOSE_SUBMISSION_FAILED",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-        position: closingPosition,
-      }),
-      after: toJournalRecord({ position: reconciliationPosition }),
-      txIds: [],
-      resultStatus: "FAILED",
-      error: errorMessage(error, "close submission failed"),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+          position: closingPosition,
+        }),
+        after: toJournalRecord({ position: reconciliationPosition }),
+        txIds: [],
+        resultStatus: "FAILED",
+        error: errorMessage(error, "close submission failed"),
+      });
+    } catch (journalError) {
+      logger.warn(
+        { err: journalError, actionId: input.action.actionId },
+        "close failure journal append failed",
+      );
+    }
     throw error;
   }
 

@@ -603,25 +603,32 @@ export async function finalizeClose(
         } satisfies Action;
         await input.actionRepository.upsert(doneAction);
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "CLOSE_FINALIZED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestAction.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: closingPosition,
-          }),
-          after: toJournalRecord({
-            action: doneAction,
-            position: closingPosition,
-          }),
-          txIds: doneAction.txIds,
-          resultStatus: doneAction.status,
-          error: null,
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "CLOSE_FINALIZED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestAction.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              position: closingPosition,
+            }),
+            after: toJournalRecord({
+              action: doneAction,
+              position: closingPosition,
+            }),
+            txIds: doneAction.txIds,
+            resultStatus: doneAction.status,
+            error: null,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, actionId: latestAction.actionId },
+            "close finalized journal append failed for already closed position",
+          );
+        }
 
         try {
           await runLessonHookIdempotent({
@@ -633,80 +640,6 @@ export async function finalizeClose(
               : { journalRepository: input.journalRepository }),
             position: closingPosition,
             performanceSnapshotPosition: closingPosition,
-            closedAction: doneAction,
-            reason: payload.reason,
-            now,
-          });
-        } catch {
-          // intentionally swallowed
-        }
-
-        return {
-          action: doneAction,
-          position: closingPosition,
-          outcome: "FINALIZED",
-        };
-      }
-
-      if (
-        closingPosition !== null &&
-        closingPosition.status === "CLOSED" &&
-        closeConfirmedPositionLike !== null
-      ) {
-        const accounting = buildCloseAccountingSummary(
-          closingPosition,
-          null,
-          closeProceedsFromResult(closeResult),
-        );
-        const reconcilingAction = {
-          ...latestAction,
-          status: transitionActionStatus(latestAction.status, "RECONCILING"),
-        } satisfies Action;
-        await input.actionRepository.upsert(reconcilingAction);
-
-        const doneAction = {
-          ...reconcilingAction,
-          status: transitionActionStatus(reconcilingAction.status, "DONE"),
-          resultPayload: toJournalRecord({
-            ...closeResult,
-            accounting,
-            performanceSnapshot: closeConfirmedPositionLike,
-          }),
-          completedAt: now,
-          error: null,
-        } satisfies Action;
-        await input.actionRepository.upsert(doneAction);
-
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "CLOSE_FINALIZED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestAction.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: closingPosition,
-          }),
-          after: toJournalRecord({
-            action: doneAction,
-            position: closingPosition,
-          }),
-          txIds: doneAction.txIds,
-          resultStatus: doneAction.status,
-          error: null,
-        });
-
-        try {
-          await runLessonHookIdempotent({
-            ...(input.lessonHook === undefined
-              ? {}
-              : { lessonHook: input.lessonHook }),
-            ...(input.journalRepository === undefined
-              ? {}
-              : { journalRepository: input.journalRepository }),
-            position: closingPosition,
-            performanceSnapshotPosition: closeConfirmedPositionLike,
             closedAction: doneAction,
             reason: payload.reason,
             now,
@@ -772,25 +705,32 @@ export async function finalizeClose(
 
         await input.actionRepository.upsert(timedOutAction);
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "CLOSE_TIMED_OUT",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestAction.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: closingPosition,
-          }),
-          after: toJournalRecord({
-            action: timedOutAction,
-            position: reconciliationPosition,
-          }),
-          txIds: latestAction.txIds,
-          resultStatus: timedOutAction.status,
-          error: timedOutAction.error,
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "CLOSE_TIMED_OUT",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestAction.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              position: closingPosition,
+            }),
+            after: toJournalRecord({
+              action: timedOutAction,
+              position: reconciliationPosition,
+            }),
+            txIds: latestAction.txIds,
+            resultStatus: timedOutAction.status,
+            error: timedOutAction.error,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, actionId: latestAction.actionId },
+            "close timed out journal append failed",
+          );
+        }
 
         return {
           action: timedOutAction,

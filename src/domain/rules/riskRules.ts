@@ -49,6 +49,7 @@ export const PortfolioRiskStateSnapshotSchema = z
   .object({
     dailyLossPct: z.number().min(0),
     dailyLossSol: z.number().min(0),
+    dailyLossSolKnown: z.boolean(),
     drawdownState: DrawdownStateSchema,
     circuitBreakerState: CircuitBreakerStateSchema,
     capitalUsage: CapitalUsageSnapshotSchema,
@@ -284,14 +285,16 @@ export function buildPortfolioRiskStateSnapshot(input: {
   const dailyLossPct = calculateDailyLossPct(portfolio);
   const resolvedSolPriceUsd =
     input.solPriceUsd ?? portfolio.solPriceUsd ?? null;
-  const dailyLossSol =
-    resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
-      ? 0
-      : Math.max(-portfolio.dailyRealizedPnl, 0) / resolvedSolPriceUsd;
+  const solPriceKnown =
+    resolvedSolPriceUsd !== null && resolvedSolPriceUsd > 0;
+  const dailyLossSol = solPriceKnown
+    ? Math.max(-portfolio.dailyRealizedPnl, 0) / resolvedSolPriceUsd!
+    : 0;
 
   return PortfolioRiskStateSnapshotSchema.parse({
     dailyLossPct,
     dailyLossSol,
+    dailyLossSolKnown: solPriceKnown,
     drawdownState: deriveDrawdownState({
       dailyLossPct,
       dailyLossLimitPct: policy.dailyLossLimitPct,

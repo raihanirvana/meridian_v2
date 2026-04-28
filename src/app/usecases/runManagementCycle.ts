@@ -28,6 +28,7 @@ import {
 } from "../../domain/rules/rebalanceDecisionRules.js";
 import type { Actor, ManagementAction } from "../../domain/types/enums.js";
 import type { UserConfig } from "../../infra/config/configSchema.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { adviseManagementDecision } from "../services/AiAdvisoryService.js";
 import type { AiRebalancePlanner } from "../services/AiRebalancePlanner.js";
@@ -616,23 +617,30 @@ export async function runManagementCycle(
     });
 
     if (evaluation.action === "PARTIAL_CLOSE") {
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "MANAGEMENT_ACTION_UNSUPPORTED",
-        actor: requestedBy,
-        wallet: input.wallet,
-        positionId: managedPosition.positionId,
-        actionId: null,
-        before: null,
-        after: {
-          action: evaluation.action,
-          reason: evaluation.reason,
-          triggerReasons: evaluation.triggerReasons,
-        },
-        txIds: [],
-        resultStatus: "SKIPPED_UNSUPPORTED",
-        error: null,
-      });
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "MANAGEMENT_ACTION_UNSUPPORTED",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            action: evaluation.action,
+            reason: evaluation.reason,
+            triggerReasons: evaluation.triggerReasons,
+          },
+          txIds: [],
+          resultStatus: "SKIPPED_UNSUPPORTED",
+          error: null,
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, positionId: managedPosition.positionId },
+          "management action unsupported journal append failed",
+        );
+      }
 
       positionResults.push({
         positionId: managedPosition.positionId,
@@ -674,26 +682,33 @@ export async function runManagementCycle(
         positionId: managedPosition.positionId,
       });
       if (activeWriteAction !== null) {
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION",
-          actor: requestedBy,
-          wallet: input.wallet,
-          positionId: managedPosition.positionId,
-          actionId: activeWriteAction.actionId,
-          before: null,
-          after: {
-            action: evaluation.action,
-            reason: evaluation.reason,
-            triggerReasons: evaluation.triggerReasons,
-            blockingActionId: activeWriteAction.actionId,
-            blockingActionType: activeWriteAction.type,
-            blockingActionStatus: activeWriteAction.status,
-          },
-          txIds: activeWriteAction.txIds,
-          resultStatus: "BLOCKED_BY_RISK",
-          error: "wallet already has an active write action",
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION",
+            actor: requestedBy,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+            actionId: activeWriteAction.actionId,
+            before: null,
+            after: {
+              action: evaluation.action,
+              reason: evaluation.reason,
+              triggerReasons: evaluation.triggerReasons,
+              blockingActionId: activeWriteAction.actionId,
+              blockingActionType: activeWriteAction.type,
+              blockingActionStatus: activeWriteAction.status,
+            },
+            txIds: activeWriteAction.txIds,
+            resultStatus: "BLOCKED_BY_RISK",
+            error: "wallet already has an active write action",
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, positionId: managedPosition.positionId },
+            "management pending-action skip journal append failed",
+          );
+        }
 
         positionResults.push({
           positionId: managedPosition.positionId,
@@ -783,26 +798,33 @@ export async function runManagementCycle(
         positionId: managedPosition.positionId,
       });
       if (activeWriteAction !== null) {
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION",
-          actor: requestedBy,
-          wallet: input.wallet,
-          positionId: managedPosition.positionId,
-          actionId: activeWriteAction.actionId,
-          before: null,
-          after: {
-            action: evaluation.action,
-            reason: evaluation.reason,
-            triggerReasons: evaluation.triggerReasons,
-            blockingActionId: activeWriteAction.actionId,
-            blockingActionType: activeWriteAction.type,
-            blockingActionStatus: activeWriteAction.status,
-          },
-          txIds: activeWriteAction.txIds,
-          resultStatus: "BLOCKED_BY_RISK",
-          error: "wallet already has an active write action",
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION",
+            actor: requestedBy,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+            actionId: activeWriteAction.actionId,
+            before: null,
+            after: {
+              action: evaluation.action,
+              reason: evaluation.reason,
+              triggerReasons: evaluation.triggerReasons,
+              blockingActionId: activeWriteAction.actionId,
+              blockingActionType: activeWriteAction.type,
+              blockingActionStatus: activeWriteAction.status,
+            },
+            txIds: activeWriteAction.txIds,
+            resultStatus: "BLOCKED_BY_RISK",
+            error: "wallet already has an active write action",
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, positionId: managedPosition.positionId },
+            "management pending-action skip journal append failed",
+          );
+        }
 
         positionResults.push({
           positionId: managedPosition.positionId,
@@ -1021,26 +1043,33 @@ export async function runManagementCycle(
             positionId: managedPosition.positionId,
           });
           if (activeWriteAction !== null) {
-            await appendJournalEvent(input.journalRepository, {
-              timestamp: now,
-              eventType: "MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION",
-              actor: requestedBy,
-              wallet: input.wallet,
-              positionId: managedPosition.positionId,
-              actionId: activeWriteAction.actionId,
-              before: null,
-              after: {
-                action: "CLAIM_FEES",
-                reason: "AI rebalance planner selected claim only",
-                triggerReasons: aiRebalanceReview.validation.reasonCodes,
-                blockingActionId: activeWriteAction.actionId,
-                blockingActionType: activeWriteAction.type,
-                blockingActionStatus: activeWriteAction.status,
-              },
-              txIds: activeWriteAction.txIds,
-              resultStatus: "BLOCKED_BY_RISK",
-              error: "wallet already has an active write action",
-            });
+            try {
+              await appendJournalEvent(input.journalRepository, {
+                timestamp: now,
+                eventType: "MANAGEMENT_CLAIM_SKIPPED_PENDING_ACTION",
+                actor: requestedBy,
+                wallet: input.wallet,
+                positionId: managedPosition.positionId,
+                actionId: activeWriteAction.actionId,
+                before: null,
+                after: {
+                  action: "CLAIM_FEES",
+                  reason: "AI rebalance planner selected claim only",
+                  triggerReasons: aiRebalanceReview.validation.reasonCodes,
+                  blockingActionId: activeWriteAction.actionId,
+                  blockingActionType: activeWriteAction.type,
+                  blockingActionStatus: activeWriteAction.status,
+                },
+                txIds: activeWriteAction.txIds,
+                resultStatus: "BLOCKED_BY_RISK",
+                error: "wallet already has an active write action",
+              });
+            } catch (journalError) {
+              logger.warn(
+                { err: journalError, positionId: managedPosition.positionId },
+                "management pending-action skip journal append failed",
+              );
+            }
             positionResults.push({
               positionId: managedPosition.positionId,
               managementAction: "CLAIM_FEES",
@@ -1114,26 +1143,33 @@ export async function runManagementCycle(
             positionId: managedPosition.positionId,
           });
           if (activeWriteAction !== null) {
-            await appendJournalEvent(input.journalRepository, {
-              timestamp: now,
-              eventType: "MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION",
-              actor: requestedBy,
-              wallet: input.wallet,
-              positionId: managedPosition.positionId,
-              actionId: activeWriteAction.actionId,
-              before: null,
-              after: {
-                action: "CLOSE",
-                reason: "AI rebalance planner selected exit",
-                triggerReasons: aiRebalanceReview.validation.reasonCodes,
-                blockingActionId: activeWriteAction.actionId,
-                blockingActionType: activeWriteAction.type,
-                blockingActionStatus: activeWriteAction.status,
-              },
-              txIds: activeWriteAction.txIds,
-              resultStatus: "BLOCKED_BY_RISK",
-              error: "wallet already has an active write action",
-            });
+            try {
+              await appendJournalEvent(input.journalRepository, {
+                timestamp: now,
+                eventType: "MANAGEMENT_CLOSE_SKIPPED_PENDING_ACTION",
+                actor: requestedBy,
+                wallet: input.wallet,
+                positionId: managedPosition.positionId,
+                actionId: activeWriteAction.actionId,
+                before: null,
+                after: {
+                  action: "CLOSE",
+                  reason: "AI rebalance planner selected exit",
+                  triggerReasons: aiRebalanceReview.validation.reasonCodes,
+                  blockingActionId: activeWriteAction.actionId,
+                  blockingActionType: activeWriteAction.type,
+                  blockingActionStatus: activeWriteAction.status,
+                },
+                txIds: activeWriteAction.txIds,
+                resultStatus: "BLOCKED_BY_RISK",
+                error: "wallet already has an active write action",
+              });
+            } catch (journalError) {
+              logger.warn(
+                { err: journalError, positionId: managedPosition.positionId },
+                "management pending-action skip journal append failed",
+              );
+            }
             positionResults.push({
               positionId: managedPosition.positionId,
               managementAction: "CLOSE",
@@ -1202,23 +1238,30 @@ export async function runManagementCycle(
           });
 
     if (rebalancePayload === null) {
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "MANAGEMENT_REBALANCE_SKIPPED",
-        actor: requestedBy,
-        wallet: input.wallet,
-        positionId: managedPosition.positionId,
-        actionId: null,
-        before: null,
-        after: {
-          action: evaluation.action,
-          reason: evaluation.reason,
-          triggerReasons: evaluation.triggerReasons,
-        },
-        txIds: [],
-        resultStatus: "SKIPPED_UNSUPPORTED",
-        error: null,
-      });
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "MANAGEMENT_REBALANCE_SKIPPED",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            action: evaluation.action,
+            reason: evaluation.reason,
+            triggerReasons: evaluation.triggerReasons,
+          },
+          txIds: [],
+          resultStatus: "SKIPPED_UNSUPPORTED",
+          error: null,
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, positionId: managedPosition.positionId },
+          "management rebalance skipped journal append failed",
+        );
+      }
 
       positionResults.push({
         positionId: managedPosition.positionId,
@@ -1256,29 +1299,36 @@ export async function runManagementCycle(
         freshActiveBinDrift > maxActiveBinDrift
       ) {
         const reason = "rebalance_fresh_active_bin_drift_above_limit";
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "REBALANCE_DECISION_VALIDATED",
-          actor: requestedBy,
-          wallet: input.wallet,
-          positionId: managedPosition.positionId,
-          actionId: null,
-          before: null,
-          after: {
-            allowed: false,
-            action: "rebalance_same_pool",
-            reasonCodes: [reason],
-            riskFlags: [reason],
-            rebalancePlan: aiRebalanceReview.validation.rebalancePlan,
-            freshActiveBin,
-            aiSnapshotActiveBin,
-            freshActiveBinDrift,
-            maxActiveBinDrift,
-          },
-          txIds: [],
-          resultStatus: "BLOCKED",
-          error: reason,
-        });
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "REBALANCE_DECISION_VALIDATED",
+            actor: requestedBy,
+            wallet: input.wallet,
+            positionId: managedPosition.positionId,
+            actionId: null,
+            before: null,
+            after: {
+              allowed: false,
+              action: "rebalance_same_pool",
+              reasonCodes: [reason],
+              riskFlags: [reason],
+              rebalancePlan: aiRebalanceReview.validation.rebalancePlan,
+              freshActiveBin,
+              aiSnapshotActiveBin,
+              freshActiveBinDrift,
+              maxActiveBinDrift,
+            },
+            txIds: [],
+            resultStatus: "BLOCKED",
+            error: reason,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, positionId: managedPosition.positionId },
+            "rebalance decision validated journal append failed",
+          );
+        }
 
         positionResults.push({
           positionId: managedPosition.positionId,
@@ -1366,30 +1416,37 @@ export async function runManagementCycle(
         validation: simulationValidation,
       };
 
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "REBALANCE_PREFLIGHT_SIMULATED",
-        actor: requestedBy,
-        wallet: input.wallet,
-        positionId: managedPosition.positionId,
-        actionId: null,
-        before: null,
-        after: {
-          closeSimulation,
-          redeploySimulation,
-          validation: simulationValidation,
-        },
-        txIds: [],
-        resultStatus: simulationValidation.allowed ? "PASSED" : "BLOCKED",
-        error: simulationValidation.allowed
-          ? null
-          : [
-              closeSimulation.ok ? null : closeSimulation.reason,
-              redeploySimulation.ok ? null : redeploySimulation.reason,
-            ]
-              .filter((reason): reason is string => reason !== null)
-              .join("; "),
-      });
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "REBALANCE_PREFLIGHT_SIMULATED",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: null,
+          before: null,
+          after: {
+            closeSimulation,
+            redeploySimulation,
+            validation: simulationValidation,
+          },
+          txIds: [],
+          resultStatus: simulationValidation.allowed ? "PASSED" : "BLOCKED",
+          error: simulationValidation.allowed
+            ? null
+            : [
+                closeSimulation.ok ? null : closeSimulation.reason,
+                redeploySimulation.ok ? null : redeploySimulation.reason,
+              ]
+                .filter((reason): reason is string => reason !== null)
+                .join("; "),
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, positionId: managedPosition.positionId },
+          "rebalance preflight simulated journal append failed",
+        );
+      }
 
       if (!simulationValidation.allowed) {
         positionResults.push({

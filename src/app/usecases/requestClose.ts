@@ -8,9 +8,11 @@ import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
 
-export const CloseActionRequestPayloadSchema = z.object({
-  reason: z.string().min(1),
-});
+export const CloseActionRequestPayloadSchema = z
+  .object({
+    reason: z.string().min(1),
+  })
+  .strict();
 
 export type CloseActionRequestPayload = z.infer<
   typeof CloseActionRequestPayloadSchema

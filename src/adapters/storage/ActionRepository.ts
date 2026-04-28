@@ -29,6 +29,15 @@ export class ActionStoreCorruptError extends Error {
 }
 
 const TERMINAL_STATUSES = new Set(["DONE", "FAILED", "ABORTED", "TIMED_OUT"]);
+const STARTED_STATUSES = new Set([
+  "RUNNING",
+  "WAITING_CONFIRMATION",
+  "RECONCILING",
+  "DONE",
+  "FAILED",
+  "TIMED_OUT",
+  "RETRY_QUEUED",
+]);
 
 function migrateAction(raw: unknown): unknown {
   if (
@@ -39,15 +48,29 @@ function migrateAction(raw: unknown): unknown {
     return raw;
   }
   const action = raw as Record<string, unknown>;
+  const requestedAt =
+    typeof action["requestedAt"] === "string" ? action["requestedAt"] : null;
+  let migrated: Record<string, unknown> = action;
+
   if (
-    typeof action["status"] === "string" &&
-    TERMINAL_STATUSES.has(action["status"]) &&
-    action["completedAt"] === null &&
-    typeof action["requestedAt"] === "string"
+    typeof migrated["status"] === "string" &&
+    TERMINAL_STATUSES.has(migrated["status"]) &&
+    migrated["completedAt"] === null &&
+    requestedAt !== null
   ) {
-    return { ...action, completedAt: action["requestedAt"] };
+    migrated = { ...migrated, completedAt: requestedAt };
   }
-  return action;
+
+  if (
+    typeof migrated["status"] === "string" &&
+    STARTED_STATUSES.has(migrated["status"]) &&
+    migrated["startedAt"] === null &&
+    requestedAt !== null
+  ) {
+    migrated = { ...migrated, startedAt: requestedAt };
+  }
+
+  return migrated;
 }
 
 function parseActions(raw: string, filePath: string): Action[] {
