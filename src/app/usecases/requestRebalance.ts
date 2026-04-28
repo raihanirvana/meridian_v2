@@ -10,6 +10,7 @@ import {
   type PortfolioRiskPolicy,
 } from "../../domain/rules/riskRules.js";
 import type { Actor } from "../../domain/types/enums.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
 
@@ -112,9 +113,9 @@ export async function requestRebalance(input: RequestRebalanceInput) {
     );
   }
 
-  if (input.riskGuard === null && !input.allowRiskGuardBypass) {
+  if (input.riskGuard == null && input.allowRiskGuardBypass !== true) {
     throw new Error(
-      "riskGuard bypass requires allowRiskGuardBypass: true to be explicitly set",
+      "riskGuard is required unless allowRiskGuardBypass: true is explicitly set",
     );
   }
 
@@ -184,25 +185,32 @@ export async function requestRebalance(input: RequestRebalanceInput) {
   });
 
   if (input.journalRepository !== undefined) {
-    await input.journalRepository.append({
-      timestamp: journalTimestamp,
-      eventType: "REBALANCE_REQUEST_ACCEPTED",
-      actor: action.requestedBy,
-      wallet: action.wallet,
-      positionId: action.positionId,
-      actionId: action.actionId,
-      before: null,
-      after: buildRebalanceJournalPayload({
+    try {
+      await input.journalRepository.append({
+        timestamp: journalTimestamp,
+        eventType: "REBALANCE_REQUEST_ACCEPTED",
+        actor: action.requestedBy,
+        wallet: action.wallet,
+        positionId: action.positionId,
         actionId: action.actionId,
-        positionId: input.positionId,
-        status: action.status,
-        idempotencyKey: action.idempotencyKey,
-        requestPayload: payload,
-      }),
-      txIds: [],
-      resultStatus: action.status,
-      error: null,
-    });
+        before: null,
+        after: buildRebalanceJournalPayload({
+          actionId: action.actionId,
+          positionId: input.positionId,
+          status: action.status,
+          idempotencyKey: action.idempotencyKey,
+          requestPayload: payload,
+        }),
+        txIds: [],
+        resultStatus: action.status,
+        error: null,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error, actionId: action.actionId },
+        "rebalance request journal append failed after enqueue",
+      );
+    }
   }
 
   return action;

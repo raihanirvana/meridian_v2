@@ -17,6 +17,7 @@ import {
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
 
+import { logger } from "../../infra/logging/logger.js";
 import {
   RebalanceActionRequestPayloadSchema,
   assertRebalanceRequestablePosition,
@@ -236,26 +237,33 @@ export async function processRebalanceAction(
         // Best effort; reconciliation can still rediscover the close leg.
       }
 
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS",
-        actor: input.action.requestedBy,
-        wallet: input.action.wallet,
-        positionId: input.action.positionId,
-        actionId: input.action.actionId,
-        before: toJournalRecord({
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS",
+          actor: input.action.requestedBy,
+          wallet: input.action.wallet,
+          positionId: input.action.positionId,
           actionId: input.action.actionId,
-          requestPayload: payload,
-          position: currentPosition,
-        }),
-        after: toJournalRecord({
-          position: reconciliationPosition,
-          closeResult,
-        }),
-        txIds: error.txIds,
-        resultStatus: "WAITING_CONFIRMATION",
-        error: errorMessage(error, "rebalance close submission ambiguous"),
-      });
+          before: toJournalRecord({
+            actionId: input.action.actionId,
+            requestPayload: payload,
+            position: currentPosition,
+          }),
+          after: toJournalRecord({
+            position: reconciliationPosition,
+            closeResult,
+          }),
+          txIds: error.txIds,
+          resultStatus: "WAITING_CONFIRMATION",
+          error: errorMessage(error, "rebalance close submission ambiguous"),
+        });
+      } catch (journalError) {
+        logger.warn(
+          { err: journalError, actionId: input.action.actionId },
+          "rebalance close ambiguous journal append failed",
+        );
+      }
 
       return {
         nextStatus: "WAITING_CONFIRMATION",
@@ -344,28 +352,35 @@ export async function processRebalanceAction(
       // positionId so reconciliation can recover the close leg later.
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "REBALANCE_CLOSE_REQUIRES_RECONCILIATION",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    try {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "REBALANCE_CLOSE_REQUIRES_RECONCILIATION",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: toJournalRecord({
-        position: reconciliationPosition,
-        closeResult,
-      }),
-      txIds: closeResult.txIds,
-      resultStatus: "WAITING_CONFIRMATION",
-      error: errorMessage(
-        error,
-        "rebalance close submission requires reconciliation",
-      ),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: toJournalRecord({
+          position: reconciliationPosition,
+          closeResult,
+        }),
+        txIds: closeResult.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(
+          error,
+          "rebalance close submission requires reconciliation",
+        ),
+      });
+    } catch (journalError) {
+      logger.warn(
+        { err: journalError, actionId: input.action.actionId },
+        "rebalance close reconciliation journal append failed",
+      );
+    }
 
     return {
       nextStatus: "WAITING_CONFIRMATION",

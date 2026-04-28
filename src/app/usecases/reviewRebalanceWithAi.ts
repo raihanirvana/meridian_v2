@@ -209,20 +209,27 @@ export async function reviewRebalanceWithAi(
     policy: input.validationPolicy ?? {},
   });
 
-  await appendJournal({
-    ...(input.journalRepository === undefined
-      ? {}
-      : { journalRepository: input.journalRepository }),
-    timestamp,
-    actor,
-    wallet: input.wallet,
-    positionId: input.positionId,
-    source,
-    review,
-    decision,
-    validation,
-    aiError,
-  });
+  try {
+    await appendJournal({
+      ...(input.journalRepository === undefined
+        ? {}
+        : { journalRepository: input.journalRepository }),
+      timestamp,
+      actor,
+      wallet: input.wallet,
+      positionId: input.positionId,
+      source,
+      review,
+      decision,
+      validation,
+      aiError,
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, positionId: input.positionId },
+      "reviewRebalanceWithAi journal append failed",
+    );
+  }
 
   return RebalanceReviewWithAiResultSchema.parse({
     source,

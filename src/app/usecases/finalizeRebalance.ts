@@ -20,6 +20,7 @@ import { transitionActionStatus } from "../../domain/stateMachines/actionLifecyc
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
+import { logger } from "../../infra/logging/logger.js";
 import {
   buildCloseAccountingSummary,
   resolveOutOfRangeSince,
@@ -1078,39 +1079,54 @@ export async function finalizeRebalance(
         } satisfies Action;
         await input.actionRepository.upsert(actionAfterCloseFinalized);
         await input.stateRepository.upsert(closeLeg.closedPosition);
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "REBALANCE_CLOSE_FINALIZED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestAction.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: closeLeg.closingPosition,
-          }),
-          after: toJournalRecord({
-            position: closeLeg.closedPosition,
-            accounting: closeLeg.closeAccounting,
-          }),
-          txIds: latestPayload.closeResult.txIds,
-          resultStatus: closeLeg.closedPosition.status,
-          error: null,
-        });
+        // Journal and lesson hook are best-effort after CLOSED is persisted.
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "REBALANCE_CLOSE_FINALIZED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestAction.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              position: closeLeg.closingPosition,
+            }),
+            after: toJournalRecord({
+              position: closeLeg.closedPosition,
+              accounting: closeLeg.closeAccounting,
+            }),
+            txIds: latestPayload.closeResult.txIds,
+            resultStatus: closeLeg.closedPosition.status,
+            error: null,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, actionId: latestAction.actionId },
+            "rebalance close finalized journal append failed",
+          );
+        }
 
-        await runLessonHookIdempotent({
-          ...(input.lessonHook === undefined
-            ? {}
-            : { lessonHook: input.lessonHook }),
-          ...(input.journalRepository === undefined
-            ? {}
-            : { journalRepository: input.journalRepository }),
-          position: closeLeg.closedPosition,
-          performanceSnapshotPosition: closeLeg.closeConfirmedPosition,
-          closedAction: actionAfterCloseFinalized,
-          reason: requestPayload.reason,
-          now,
-        });
+        try {
+          await runLessonHookIdempotent({
+            ...(input.lessonHook === undefined
+              ? {}
+              : { lessonHook: input.lessonHook }),
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
+            position: closeLeg.closedPosition,
+            performanceSnapshotPosition: closeLeg.closeConfirmedPosition,
+            closedAction: actionAfterCloseFinalized,
+            reason: requestPayload.reason,
+            now,
+          });
+        } catch (hookError) {
+          logger.warn(
+            { err: hookError, actionId: latestAction.actionId },
+            "rebalance close lesson hook failed",
+          );
+        }
 
         const settlementValidationError = validatePostCloseRedeploySettlement(
           closeFinalizedPayload.closeResult,

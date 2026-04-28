@@ -20,6 +20,7 @@ import { transitionPositionStatus } from "../../domain/stateMachines/positionLif
 import { type ReconciliationOutcome } from "../../domain/types/enums.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
+import { logger } from "../../infra/logging/logger.js";
 
 import {
   finalizeRebalance,
@@ -564,6 +565,12 @@ async function recoverReconcilingAction(
             const recoveredNewPosition = PositionSchema.parse({
               ...(localNewPosition ?? confirmedNewPosition),
               ...confirmedNewPosition,
+              // Preserve local identity fields — chain snapshot may lack token order / strategy context
+              ...(localNewPosition !== null && {
+                baseMint: localNewPosition.baseMint,
+                quoteMint: localNewPosition.quoteMint,
+                strategy: localNewPosition.strategy,
+              }),
               status: "OPEN",
               lastSyncedAt: input.now,
               closedAt: null,
@@ -1161,19 +1168,26 @@ export async function reconcilePortfolio(
               });
               await input.stateRepository.upsert(syncedPosition);
               if (latestPosition.status === "RECONCILIATION_REQUIRED") {
-                await appendJournalEvent(input.journalRepository, {
-                  timestamp: now,
-                  eventType: "POSITION_RECONCILED_FROM_LIVE_SNAPSHOT",
-                  actor: "system",
-                  wallet,
-                  positionId: syncedPosition.positionId,
-                  actionId: syncedPosition.lastWriteActionId,
-                  before: toJournalRecord({ position: latestPosition }),
-                  after: toJournalRecord({ position: syncedPosition }),
-                  txIds: [],
-                  resultStatus: syncedPosition.status,
-                  error: null,
-                });
+                try {
+                  await appendJournalEvent(input.journalRepository, {
+                    timestamp: now,
+                    eventType: "POSITION_RECONCILED_FROM_LIVE_SNAPSHOT",
+                    actor: "system",
+                    wallet,
+                    positionId: syncedPosition.positionId,
+                    actionId: syncedPosition.lastWriteActionId,
+                    before: toJournalRecord({ position: latestPosition }),
+                    after: toJournalRecord({ position: syncedPosition }),
+                    txIds: [],
+                    resultStatus: syncedPosition.status,
+                    error: null,
+                  });
+                } catch (journalError) {
+                  logger.warn(
+                    { err: journalError, positionId: syncedPosition.positionId },
+                    "reconciliation self-heal journal append failed",
+                  );
+                }
               }
               records.push(
                 createRecord({

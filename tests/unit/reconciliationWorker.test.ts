@@ -648,6 +648,7 @@ describe("reconciliation worker", () => {
       positionId: "pos_rebalance_pending",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -737,6 +738,7 @@ describe("reconciliation worker", () => {
       positionId: "pos_old_reconciling",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>

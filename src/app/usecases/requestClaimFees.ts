@@ -4,6 +4,7 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Position } from "../../domain/entities/Position.js";
 import type { Actor } from "../../domain/types/enums.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
 
@@ -109,25 +110,32 @@ export async function requestClaimFees(input: RequestClaimFeesInput) {
   });
 
   if (input.journalRepository !== undefined) {
-    await input.journalRepository.append({
-      timestamp: journalTimestamp,
-      eventType: "CLAIM_REQUEST_ACCEPTED",
-      actor: action.requestedBy,
-      wallet: action.wallet,
-      positionId: action.positionId,
-      actionId: action.actionId,
-      before: null,
-      after: buildJournalPayload({
+    try {
+      await input.journalRepository.append({
+        timestamp: journalTimestamp,
+        eventType: "CLAIM_REQUEST_ACCEPTED",
+        actor: action.requestedBy,
+        wallet: action.wallet,
+        positionId: action.positionId,
         actionId: action.actionId,
-        positionId: input.positionId,
-        status: action.status,
-        idempotencyKey: action.idempotencyKey,
-        requestPayload: payload,
-      }),
-      txIds: [],
-      resultStatus: action.status,
-      error: null,
-    });
+        before: null,
+        after: buildJournalPayload({
+          actionId: action.actionId,
+          positionId: input.positionId,
+          status: action.status,
+          idempotencyKey: action.idempotencyKey,
+          requestPayload: payload,
+        }),
+        txIds: [],
+        resultStatus: action.status,
+        error: null,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error, actionId: action.actionId },
+        "claim fees request journal append failed after enqueue",
+      );
+    }
   }
 
   return action;

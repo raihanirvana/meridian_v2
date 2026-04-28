@@ -369,10 +369,7 @@ async function findActiveWriteActionForPosition(input: {
   );
 
   return (
-    pendingActions.find(
-      (action) =>
-        action.wallet === input.wallet && action.positionId === input.positionId,
-    ) ?? null
+    pendingActions.find((action) => action.wallet === input.wallet) ?? null
   );
 }
 

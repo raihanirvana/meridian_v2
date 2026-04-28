@@ -306,6 +306,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     const queuedResult = await actionQueue.processNext((queuedAction) =>
@@ -383,6 +384,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     const queuedResult = await actionQueue.processNext((queuedAction) =>
@@ -471,6 +473,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -542,6 +545,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -625,6 +629,7 @@ describe("rebalance flow", () => {
       positionId: "pos_actual_amounts",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -685,6 +690,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -772,6 +778,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -843,6 +850,7 @@ describe("rebalance flow", () => {
       positionId: "pos_zero_usd_estimate",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -909,6 +917,7 @@ describe("rebalance flow", () => {
       positionId: "pos_missing_quote",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -968,6 +977,7 @@ describe("rebalance flow", () => {
       positionId: "pos_unavailable_amounts",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1028,6 +1038,7 @@ describe("rebalance flow", () => {
       positionId: "pos_timeout",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1082,6 +1093,7 @@ describe("rebalance flow", () => {
         payload: rebalancePayload,
         requestedBy: "operator",
         runtimeControlStore,
+            allowRiskGuardBypass: true,
       }),
     ).rejects.toThrow(/manual circuit breaker is active/i);
   });
@@ -1115,6 +1127,7 @@ describe("rebalance flow", () => {
       positionId: "pos_queue_block",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
     await runtimeControlStore.tripStopAllDeploys({
       updatedAt: "2026-04-20T00:01:00.000Z",
@@ -1179,6 +1192,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1271,6 +1285,7 @@ describe("rebalance flow", () => {
       positionId: "pos_low_capital",
       payload: rebalancePayload,
       requestedBy: "operator",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1341,6 +1356,7 @@ describe("rebalance flow", () => {
       positionId: "pos_redeploy_fail",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1411,6 +1427,7 @@ describe("rebalance flow", () => {
       positionId: "pos_redeploy_block",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1493,6 +1510,7 @@ describe("rebalance flow", () => {
       positionId: "pos_amb_close",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1585,6 +1603,7 @@ describe("rebalance flow", () => {
       positionId: "pos_retry_closed",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1664,6 +1683,7 @@ describe("rebalance flow", () => {
       positionId: "pos_old_recon",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1758,6 +1778,7 @@ describe("rebalance flow", () => {
       positionId: "pos_old_bq",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1840,6 +1861,7 @@ describe("rebalance flow", () => {
       positionId: "pos_accounting",
       payload: rebalancePayload,
       requestedBy: "system",
+        allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>

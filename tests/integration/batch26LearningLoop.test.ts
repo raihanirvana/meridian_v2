@@ -426,6 +426,7 @@ describe("Batch 26 learning loop integration", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
+        allowRiskGuardBypass: true,
     });
     await stores.actionQueue.processNext((queuedAction) =>
       processRebalanceAction({
