@@ -282,8 +282,8 @@ describe("claim flow", () => {
       journalRepository,
       postClaimSwapHook: async () => ({
         txId: "tx_swap",
-        inputAmount: 1,
-        outputAmount: 0.9,
+        inputAmountRaw: "1000000000",
+        outputAmountRaw: "900000000",
       }),
       now: () => "2026-04-22T10:02:00.000Z",
     });
@@ -295,8 +295,8 @@ describe("claim flow", () => {
       actionType: "CLAIM_FEES",
       swap: {
         txId: "tx_swap",
-        inputAmount: 1,
-        outputAmount: 0.9,
+        inputAmountRaw: "1000000000",
+        outputAmountRaw: "900000000",
       },
     });
   });
@@ -665,8 +665,9 @@ describe("claim flow", () => {
       compoundDeployRiskGuard: buildCompoundDeployRiskGuard(),
       postClaimSwapHook: async () => ({
         txId: "tx_swap_compound",
-        inputAmount: 1,
-        outputAmount: 0.75,
+        inputAmountRaw: "1000000000",
+        outputAmountRaw: "750000000",
+        outputAmountUi: 0.75,
         outputAmountUsd: 75,
       }),
       now: () => "2026-04-22T10:02:00.000Z",
@@ -879,8 +880,9 @@ describe("claim flow", () => {
       compoundDeployRiskGuard: buildCompoundDeployRiskGuard(),
       postClaimSwapHook: async () => ({
         txId: "tx_swap_compound",
-        inputAmount: 1,
-        outputAmount: 0.75,
+        inputAmountRaw: "1000000000",
+        outputAmountRaw: "750000000",
+        outputAmountUi: 0.75,
         outputAmountUsd: 75,
       }),
       now: () => "2026-04-22T10:02:00.000Z",
@@ -1082,8 +1084,9 @@ describe("claim flow", () => {
       journalRepository,
       postClaimSwapHook: async () => ({
         txId: "tx_swap_compound",
-        inputAmount: 1,
-        outputAmount: 0.75,
+        inputAmountRaw: "1000000000",
+        outputAmountRaw: "750000000",
+        outputAmountUi: 0.75,
       }),
       now: () => "2026-04-22T10:02:00.000Z",
     });
@@ -1280,8 +1283,9 @@ describe("claim flow", () => {
       journalRepository,
       postClaimSwapHook: async () => ({
         txId: "tx_swap_compound",
-        inputAmount: 1,
-        outputAmount: 0.75,
+        inputAmountRaw: "1000000000",
+        outputAmountRaw: "750000000",
+        outputAmountUi: 0.75,
       }),
       now: () => "2026-04-22T10:02:00.000Z",
     });
@@ -1358,8 +1362,9 @@ describe("claim flow", () => {
           },
           swap: {
             txId: "tx_swap_compound",
-            inputAmount: 1,
-            outputAmount: 0.75,
+            inputAmountRaw: "1000000000",
+            outputAmountRaw: "750000000",
+            outputAmountUi: 0.75,
             outputAmountUsd: 75,
           },
         },
@@ -1865,26 +1870,18 @@ describe("claim flow", () => {
   });
 
   it("uses claimedBaseAmountRaw for post-claim swap execution when available", async () => {
-    let capturedRequest: {
-      amount: number;
-      amountRaw?: string;
-    } | null = null;
+    let capturedAmountRaw: string | null = null;
 
     const hook = createPostClaimSwapHook({
       async quoteSwap() {
         throw new Error("unused");
       },
       async executeSwap(request) {
-        capturedRequest = {
-          amount: request.amount,
-          ...(request.amountRaw !== undefined
-            ? { amountRaw: request.amountRaw }
-            : {}),
-        };
+        capturedAmountRaw = request.amountRaw;
         return {
           txId: "tx_swap",
-          inputAmount: 250000000,
-          outputAmount: 100,
+          inputAmountRaw: "250000000",
+          outputAmountRaw: "100000000",
         };
       },
     });
@@ -1900,10 +1897,7 @@ describe("claim flow", () => {
       outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     });
 
-    expect(capturedRequest).toEqual({
-      amount: 0.25,
-      amountRaw: "250000000",
-    });
+    expect(capturedAmountRaw).toBe("250000000");
     expect(result).toMatchObject({
       txId: "tx_swap",
     });
@@ -2213,7 +2207,7 @@ describe("claim flow", () => {
             rangeUpperBin: 20,
             initialActiveBin: 15,
           },
-          swap: { outputAmount: 3, outputAmountUsd: 30 },
+          swap: { outputAmount: 3, outputAmountUi: 3, outputAmountUsd: 30 },
           error: null,
         },
       },

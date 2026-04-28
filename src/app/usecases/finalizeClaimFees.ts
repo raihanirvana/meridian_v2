@@ -415,6 +415,22 @@ async function runClaimPostProcessing(input: {
       });
 
       if (claimResult.claimedBaseAmountSource === "unavailable") {
+        autoSwap = ClaimAutoSwapStateSchema.parse({
+          ...autoSwap,
+          phase: "FAILED",
+          swap: null,
+          error:
+            "claimed base amount unavailable after claim; auto swap skipped",
+        });
+        claimResult = ClaimConfirmationPayloadSchema.parse({
+          ...claimResult,
+          autoSwap,
+        });
+        workingAction = await persistReconcilingAction({
+          actionRepository: input.actionRepository,
+          action: workingAction,
+          resultPayload: claimResult,
+        });
         await appendJournalEvent(input.journalRepository, {
           timestamp: input.now,
           eventType: "CLAIM_AUTO_SWAP_FAILED",
@@ -428,13 +444,11 @@ async function runClaimPostProcessing(input: {
           resultStatus: "FAILED",
           error:
             "claimed base amount unavailable after claim; auto swap skipped",
-        });
-        autoSwap = ClaimAutoSwapStateSchema.parse({
-          ...autoSwap,
-          phase: "FAILED",
-          swap: null,
-          error:
-            "claimed base amount unavailable after claim; auto swap skipped",
+        }).catch((journalError: unknown) => {
+          logger.warn(
+            { err: journalError, actionId: workingAction.actionId },
+            "claim auto swap failed journal append failed",
+          );
         });
       } else {
         try {
@@ -644,10 +658,17 @@ async function runClaimPostProcessing(input: {
           const swapResult = z
             .record(z.string(), z.unknown())
             .parse(compound.swap ?? {});
-          const outputAmount = z
+          const outputAmountUiParsed = z
             .number()
             .nonnegative()
-            .parse(swapResult.outputAmount);
+            .safeParse(swapResult.outputAmountUi);
+          if (!outputAmountUiParsed.success) {
+            throw new Error(
+              "compound swap output UI amount (outputAmountUi) unavailable; " +
+                "cannot build deploy payload from raw atomic amount",
+            );
+          }
+          const outputAmount = outputAmountUiParsed.data;
           const outputAmountUsd = resolveCompoundOutputValueUsd({
             outputMint: compound.outputMint,
             outputAmount,
@@ -1003,25 +1024,32 @@ export async function finalizeClaimFees(
           } satisfies Action;
           await input.actionRepository.upsert(timedOutAction);
 
-          await appendJournalEvent(input.journalRepository, {
-            timestamp: now,
-            eventType: "CLAIM_TIMED_OUT",
-            actor: latestAction.requestedBy,
-            wallet: latestAction.wallet,
-            positionId: latestAction.positionId,
-            actionId: latestAction.actionId,
-            before: toJournalRecord({
-              action: latestAction,
-              position: claimingPosition,
-            }),
-            after: toJournalRecord({
-              action: timedOutAction,
-              position: reconciliationPosition,
-            }),
-            txIds: latestAction.txIds,
-            resultStatus: timedOutAction.status,
-            error: timedOutAction.error,
-          });
+          try {
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: now,
+              eventType: "CLAIM_TIMED_OUT",
+              actor: latestAction.requestedBy,
+              wallet: latestAction.wallet,
+              positionId: latestAction.positionId,
+              actionId: latestAction.actionId,
+              before: toJournalRecord({
+                action: latestAction,
+                position: claimingPosition,
+              }),
+              after: toJournalRecord({
+                action: timedOutAction,
+                position: reconciliationPosition,
+              }),
+              txIds: latestAction.txIds,
+              resultStatus: timedOutAction.status,
+              error: timedOutAction.error,
+            });
+          } catch (journalError) {
+            logger.warn(
+              { err: journalError, actionId: timedOutAction.actionId },
+              "claim timed out journal append failed",
+            );
+          }
 
           return {
             action: timedOutAction,

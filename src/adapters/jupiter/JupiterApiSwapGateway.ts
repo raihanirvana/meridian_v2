@@ -56,11 +56,11 @@ function parseRawAmountString(value: string, fieldName: string): string {
   return value;
 }
 
-function pickAmount(
+function pickRawAmount(
   primary: string | undefined,
   fallback: string | undefined,
   fieldName: string,
-): { amount: number; raw: string } {
+): string {
   const value = primary ?? fallback;
   if (value === undefined) {
     throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
@@ -68,10 +68,7 @@ function pickAmount(
     ]);
   }
 
-  return {
-    amount: parseNumericString(value, fieldName),
-    raw: parseRawAmountString(value, fieldName),
-  };
+  return parseRawAmountString(value, fieldName);
 }
 
 export interface JupiterApiSwapGatewayOptions {
@@ -123,16 +120,12 @@ export class JupiterApiSwapGateway implements SwapGateway {
       query: {
         inputMint: parsedRequest.inputMint,
         outputMint: parsedRequest.outputMint,
-        amount: parsedRequest.amount,
+        amount: parsedRequest.amountRaw,
       },
       responseSchema: JupiterQuoteResponseSchema,
     });
 
     return SwapQuoteResultSchema.parse({
-      expectedOutputAmount: parseNumericString(
-        quoteResponse.outAmount,
-        "outAmount",
-      ),
       expectedOutputAmountRaw: parseRawAmountString(
         quoteResponse.outAmount,
         "outAmount",
@@ -155,11 +148,6 @@ export class JupiterApiSwapGateway implements SwapGateway {
     }
 
     const parsedRequest = ExecuteSwapRequestSchema.parse(request);
-    if (parsedRequest.amountRaw === undefined) {
-      throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
-        "amountRaw: required for executeSwap",
-      ]);
-    }
     const executeResponse = await this.executeClient.request({
       method: "POST",
       path: "execute",
@@ -171,12 +159,12 @@ export class JupiterApiSwapGateway implements SwapGateway {
       },
       responseSchema: JupiterExecuteResponseSchema,
     });
-    const inputAmount = pickAmount(
+    const inputAmountRaw = pickRawAmount(
       executeResponse.inputAmountResult,
       executeResponse.totalInputAmount,
       "inputAmountResult",
     );
-    const outputAmount = pickAmount(
+    const outputAmountRaw = pickRawAmount(
       executeResponse.outputAmountResult,
       executeResponse.totalOutputAmount,
       "outputAmountResult",
@@ -184,10 +172,8 @@ export class JupiterApiSwapGateway implements SwapGateway {
 
     return ExecuteSwapResultSchema.parse({
       txId: executeResponse.signature,
-      inputAmount: inputAmount.amount,
-      inputAmountRaw: inputAmount.raw,
-      outputAmount: outputAmount.amount,
-      outputAmountRaw: outputAmount.raw,
+      inputAmountRaw,
+      outputAmountRaw,
     });
   }
 }

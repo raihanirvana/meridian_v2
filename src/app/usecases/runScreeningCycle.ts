@@ -480,7 +480,7 @@ export async function runScreeningCycle(
     }
 
     const limiterDecision =
-      await input.detailRateLimiter?.beforeRequest(detailRequestNow);
+      await input.detailRateLimiter?.reserveRequest(detailRequestNow);
     if (limiterDecision !== undefined && !limiterDecision.allowed) {
       rateLimitCooldownUntil =
         limiterDecision.reason === "window_budget_exhausted"
@@ -519,7 +519,6 @@ export async function runScreeningCycle(
     }
 
     try {
-      await input.detailRateLimiter?.recordAttempt(detailRequestNow);
       const tokenMint = asString(
         candidate.tokenRiskSnapshot.tokenXMint,
         "tokenXMint",
@@ -807,25 +806,29 @@ export async function runScreeningCycle(
   };
 
   if (input.journalRepository !== undefined) {
-    await input.journalRepository.append({
-      timestamp: now,
-      eventType: "SCREENING_COMPLETED",
-      actor: "system",
-      wallet: input.wallet,
-      positionId: null,
-      actionId: null,
-      before: null,
-      after: toJournalRecord({
-        timeframe: screeningPolicy.timeframe,
-        candidateCount: finalCandidates.length,
-        shortlistCount: finalShortlist.length,
-        aiSource: aiShortlist.source,
-        enrichment: enrichmentSummary,
-      }),
-      txIds: [],
-      resultStatus: "SCREENED",
-      error: null,
-    });
+    await appendJournalBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "SCREENING_COMPLETED",
+        actor: "system",
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: toJournalRecord({
+          timeframe: screeningPolicy.timeframe,
+          candidateCount: finalCandidates.length,
+          shortlistCount: finalShortlist.length,
+          aiSource: aiShortlist.source,
+          enrichment: enrichmentSummary,
+        }),
+        txIds: [],
+        resultStatus: "SCREENED",
+        error: null,
+      },
+      "screening completed journal append failed",
+    );
   }
 
   return {

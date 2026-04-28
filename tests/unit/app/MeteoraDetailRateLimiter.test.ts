@@ -114,6 +114,29 @@ describe("InMemoryMeteoraDetailRateLimiter", () => {
     });
   });
 
+  it("reserveRequest is atomic: two concurrent calls with budget=1 allow exactly one", async () => {
+    const limiter = new InMemoryMeteoraDetailRateLimiter({
+      detailRequestIntervalMs: 0,
+      maxDetailRequestsPerWindow: 1,
+      detailRequestWindowMs: 60_000,
+      detailCooldownAfter429Ms: 900_000,
+    });
+
+    const [r1, r2] = await Promise.all([
+      limiter.reserveRequest("2026-04-26T00:00:00.000Z"),
+      limiter.reserveRequest("2026-04-26T00:00:00.000Z"),
+    ]);
+
+    const allowed = [r1, r2].filter((r) => r.allowed);
+    const blocked = [r1, r2].filter((r) => !r.allowed);
+    expect(allowed).toHaveLength(1);
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0]).toMatchObject({
+      allowed: false,
+      reason: "window_budget_exhausted",
+    });
+  });
+
   it("persists cooldown and attempts across limiter instances", async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), "meridian-v2-rate-limit-"),

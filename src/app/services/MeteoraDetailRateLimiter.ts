@@ -18,6 +18,10 @@ export type DetailRateLimitDecision =
 
 export interface MeteoraDetailRateLimiter {
   beforeRequest(now: string): Promise<DetailRateLimitDecision>;
+  // Atomic check-and-reserve: load → check → record → persist in one critical
+  // section. Use instead of beforeRequest()+recordAttempt() to prevent two
+  // concurrent callers from both reading "allowed" before either records.
+  reserveRequest(now: string): Promise<DetailRateLimitDecision>;
   recordAttempt(now: string): Promise<void>;
   recordSuccess(now: string): Promise<void>;
   recordFailure(now: string): Promise<void>;
@@ -120,6 +124,46 @@ export class InMemoryMeteoraDetailRateLimiter implements MeteoraDetailRateLimite
             0,
             this.lastRequestAtMs + this.detailRequestIntervalMs - nowMs,
           );
+    return { allowed: true, waitMs };
+  }
+
+  public async reserveRequest(now: string): Promise<DetailRateLimitDecision> {
+    const nowMs = parseTimestamp(now);
+    this.prune(nowMs);
+
+    if (this.cooldownUntilMs !== null && this.cooldownUntilMs > nowMs) {
+      return {
+        allowed: false,
+        reason: "endpoint_cooldown_active",
+        retryAfterMs: this.cooldownUntilMs - nowMs,
+      };
+    }
+
+    if (this.requestTimestampsMs.length >= this.maxDetailRequestsPerWindow) {
+      const oldest = this.requestTimestampsMs[0] as number;
+      return {
+        allowed: false,
+        reason: "window_budget_exhausted",
+        retryAfterMs: Math.max(
+          0,
+          oldest + this.detailRequestWindowMs - nowMs,
+        ),
+      };
+    }
+
+    const waitMs =
+      this.lastRequestAtMs === null
+        ? 0
+        : Math.max(
+            0,
+            this.lastRequestAtMs + this.detailRequestIntervalMs - nowMs,
+          );
+
+    // Reserve the slot synchronously — no await between check and mutation
+    // so concurrent callers cannot both read "allowed" before either records.
+    this.requestTimestampsMs.push(nowMs);
+    this.lastRequestAtMs = nowMs;
+
     return { allowed: true, waitMs };
   }
 
@@ -236,6 +280,18 @@ export class FileMeteoraDetailRateLimiter
   ): Promise<DetailRateLimitDecision> {
     await this.load(now);
     return super.beforeRequest(now);
+  }
+
+  public override async reserveRequest(
+    now: string,
+  ): Promise<DetailRateLimitDecision> {
+    await this.load(now);
+    const decision = await super.beforeRequest(now);
+    if (decision.allowed) {
+      await super.recordAttempt(now);
+      await this.persist(now);
+    }
+    return decision;
   }
 
   public override async recordAttempt(now: string): Promise<void> {

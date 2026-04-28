@@ -111,8 +111,8 @@ export async function requestDeploy(
     });
 
     if (!riskResult.allowed) {
-      if (input.journalRepository !== undefined) {
-        await input.journalRepository.append({
+      try {
+        await input.journalRepository?.append({
           timestamp: journalTimestamp,
           eventType: "DEPLOY_REQUEST_BLOCKED_BY_RISK",
           actor: input.requestedBy,
@@ -131,6 +131,11 @@ export async function requestDeploy(
           resultStatus: "BLOCKED",
           error: riskResult.reason,
         });
+      } catch (error) {
+        logger.warn(
+          { err: error },
+          "deploy risk-block journal append failed",
+        );
       }
 
       throw new Error(`deploy blocked by risk guard: ${riskResult.reason}`);

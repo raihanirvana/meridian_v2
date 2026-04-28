@@ -24,8 +24,19 @@ const OneSolLamports = 1_000_000_000;
 const UsdcDecimals = 1_000_000;
 
 function parseAmount(value: string, fieldName: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!/^\d+$/.test(value)) {
+    throw new AdapterResponseValidationError("JupiterSolPriceGateway", [
+      `${fieldName}: invalid numeric string`,
+    ]);
+  }
+  const raw = BigInt(value);
+  if (raw > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new AdapterResponseValidationError("JupiterSolPriceGateway", [
+      `${fieldName}: raw amount exceeds Number.MAX_SAFE_INTEGER`,
+    ]);
+  }
+  const parsed = Number(raw);
+  if (parsed <= 0) {
     throw new AdapterResponseValidationError("JupiterSolPriceGateway", [
       `${fieldName}: invalid numeric string`,
     ]);

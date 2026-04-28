@@ -188,22 +188,26 @@ export async function processRebalanceAction(
     input.runtimeControlStore !== undefined &&
     (await input.runtimeControlStore.snapshot()).stopAllDeploys.active
   ) {
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "REBALANCE_BLOCKED_MANUAL_CIRCUIT_BREAKER",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "REBALANCE_BLOCKED_MANUAL_CIRCUIT_BREAKER",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: null,
-      txIds: [],
-      resultStatus: "ABORTED",
-      error: "manual circuit breaker is active",
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: null,
+        txIds: [],
+        resultStatus: "ABORTED",
+        error: "manual circuit breaker is active",
+      },
+      "rebalance manual circuit breaker journal append failed",
+    );
     return {
       nextStatus: "ABORTED",
       txIds: [],
@@ -288,22 +292,26 @@ export async function processRebalanceAction(
       };
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "REBALANCE_CLOSE_SUBMISSION_FAILED",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "REBALANCE_CLOSE_SUBMISSION_FAILED",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: null,
-      txIds: [],
-      resultStatus: "FAILED",
-      error: errorMessage(error, "rebalance close submission failed"),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: null,
+        txIds: [],
+        resultStatus: "FAILED",
+        error: errorMessage(error, "rebalance close submission failed"),
+      },
+      "rebalance close submission failure journal append failed",
+    );
     throw error;
   }
 

@@ -272,7 +272,10 @@ describe("maybeEvolvePolicy", () => {
     expect((await runtimePolicyStore.snapshot()).overrides).toEqual({});
     expect((await runtimePolicyStore.snapshot()).positionsAtEvolution).toBe(5);
     expect(await lessonRepository.list()).toHaveLength(0);
-    expect(await journalRepository.list()).toHaveLength(0);
+    const journal = await journalRepository.list();
+    expect(journal).toHaveLength(1);
+    expect(journal[0]?.eventType).toBe("POLICY_EVOLUTION_NOOP");
+    expect(journal[0]?.resultStatus).toBe("UNCHANGED");
   });
 
   it("does not throw or lose evolution state when journal append fails after policy overrides persist", async () => {

@@ -90,14 +90,35 @@ export async function maybeEvolvePolicy(
   }
 
   if (Object.keys(evolved.changes).length === 0) {
+    const noopNow = input.now();
     await input.runtimePolicyStore.applyOverrides(
       {},
       {
-        lastEvolvedAt: input.now(),
+        lastEvolvedAt: noopNow,
         positionsAtEvolution,
         rationale: evolved.rationale,
       },
     );
+    try {
+      await input.journalRepository?.append({
+        timestamp: noopNow,
+        eventType: "POLICY_EVOLUTION_NOOP",
+        actor: "system",
+        wallet: "system",
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: { positionsAtEvolution, rationale: evolved.rationale },
+        txIds: [],
+        resultStatus: "UNCHANGED",
+        error: null,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error, positionsAtEvolution },
+        "policy evolution noop journal append failed",
+      );
+    }
     return {
       positionsAtEvolution,
       changes: {},

@@ -95,10 +95,31 @@ export async function maybeRecalibrateSignalWeights(
   });
 
   if (Object.keys(recalculated.changes).length === 0) {
+    const noopNow = input.now();
     await input.signalWeightsStore.replace(currentWeights, {
-      lastRecalibratedAt: input.now(),
+      lastRecalibratedAt: noopNow,
       positionsAtRecalibration,
     });
+    try {
+      await input.journalRepository?.append({
+        timestamp: noopNow,
+        eventType: "SIGNAL_WEIGHTS_RECALIBRATION_NOOP",
+        actor: "system",
+        wallet: "system",
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: { positionsAtRecalibration, rationale: recalculated.rationale },
+        txIds: [],
+        resultStatus: "UNCHANGED",
+        error: null,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error, positionsAtRecalibration },
+        "signal weights recalibration noop journal append failed",
+      );
+    }
     return {
       positionsAtRecalibration,
       changes: {},

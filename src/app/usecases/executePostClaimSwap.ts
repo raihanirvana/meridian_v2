@@ -13,14 +13,16 @@ export function createPostClaimSwapHook(
 ): PostClaimSwapHook {
   return async (input) => {
     const parsed = PostClaimSwapInputSchema.parse(input);
+    if (parsed.claimedBaseAmountRaw === undefined) {
+      throw new Error(
+        "claimedBaseAmountRaw is required for swap execution; raw atomic amount unavailable from claim result",
+      );
+    }
     const result = await swapGateway.executeSwap({
       wallet: parsed.wallet,
       inputMint: parsed.position.baseMint,
       outputMint: parsed.outputMint,
-      amount: parsed.claimedBaseAmount,
-      ...(parsed.claimedBaseAmountRaw === undefined
-        ? {}
-        : { amountRaw: parsed.claimedBaseAmountRaw }),
+      amountRaw: parsed.claimedBaseAmountRaw,
     });
     return ExecuteSwapResultSchema.parse(result);
   };

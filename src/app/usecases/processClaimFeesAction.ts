@@ -279,22 +279,26 @@ export async function processClaimFeesAction(
       };
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "CLAIM_SUBMISSION_FAILED",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "CLAIM_SUBMISSION_FAILED",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: null,
-      txIds: [],
-      resultStatus: "FAILED",
-      error: errorMessage(error, "claim submission failed"),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: null,
+        txIds: [],
+        resultStatus: "FAILED",
+        error: errorMessage(error, "claim submission failed"),
+      },
+      "claim submission failure journal append failed",
+    );
     throw error;
   }
 

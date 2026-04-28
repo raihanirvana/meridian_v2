@@ -158,16 +158,16 @@ export async function reviewRebalanceWithAi(
   } else {
     try {
       const aiWork = async (): Promise<AiRebalanceDecision> => {
+        if (input.lessonPromptService === undefined) {
+          throw new Error("LessonPromptService is required for AI rebalance");
+        }
         const lessonsPrompt =
-          await input.lessonPromptService?.buildLessonsPrompt({
+          await input.lessonPromptService.buildLessonsPrompt({
             role: "MANAGER",
             includePoolMemory: {
               candidates: [{ poolAddress: review.position.poolAddress }],
             },
           });
-        if (input.lessonPromptService === undefined) {
-          throw new Error("LessonPromptService is required for AI rebalance");
-        }
         const poolMemoryPrompt =
           lessonsPrompt?.includes("### POOL MEMORY") === true
             ? []

@@ -103,7 +103,7 @@ describe("mock gateways", () => {
       quoteSwap: {
         type: "success",
         value: {
-          expectedOutputAmount: 95,
+          expectedOutputAmountRaw: "95",
           priceImpactPct: 0.3,
         },
       },
@@ -111,8 +111,8 @@ describe("mock gateways", () => {
         type: "success",
         value: {
           txId: "swap_tx_001",
-          inputAmount: 100,
-          outputAmount: 95,
+          inputAmountRaw: "100",
+          outputAmountRaw: "95",
         },
       },
     });
@@ -229,9 +229,9 @@ describe("mock gateways", () => {
       swap.quoteSwap({
         inputMint: "SOL",
         outputMint: "USDC",
-        amount: 100,
+        amountRaw: "100",
       }),
-    ).resolves.toMatchObject({ expectedOutputAmount: 95 });
+    ).resolves.toMatchObject({ expectedOutputAmountRaw: "95" });
 
     await expect(
       screening.listCandidates({ limit: 5, timeframe: "5m" }),
@@ -334,7 +334,7 @@ describe("mock gateways", () => {
         wallet: "wallet_001",
         inputMint: "SOL",
         outputMint: "USDC",
-        amount: 50,
+        amountRaw: "50",
       }),
     ).rejects.toThrow(/timeout/i);
 
@@ -439,7 +439,7 @@ describe("mock gateways", () => {
       quoteSwap: {
         type: "success",
         value: {
-          expectedOutputAmount: 95,
+          expectedOutputAmountRaw: "95",
           priceImpactPct: 0.3,
         },
       },
@@ -447,8 +447,8 @@ describe("mock gateways", () => {
         type: "success",
         value: {
           txId: "swap_tx_001",
-          inputAmount: 100,
-          outputAmount: 95,
+          inputAmountRaw: "100",
+          outputAmountRaw: "95",
         },
       },
     });
@@ -502,7 +502,7 @@ describe("mock gateways", () => {
         wallet: "wallet_001",
         inputMint: "SOL",
         outputMint: "USDC",
-        amount: 0,
+        amountRaw: "not_a_number",
       }),
     ).rejects.toThrow();
 

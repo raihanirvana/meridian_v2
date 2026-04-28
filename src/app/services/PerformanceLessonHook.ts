@@ -12,6 +12,7 @@ import {
 import { createUlid } from "../../infra/id/createUlid.js";
 import { buildPerformanceRecordFromClosedPosition } from "../../domain/rules/performanceRecordRules.js";
 import type { Action } from "../../domain/entities/Action.js";
+import { logger } from "../../infra/logging/logger.js";
 
 import { recordPositionPerformance } from "../usecases/recordPositionPerformance.js";
 import { recordPoolDeploy } from "../usecases/recordPoolDeploy.js";
@@ -219,22 +220,29 @@ export function createRecordPositionPerformanceLessonHook(
     }
 
     if (buildResult.skipped && performance === null) {
-      await input.journalRepository?.append({
-        timestamp: hookInput.now,
-        eventType: "PERFORMANCE_RECORD_SKIPPED",
-        actor: "system",
-        wallet: hookInput.position.wallet,
-        positionId: hookInput.position.positionId,
-        actionId: hookInput.closedAction.actionId,
-        before: null,
-        after: {
-          reason: buildResult.reason,
-          pool: hookInput.position.poolAddress,
-        },
-        txIds: [],
-        resultStatus: "SKIPPED",
-        error: buildResult.reason,
-      });
+      try {
+        await input.journalRepository?.append({
+          timestamp: hookInput.now,
+          eventType: "PERFORMANCE_RECORD_SKIPPED",
+          actor: "system",
+          wallet: hookInput.position.wallet,
+          positionId: hookInput.position.positionId,
+          actionId: hookInput.closedAction.actionId,
+          before: null,
+          after: {
+            reason: buildResult.reason,
+            pool: hookInput.position.poolAddress,
+          },
+          txIds: [],
+          resultStatus: "SKIPPED",
+          error: buildResult.reason,
+        });
+      } catch (error) {
+        logger.warn(
+          { err: error, positionId: hookInput.position.positionId },
+          "performance skipped journal append failed",
+        );
+      }
       return;
     }
     if (performance === null) {

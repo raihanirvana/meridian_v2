@@ -276,10 +276,12 @@ function buildAutoDeployPayload(input: {
     throw new Error("shortlisted candidate is missing token mints");
   }
 
+  const baseMint = input.candidate.baseMint ?? tokenXMint;
+  const quoteMint = input.candidate.quoteMint ?? tokenYMint;
   const amountBase =
-    tokenXMint === SOL_MINT ? input.deployConfig.defaultAmountSol : 0;
+    baseMint === SOL_MINT ? input.deployConfig.defaultAmountSol : 0;
   const amountQuote =
-    tokenYMint === SOL_MINT ? input.deployConfig.defaultAmountSol : 0;
+    quoteMint === SOL_MINT ? input.deployConfig.defaultAmountSol : 0;
   if (amountBase <= 0 && amountQuote <= 0) {
     throw new Error("auto deploy currently only supports SOL-paired pools");
   }
@@ -308,8 +310,8 @@ function buildAutoDeployPayload(input: {
     poolAddress: input.candidate.poolAddress,
     tokenXMint,
     tokenYMint,
-    baseMint: input.candidate.baseMint ?? tokenXMint,
-    quoteMint: input.candidate.quoteMint ?? tokenYMint,
+    baseMint,
+    quoteMint,
     amountBase,
     amountQuote,
     slippageBps,
@@ -869,7 +871,7 @@ export function createRuntimeSupervisor(
               "DETAIL_NOT_FRESH_OR_MISSING",
             )
           ) {
-            await input.stores.journalRepository.append({
+            input.stores.journalRepository.append({
               timestamp,
               eventType: "CANDIDATE_DETAIL_MISSING_DEPLOY_BLOCKED",
               actor: "system",
@@ -887,6 +889,11 @@ export function createRuntimeSupervisor(
               txIds: [],
               resultStatus: "BLOCKED",
               error: "DETAIL_NOT_FRESH_OR_MISSING",
+            }).catch((err: unknown) => {
+              logger.warn(
+                { err, candidateId: candidate.candidateId },
+                "candidate detail missing blocked journal append failed",
+              );
             });
           }
           await appendAutoDeployJournal({
@@ -922,7 +929,7 @@ export function createRuntimeSupervisor(
           solPriceUsd: solPrice.priceUsd,
         });
         if (!riskResult.allowed) {
-          await input.stores.journalRepository.append({
+          input.stores.journalRepository.append({
             timestamp,
             eventType: "DEPLOY_REQUEST_BLOCKED_BY_RISK",
             actor: "system",
@@ -940,6 +947,11 @@ export function createRuntimeSupervisor(
             txIds: [],
             resultStatus: "BLOCKED",
             error: riskResult.reason,
+          }).catch((err: unknown) => {
+            logger.warn(
+              { err, candidateId: candidate.candidateId },
+              "auto-deploy risk-block journal append failed",
+            );
           });
           await appendStrategyDecisionJournal({
             timestamp,

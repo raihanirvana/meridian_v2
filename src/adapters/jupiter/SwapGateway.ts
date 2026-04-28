@@ -5,27 +5,32 @@ import { type MockBehavior, resolveMockBehavior } from "../mockBehavior.js";
 export const SwapQuoteRequestSchema = z.object({
   inputMint: z.string().min(1),
   outputMint: z.string().min(1),
-  amount: z.number().positive(),
+  amountRaw: z.string().regex(/^\d+$/),
 });
 
 export const SwapQuoteResultSchema = z.object({
-  expectedOutputAmount: z.number().nonnegative(),
-  expectedOutputAmountRaw: z.string().regex(/^\d+$/).optional(),
+  expectedOutputAmountRaw: z.string().regex(/^\d+$/),
+  expectedOutputAmountUi: z.number().nonnegative().optional(),
   // Canonical unit: fractional ratio, where 0.01 = 1%.
   priceImpactPct: z.number().nonnegative(),
 });
 
-export const ExecuteSwapRequestSchema = SwapQuoteRequestSchema.extend({
+export const ExecuteSwapRequestSchema = z.object({
+  inputMint: z.string().min(1),
+  outputMint: z.string().min(1),
+  amountRaw: z.string().regex(/^\d+$/),
   wallet: z.string().min(1),
-  amountRaw: z.string().regex(/^\d+$/).optional(),
 });
 
 export const ExecuteSwapResultSchema = z.object({
   txId: z.string().min(1),
-  inputAmount: z.number().nonnegative(),
-  inputAmountRaw: z.string().regex(/^\d+$/).optional(),
-  outputAmount: z.number().nonnegative(),
-  outputAmountRaw: z.string().regex(/^\d+$/).optional(),
+  inputAmountRaw: z.string().regex(/^\d+$/),
+  inputAmountUi: z.number().nonnegative().optional(),
+  outputAmountRaw: z.string().regex(/^\d+$/),
+  // UI-unit output amount (human-readable, e.g. 0.25 SOL not 250000000 lamports).
+  // Required for auto-compound deploy; adapters that only return raw atomic amounts
+  // must leave this undefined, which will cause auto-compound to fail explicitly.
+  outputAmountUi: z.number().nonnegative().optional(),
 });
 
 export type SwapQuoteRequest = z.infer<typeof SwapQuoteRequestSchema>;

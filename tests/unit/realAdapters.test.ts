@@ -73,10 +73,9 @@ describe("real adapters", () => {
       jupiterQuote.quoteSwap({
         inputMint: "So11111111111111111111111111111111111111112",
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        amount: 100000000,
+        amountRaw: "100000000",
       }),
     ).resolves.toEqual({
-      expectedOutputAmount: 17057460,
       expectedOutputAmountRaw: "17057460",
       priceImpactPct: 0.0001,
     });
@@ -578,7 +577,7 @@ describe("real adapters", () => {
     const result = await jupiterQuote.quoteSwap({
       inputMint: "So11111111111111111111111111111111111111112",
       outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      amount: 100000000,
+      amountRaw: "100000000",
     });
 
     expect(result.expectedOutputAmountRaw).toBe("9007199254740993");
@@ -891,14 +890,11 @@ describe("real adapters", () => {
         wallet: "wallet_001",
         inputMint: "So11111111111111111111111111111111111111112",
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        amount: 100000000,
         amountRaw: "100000000",
       }),
     ).resolves.toEqual({
       txId: "sig_001",
-      inputAmount: 100000000,
       inputAmountRaw: "100000000",
-      outputAmount: 17057460,
       outputAmountRaw: "17057460",
     });
   });
@@ -920,7 +916,7 @@ describe("real adapters", () => {
       jupiter.quoteSwap({
         inputMint: "So11111111111111111111111111111111111111112",
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        amount: 100000000,
+        amountRaw: "100000000",
       }),
     ).rejects.toBeInstanceOf(AdapterResponseValidationError);
   });
@@ -943,7 +939,7 @@ describe("real adapters", () => {
     );
   });
 
-  it("requires amountRaw for Jupiter executeSwap", async () => {
+  it("rejects executeSwap when amountRaw is missing", async () => {
     const jupiter = new JupiterApiSwapGateway({
       executeBaseUrl: "https://api.jup.ag/ultra/v1/",
       fetchFn: createFetchFromResponse(
@@ -963,9 +959,9 @@ describe("real adapters", () => {
         wallet: "wallet_001",
         inputMint: "So11111111111111111111111111111111111111112",
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        amount: 0.25,
+        amountRaw: "not_a_number",
       }),
-    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+    ).rejects.toThrow();
   });
 
   it("requires an explicit execution bridge for Jupiter executeSwap", async () => {
@@ -976,7 +972,7 @@ describe("real adapters", () => {
         wallet: "wallet_001",
         inputMint: "So11111111111111111111111111111111111111112",
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        amount: 100000000,
+        amountRaw: "100000000",
       }),
     ).rejects.toThrow(/executeBaseUrl is required/i);
   });

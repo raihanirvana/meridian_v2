@@ -120,41 +120,48 @@ export async function recordPositionPerformance(
   let lesson: Lesson | null = null;
 
   if (candidateLesson !== null) {
-    const existingLesson = (await input.lessonRepository.list()).find(
-      (currentLesson) =>
-        isSameDerivedLesson({
-          existing: currentLesson,
-          candidate: candidateLesson,
-        }),
-    );
-    if (existingLesson !== undefined) {
-      lesson = existingLesson;
-    } else {
-      const insertedLesson = await input.lessonRepository.appendIfAbsentDerived(
-        candidateLesson,
+    try {
+      const existingLesson = (await input.lessonRepository.list()).find(
+        (currentLesson) =>
+          isSameDerivedLesson({
+            existing: currentLesson,
+            candidate: candidateLesson,
+          }),
       );
-      lesson = insertedLesson.lesson;
-      if (insertedLesson.inserted) {
-        await appendJournalBestEffort(input.journalRepository, {
-          timestamp: input.now(),
-          eventType: "LESSON_RECORDED",
-          actor: "system",
-          wallet: performance.wallet,
-          positionId: performance.positionId,
-          actionId: null,
-          before: null,
-          after: {
-            lessonId: insertedLesson.lesson.id,
-            outcome: insertedLesson.lesson.outcome,
-            pnlPct: performance.pnlPct,
-            pool: performance.pool,
-            role: insertedLesson.lesson.role,
-          },
-          txIds: [],
-          resultStatus: "RECORDED",
-          error: null,
-        });
+      if (existingLesson !== undefined) {
+        lesson = existingLesson;
+      } else {
+        const insertedLesson =
+          await input.lessonRepository.appendIfAbsentDerived(candidateLesson);
+        lesson = insertedLesson.lesson;
+        if (insertedLesson.inserted) {
+          await appendJournalBestEffort(input.journalRepository, {
+            timestamp: input.now(),
+            eventType: "LESSON_RECORDED",
+            actor: "system",
+            wallet: performance.wallet,
+            positionId: performance.positionId,
+            actionId: null,
+            before: null,
+            after: {
+              lessonId: insertedLesson.lesson.id,
+              outcome: insertedLesson.lesson.outcome,
+              pnlPct: performance.pnlPct,
+              pool: performance.pool,
+              role: insertedLesson.lesson.role,
+            },
+            txIds: [],
+            resultStatus: "RECORDED",
+            error: null,
+          });
+        }
       }
+    } catch (error) {
+      logger.warn(
+        { err: error, positionId: performance.positionId },
+        "lesson derivation failed after performance persistence",
+      );
+      lesson = null;
     }
   }
 
