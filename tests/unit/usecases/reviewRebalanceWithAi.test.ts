@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { JournalRepository } from "../../../src/adapters/storage/JournalRepository.js";
 import type {
   AiRebalanceDecision,
   RebalanceReviewInput,
@@ -141,5 +142,39 @@ describe("reviewRebalanceWithAi", () => {
     expect(result.source).toBe("FALLBACK");
     expect(result.decision.action).toBe("hold");
     expect(result.aiError).toBe("llm unavailable");
+  });
+
+  it("returns a validated result when rebalance review journal append fails", async () => {
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await reviewRebalanceWithAi({
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      mode: "constrained_action",
+      review: buildReview(),
+      planner: {
+        async reviewRebalanceDecision() {
+          return buildDecision();
+        },
+      },
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return "Prefer stable manager lessons.";
+        },
+      },
+      journalRepository: failingJournal,
+      validationPolicy: {
+        closeSimulationPassed: true,
+        redeploySimulationPassed: true,
+      },
+      now,
+    });
+
+    expect(result.source).toBe("AI");
+    expect(result.validation.allowed).toBe(true);
   });
 });

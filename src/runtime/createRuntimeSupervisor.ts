@@ -453,28 +453,39 @@ export function createRuntimeSupervisor(
     payload?: DeployActionRequestPayload;
     error?: string | null;
   }): Promise<void> {
-    await input.stores.journalRepository.append({
-      timestamp: inputEvent.timestamp,
-      eventType: "AUTO_DEPLOY_FROM_SHORTLIST",
-      actor: "system",
-      wallet: input.wallet,
-      positionId: null,
-      actionId: inputEvent.actionId,
-      before: null,
-      after: {
-        candidateId: inputEvent.candidate?.candidateId ?? null,
-        poolAddress: inputEvent.candidate?.poolAddress ?? null,
-        symbolPair: inputEvent.candidate?.symbolPair ?? null,
+    try {
+      await input.stores.journalRepository.append({
+        timestamp: inputEvent.timestamp,
+        eventType: "AUTO_DEPLOY_FROM_SHORTLIST",
+        actor: "system",
+        wallet: input.wallet,
+        positionId: null,
+        actionId: inputEvent.actionId,
+        before: null,
+        after: {
+          candidateId: inputEvent.candidate?.candidateId ?? null,
+          poolAddress: inputEvent.candidate?.poolAddress ?? null,
+          symbolPair: inputEvent.candidate?.symbolPair ?? null,
+          resultStatus: inputEvent.resultStatus,
+          detail: inputEvent.detail,
+          ...(inputEvent.payload === undefined
+            ? {}
+            : { requestPayload: inputEvent.payload }),
+        },
+        txIds: [],
         resultStatus: inputEvent.resultStatus,
-        detail: inputEvent.detail,
-        ...(inputEvent.payload === undefined
-          ? {}
-          : { requestPayload: inputEvent.payload }),
-      },
-      txIds: [],
-      resultStatus: inputEvent.resultStatus,
-      error: inputEvent.error ?? null,
-    });
+        error: inputEvent.error ?? null,
+      });
+    } catch (error) {
+      logger.warn(
+        {
+          err: error,
+          candidateId: inputEvent.candidate?.candidateId ?? null,
+          resultStatus: inputEvent.resultStatus,
+        },
+        "auto deploy journal append failed",
+      );
+    }
   }
 
   async function appendStrategyDecisionJournal(inputEvent: {

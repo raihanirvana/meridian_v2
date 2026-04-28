@@ -1941,6 +1941,129 @@ describe("rebalance flow", () => {
     ).rejects.toThrow(/allowRiskGuardBypass/);
   });
 
+  it("rejects requestRebalance with omitted riskGuard and no explicit bypass", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_risk_omitted"));
+
+    await expect(
+      requestRebalance({
+        actionQueue,
+        stateRepository,
+        wallet: "wallet_001",
+        positionId: "pos_risk_omitted",
+        payload: rebalancePayload,
+        requestedBy: "system",
+      }),
+    ).rejects.toThrow(/allowRiskGuardBypass/);
+  });
+
+  it("returns WAITING_CONFIRMATION when ambiguous rebalance close journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+    const gateway = new RebalanceTestGateway();
+    gateway.closeError = new AmbiguousSubmissionError("rebalance close maybe sent", {
+      operation: "CLOSE",
+      positionId: "pos_old",
+      txIds: ["tx_rebalance_close_maybe_sent"],
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+      allowRiskGuardBypass: true,
+    });
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository: failingJournal,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    expect(result?.status).toBe("WAITING_CONFIRMATION");
+    expect((await stateRepository.get("pos_old"))?.status).toBe(
+      "RECONCILIATION_REQUIRED",
+    );
+  });
+
+  it("returns WAITING_CONFIRMATION and preserves CLOSING_FOR_REBALANCE when submitted journal fails after rebalance close succeeds", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:01:00.000Z",
+      allowRiskGuardBypass: true,
+    });
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository: failingJournal,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    expect(result?.status).toBe("WAITING_CONFIRMATION");
+    expect((await stateRepository.get("pos_old"))?.status).toBe(
+      "CLOSING_FOR_REBALANCE",
+    );
+  });
+
   it("returns accepted action when REBALANCE_REQUEST_ACCEPTED journal fails", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

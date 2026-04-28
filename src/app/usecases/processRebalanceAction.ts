@@ -79,6 +79,18 @@ async function appendJournalEvent(
   await journalRepository.append(event);
 }
 
+async function appendJournalEventBestEffort(
+  journalRepository: JournalRepository | undefined,
+  event: JournalEvent,
+  warningMessage: string,
+): Promise<void> {
+  try {
+    await appendJournalEvent(journalRepository, event);
+  } catch (error) {
+    logger.warn({ err: error, eventType: event.eventType }, warningMessage);
+  }
+}
+
 function assertRebalanceAction(action: Action): asserts action is Action & {
   type: "REBALANCE";
   positionId: string;
@@ -237,11 +249,12 @@ export async function processRebalanceAction(
         // Best effort; reconciliation can still rediscover the close leg.
       }
 
-      try {
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS",
-          actor: input.action.requestedBy,
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "REBALANCE_CLOSE_SUBMISSION_AMBIGUOUS",
+        actor: input.action.requestedBy,
           wallet: input.action.wallet,
           positionId: input.action.positionId,
           actionId: input.action.actionId,
@@ -254,16 +267,12 @@ export async function processRebalanceAction(
             position: reconciliationPosition,
             closeResult,
           }),
-          txIds: error.txIds,
-          resultStatus: "WAITING_CONFIRMATION",
-          error: errorMessage(error, "rebalance close submission ambiguous"),
-        });
-      } catch (journalError) {
-        logger.warn(
-          { err: journalError, actionId: input.action.actionId },
-          "rebalance close ambiguous journal append failed",
-        );
-      }
+        txIds: error.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "rebalance close submission ambiguous"),
+      },
+      "rebalance close ambiguous journal append failed",
+    );
 
       return {
         nextStatus: "WAITING_CONFIRMATION",
@@ -311,26 +320,30 @@ export async function processRebalanceAction(
     });
 
     await input.stateRepository.upsert(closingPosition);
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "REBALANCE_CLOSE_SUBMITTED",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "REBALANCE_CLOSE_SUBMITTED",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        position: currentPosition,
-      }),
-      after: toJournalRecord({
-        actionId: input.action.actionId,
-        position: closingPosition,
-        resultPayload,
-      }),
-      txIds: closeResult.txIds,
-      resultStatus: "WAITING_CONFIRMATION",
-      error: null,
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          position: currentPosition,
+        }),
+        after: toJournalRecord({
+          actionId: input.action.actionId,
+          position: closingPosition,
+          resultPayload,
+        }),
+        txIds: closeResult.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: null,
+      },
+      "rebalance close submitted journal append failed",
+    );
 
     return {
       nextStatus: "WAITING_CONFIRMATION",
@@ -352,8 +365,9 @@ export async function processRebalanceAction(
       // positionId so reconciliation can recover the close leg later.
     }
 
-    try {
-      await appendJournalEvent(input.journalRepository, {
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
         timestamp: now,
         eventType: "REBALANCE_CLOSE_REQUIRES_RECONCILIATION",
         actor: input.action.requestedBy,
@@ -374,13 +388,9 @@ export async function processRebalanceAction(
           error,
           "rebalance close submission requires reconciliation",
         ),
-      });
-    } catch (journalError) {
-      logger.warn(
-        { err: journalError, actionId: input.action.actionId },
-        "rebalance close reconciliation journal append failed",
-      );
-    }
+      },
+      "rebalance close reconciliation journal append failed",
+    );
 
     return {
       nextStatus: "WAITING_CONFIRMATION",
