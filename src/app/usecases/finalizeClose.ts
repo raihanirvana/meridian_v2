@@ -876,28 +876,34 @@ export async function finalizeClose(
         } satisfies Action;
         await input.actionRepository.upsert(doneAction);
 
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "CLOSE_FINALIZED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: latestAction.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: closingPosition,
-          }),
-          after: toJournalRecord({
-            action: doneAction,
-            position: closedPosition,
-          }),
-          txIds: doneAction.txIds,
-          resultStatus: doneAction.status,
-          error: null,
-        });
+        // Journal and lesson hook are best-effort after DONE/CLOSED are persisted.
+        try {
+          await appendJournalEvent(input.journalRepository, {
+            timestamp: now,
+            eventType: "CLOSE_FINALIZED",
+            actor: latestAction.requestedBy,
+            wallet: latestAction.wallet,
+            positionId: latestAction.positionId,
+            actionId: latestAction.actionId,
+            before: toJournalRecord({
+              action: latestAction,
+              position: closingPosition,
+            }),
+            after: toJournalRecord({
+              action: doneAction,
+              position: closedPosition,
+            }),
+            txIds: doneAction.txIds,
+            resultStatus: doneAction.status,
+            error: null,
+          });
+        } catch (journalError) {
+          logger.warn(
+            { err: journalError, actionId: latestAction.actionId },
+            "close finalized journal append failed",
+          );
+        }
 
-        // Lesson hook is outside the critical section: its failure must never
-        // revert a finalized close to RECONCILIATION_REQUIRED / FAILED.
         try {
           await runLessonHookIdempotent({
             ...(input.lessonHook === undefined

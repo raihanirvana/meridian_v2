@@ -1562,4 +1562,236 @@ describe("close flow", () => {
     expect(second.action.status).toBe("FAILED");
     expect(hookCalls).toBe(1);
   });
+
+  it("calls closePosition even when CLOSE_SUBMITTING journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    await stateRepository.upsert(buildOpenPosition("pos_submitting_journal_fail"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_submitting_journal_fail",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+    });
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_submitting_journal_fail",
+              txIds: ["tx_close_submitting"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository: failingJournal,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    expect(result?.status).toBe("WAITING_CONFIRMATION");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+
+    const position = await stateRepository.get("pos_submitting_journal_fail");
+    expect(position?.status).not.toBe("CLOSING");
+  });
+
+  it("returns WAITING_CONFIRMATION when both CLOSE_SUBMITTED journals fail after closePosition succeeds", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    await stateRepository.upsert(buildOpenPosition("pos_submitted_journal_fail"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_submitted_journal_fail",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+    });
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal disk full");
+      },
+    } as unknown as JournalRepository;
+
+    const result = await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_submitted_journal_fail",
+              txIds: ["tx_close_submitted"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository: failingJournal,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    expect(result?.status).toBe("WAITING_CONFIRMATION");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+  });
+
+  it("keeps action DONE and position CLOSED when CLOSE_FINALIZED journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const realJournalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: realJournalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_finalized_journal_fail"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository: realJournalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_finalized_journal_fail",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_finalized_journal_fail",
+              txIds: ["tx_close_finalized_fail"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository: realJournalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const selectiveFailJournal = {
+      async append(event: { eventType: string }) {
+        if (event.eventType === "CLOSE_FINALIZED") {
+          throw new Error("journal disk full on finalize");
+        }
+        await realJournalRepository.append(event as never);
+      },
+    } as unknown as JournalRepository;
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_finalized_journal_fail"),
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "pos_finalized_journal_fail",
+            txIds: ["tx_close_finalized_fail"],
+          },
+        },
+      }),
+      journalRepository: selectiveFailJournal,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("CLOSED");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get(
+      "pos_finalized_journal_fail",
+    );
+    expect(persistedAction?.status).toBe("DONE");
+    expect(persistedPosition?.status).toBe("CLOSED");
+  });
+
+  it("returns accepted action when CLOSE_REQUEST_ACCEPTED journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    await stateRepository.upsert(buildOpenPosition("pos_request_journal_fail"));
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      journalRepository: failingJournal,
+      wallet: "wallet_001",
+      positionId: "pos_request_journal_fail",
+      payload: { reason: "operator close" },
+      requestedBy: "operator",
+    });
+
+    expect(action.type).toBe("CLOSE");
+    expect(action.status).toBe("QUEUED");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    expect(persistedAction?.status).toBe("QUEUED");
+  });
 });

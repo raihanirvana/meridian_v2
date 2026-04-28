@@ -1891,6 +1891,100 @@ describe("deploy flow", () => {
     expect(persistedPosition?.status).toBe("DEPLOYING");
   });
 
+  it("returns WAITING_CONFIRMATION when both DEPLOY_SUBMITTED journals fail after a successful deploy", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal disk full");
+      },
+    } as unknown as JournalRepository;
+
+    const gateway = new MockDlmmGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_journal_double_fail",
+          txIds: ["tx_journal_double_fail"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: { wallet: "wallet_001", positions: [] },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    const result = await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository: failingJournal,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    expect(result?.status).toBe("WAITING_CONFIRMATION");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    expect(persistedAction?.status).toBe("WAITING_CONFIRMATION");
+
+    const persistedPosition = await stateRepository.get(
+      "pos_journal_double_fail",
+    );
+    expect(persistedPosition?.status).toBe("RECONCILIATION_REQUIRED");
+  });
+
   it("reuses the same queued action for duplicate deploy requests with the same idempotency key", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

@@ -16,6 +16,8 @@ import {
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
 
+import { logger } from "../../infra/logging/logger.js";
+
 import {
   CloseActionRequestPayloadSchema,
   assertCloseRequestablePosition,
@@ -160,25 +162,32 @@ export async function processCloseAction(
   });
 
   await input.stateRepository.upsert(closingPosition);
-  await appendJournalEvent(input.journalRepository, {
-    timestamp: now,
-    eventType: "CLOSE_SUBMITTING",
-    actor: input.action.requestedBy,
-    wallet: input.action.wallet,
-    positionId: input.action.positionId,
-    actionId: input.action.actionId,
-    before: toJournalRecord({
+  try {
+    await appendJournalEvent(input.journalRepository, {
+      timestamp: now,
+      eventType: "CLOSE_SUBMITTING",
+      actor: input.action.requestedBy,
+      wallet: input.action.wallet,
+      positionId: input.action.positionId,
       actionId: input.action.actionId,
-      position: currentPosition,
-    }),
-    after: toJournalRecord({
-      actionId: input.action.actionId,
-      position: closingPosition,
-    }),
-    txIds: [],
-    resultStatus: "RUNNING",
-    error: null,
-  });
+      before: toJournalRecord({
+        actionId: input.action.actionId,
+        position: currentPosition,
+      }),
+      after: toJournalRecord({
+        actionId: input.action.actionId,
+        position: closingPosition,
+      }),
+      txIds: [],
+      resultStatus: "RUNNING",
+      error: null,
+    });
+  } catch (journalError) {
+    logger.warn(
+      { err: journalError, actionId: input.action.actionId },
+      "close submitting journal append failed",
+    );
+  }
 
   try {
     closeResult = CloseActionResultPayloadSchema.parse(
@@ -317,25 +326,32 @@ export async function processCloseAction(
       // so reconciliation can recover the submitted close later.
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "CLOSE_SUBMITTED_REQUIRES_RECONCILIATION",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: input.action.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    try {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "CLOSE_SUBMITTED_REQUIRES_RECONCILIATION",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: input.action.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: toJournalRecord({
-        position: reconciliationPosition,
-        closeResult,
-      }),
-      txIds: closeResult.txIds,
-      resultStatus: "WAITING_CONFIRMATION",
-      error: errorMessage(error, "close submission requires reconciliation"),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: toJournalRecord({
+          position: reconciliationPosition,
+          closeResult,
+        }),
+        txIds: closeResult.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "close submission requires reconciliation"),
+      });
+    } catch (journalError) {
+      logger.warn(
+        { err: journalError, actionId: input.action.actionId },
+        "close reconciliation journal append failed",
+      );
+    }
 
     return {
       nextStatus: "WAITING_CONFIRMATION",

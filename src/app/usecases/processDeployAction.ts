@@ -19,6 +19,7 @@ import { transitionActionStatus } from "../../domain/stateMachines/actionLifecyc
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
 import { resolveOutOfRangeSince } from "../services/AccountingService.js";
 
@@ -423,25 +424,32 @@ export async function processDeployAction(
       // later reconciliation/confirmation pass can recover the on-chain deploy.
     }
 
-    await appendJournalEvent(input.journalRepository, {
-      timestamp: now,
-      eventType: "DEPLOY_SUBMITTED_REQUIRES_RECONCILIATION",
-      actor: input.action.requestedBy,
-      wallet: input.action.wallet,
-      positionId: deployResult.positionId,
-      actionId: input.action.actionId,
-      before: toJournalRecord({
+    try {
+      await appendJournalEvent(input.journalRepository, {
+        timestamp: now,
+        eventType: "DEPLOY_SUBMITTED_REQUIRES_RECONCILIATION",
+        actor: input.action.requestedBy,
+        wallet: input.action.wallet,
+        positionId: deployResult.positionId,
         actionId: input.action.actionId,
-        requestPayload: payload,
-      }),
-      after: toJournalRecord({
-        position: reconciliationPosition,
-        deployResult,
-      }),
-      txIds: deployResult.txIds,
-      resultStatus: "WAITING_CONFIRMATION",
-      error: errorMessage(error, "deploy submission requires reconciliation"),
-    });
+        before: toJournalRecord({
+          actionId: input.action.actionId,
+          requestPayload: payload,
+        }),
+        after: toJournalRecord({
+          position: reconciliationPosition,
+          deployResult,
+        }),
+        txIds: deployResult.txIds,
+        resultStatus: "WAITING_CONFIRMATION",
+        error: errorMessage(error, "deploy submission requires reconciliation"),
+      });
+    } catch (journalError) {
+      logger.warn(
+        { err: journalError, actionId: input.action.actionId },
+        "deploy reconciliation journal append failed",
+      );
+    }
 
     return {
       nextStatus: "WAITING_CONFIRMATION",

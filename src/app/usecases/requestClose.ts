@@ -4,6 +4,7 @@ import type { JournalRepository } from "../../adapters/storage/JournalRepository
 import type { StateRepository } from "../../adapters/storage/StateRepository.js";
 import type { Position } from "../../domain/entities/Position.js";
 import type { Actor } from "../../domain/types/enums.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
 import { createIdempotencyKey } from "../services/ActionService.js";
 
@@ -99,25 +100,32 @@ export async function requestClose(input: RequestCloseInput) {
   });
 
   if (input.journalRepository !== undefined) {
-    await input.journalRepository.append({
-      timestamp: journalTimestamp,
-      eventType: "CLOSE_REQUEST_ACCEPTED",
-      actor: action.requestedBy,
-      wallet: action.wallet,
-      positionId: action.positionId,
-      actionId: action.actionId,
-      before: null,
-      after: buildCloseJournalPayload({
+    try {
+      await input.journalRepository.append({
+        timestamp: journalTimestamp,
+        eventType: "CLOSE_REQUEST_ACCEPTED",
+        actor: action.requestedBy,
+        wallet: action.wallet,
+        positionId: action.positionId,
         actionId: action.actionId,
-        positionId: input.positionId,
-        status: action.status,
-        idempotencyKey: action.idempotencyKey,
-        requestPayload: payload,
-      }),
-      txIds: [],
-      resultStatus: action.status,
-      error: null,
-    });
+        before: null,
+        after: buildCloseJournalPayload({
+          actionId: action.actionId,
+          positionId: input.positionId,
+          status: action.status,
+          idempotencyKey: action.idempotencyKey,
+          requestPayload: payload,
+        }),
+        txIds: [],
+        resultStatus: action.status,
+        error: null,
+      });
+    } catch (error) {
+      logger.warn(
+        { err: error, actionId: action.actionId },
+        "close request journal append failed after enqueue",
+      );
+    }
   }
 
   return action;
