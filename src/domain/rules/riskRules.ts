@@ -239,9 +239,27 @@ export function deriveCircuitBreakerState(input: {
   const portfolio = PortfolioStateSchema.parse(input.portfolio);
   const policy = PortfolioRiskPolicySchema.parse(input.policy);
   const dailyLossPct = calculateDailyLossPct(portfolio);
+  const realizedLossUsd = Math.max(-portfolio.dailyRealizedPnl, 0);
+  const resolvedSolPriceUsd = portfolio.solPriceUsd ?? null;
+  const dailyLossSol =
+    resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
+      ? null
+      : realizedLossUsd / resolvedSolPriceUsd;
 
   if (dailyLossPct >= policy.dailyLossLimitPct) {
     return CircuitBreakerStateSchema.parse("ON");
+  }
+
+  if (policy.maxDailyLossSol !== undefined) {
+    if (realizedLossUsd > 0) {
+      if (dailyLossSol === null) {
+        return CircuitBreakerStateSchema.parse("ON");
+      }
+
+      if (dailyLossSol >= policy.maxDailyLossSol) {
+        return CircuitBreakerStateSchema.parse("ON");
+      }
+    }
   }
 
   if (portfolio.circuitBreakerState === "ON") {
@@ -395,10 +413,11 @@ export function updatePortfolioDailyRiskState(input: {
     dailyLossLimitPct: policy.dailyLossLimitPct,
   });
   const resolvedSolPriceUsd = portfolio.solPriceUsd ?? null;
+  const realizedLossUsd = Math.max(-nextDailyRealizedPnl, 0);
   const dailyLossSol =
     resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0
       ? null
-      : Math.max(-nextDailyRealizedPnl, 0) / resolvedSolPriceUsd;
+      : realizedLossUsd / resolvedSolPriceUsd;
 
   const circuitBreakerActive =
     dailyLossPct >= policy.dailyLossLimitPct ||
@@ -407,6 +426,7 @@ export function updatePortfolioDailyRiskState(input: {
       dailyLossSol >= policy.maxDailyLossSol);
   const missingSolValuationForConfiguredLossGuard =
     policy.maxDailyLossSol !== undefined &&
+    realizedLossUsd > 0 &&
     (resolvedSolPriceUsd === null || resolvedSolPriceUsd <= 0);
 
   const diffMinutes = (from: string | null, to: string): number | null => {

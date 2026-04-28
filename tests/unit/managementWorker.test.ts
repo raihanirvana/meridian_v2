@@ -1043,6 +1043,77 @@ describe("management worker", () => {
     expect(actions[0]?.type).toBe("REBALANCE");
   });
 
+  it("continues with fallback signals when the signal provider and failure journal both fail", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const baseJournalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const failingJournalRepository = {
+      async append(event: { eventType: string }) {
+        if (event.eventType === "MANAGEMENT_SIGNAL_PROVIDER_FAILED") {
+          throw new Error("journal unavailable");
+        }
+
+        await baseJournalRepository.append(event as never);
+      },
+      async list() {
+        return baseJournalRepository.list();
+      },
+    } as unknown as JournalRepository;
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: baseJournalRepository,
+    });
+
+    await stateRepository.upsert(buildPosition({ positionId: "pos_signal" }));
+
+    const result = await runManagementWorker({
+      wallet: "wallet_001",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      managementPolicy: buildManagementPolicy({
+        claimFeesThresholdUsd: 999,
+      }),
+      signalProvider: () => {
+        throw new Error("signals unavailable");
+      },
+      now: () => "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(result.positionResults).toHaveLength(1);
+    expect(result.positionResults[0]?.managementAction).toBe("RECONCILE_ONLY");
+    expect(result.positionResults[0]?.status).toBe("RECONCILE_ONLY");
+  });
+
   it("builds AI rebalance review from entry pool metadata and fresh pool info", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({

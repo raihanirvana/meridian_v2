@@ -1267,13 +1267,20 @@ export function createRuntimeSupervisor(
         input.stores.runtimeControlStore !== undefined &&
         result.portfolioState !== null
       ) {
-        await input.stores.runtimeControlStore.setCircuitBreakerSnapshot({
-          circuitBreakerState: result.portfolioState.circuitBreakerState,
-          circuitBreakerActivatedAt:
-            result.portfolioState.circuitBreakerActivatedAt ?? null,
-          circuitBreakerCooldownStartedAt:
-            result.portfolioState.circuitBreakerCooldownStartedAt ?? null,
-        });
+        try {
+          await input.stores.runtimeControlStore.setCircuitBreakerSnapshot({
+            circuitBreakerState: result.portfolioState.circuitBreakerState,
+            circuitBreakerActivatedAt:
+              result.portfolioState.circuitBreakerActivatedAt ?? null,
+            circuitBreakerCooldownStartedAt:
+              result.portfolioState.circuitBreakerCooldownStartedAt ?? null,
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error },
+            "failed to persist circuit breaker snapshot after management tick",
+          );
+        }
       }
       return result;
     },

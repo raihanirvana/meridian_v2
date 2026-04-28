@@ -250,4 +250,77 @@ describe("operator commands pool memory", () => {
 
     expect(clearResult.text).toBe("pool cooldown cleared");
   });
+
+  it("returns success with a journal warning when pool memory mutations are persisted but journaling fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const baseJournalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: baseJournalRepository,
+    });
+    const poolMemoryRepository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
+
+    const cooldownResult = await executeOperatorCommand({
+      command: parseOperatorCommand({
+        raw: "pool cooldown pool_warn 4",
+      }),
+      wallet: "wallet_001",
+      requestedAt: "2026-04-22T12:00:00.000Z",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      poolMemoryRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 1,
+            asOf: "2026-04-22T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-22T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: {
+        minReserveUsd: 10,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        maxCapitalUsagePct: 80,
+        maxPoolExposurePct: 45,
+        maxTokenExposurePct: 45,
+        maxConcurrentPositions: 3,
+        maxNewDeploysPerHour: 2,
+        maxRebalancesPerPosition: 2,
+      },
+    });
+
+    expect(cooldownResult.text).toContain("journal write failed");
+    const entry = await poolMemoryRepository.get("pool_warn");
+    expect(entry?.cooldownUntil).toBeTruthy();
+  });
 });

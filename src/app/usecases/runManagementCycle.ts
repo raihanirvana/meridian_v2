@@ -480,20 +480,24 @@ export async function runManagementCycle(
         now,
       });
     } catch (error) {
-      await appendJournalEvent(input.journalRepository, {
-        timestamp: now,
-        eventType: "MANAGEMENT_SIGNAL_PROVIDER_FAILED",
-        actor: requestedBy,
-        wallet: input.wallet,
-        positionId: managedPosition.positionId,
-        actionId: null,
-        before: null,
-        after: null,
-        txIds: [],
-        resultStatus: "RECONCILE_ONLY",
-        error:
-          error instanceof Error ? error.message : "signal provider failed",
-      });
+      try {
+        await appendJournalEvent(input.journalRepository, {
+          timestamp: now,
+          eventType: "MANAGEMENT_SIGNAL_PROVIDER_FAILED",
+          actor: requestedBy,
+          wallet: input.wallet,
+          positionId: managedPosition.positionId,
+          actionId: null,
+          before: null,
+          after: null,
+          txIds: [],
+          resultStatus: "RECONCILE_ONLY",
+          error:
+            error instanceof Error ? error.message : "signal provider failed",
+        });
+      } catch {
+        // best-effort observability only; the fallback signals must still run
+      }
       signals = fallbackIncompleteSignals();
     }
     if (

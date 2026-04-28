@@ -304,4 +304,82 @@ describe("operatorCommands lessons", () => {
     expect(event?.actor).toBe("operator");
     expect(event?.resultStatus).toBe("ADDED");
   });
+
+  it("returns success with a journal warning when lesson mutation succeeds but journaling fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const baseJournalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const failingJournalRepository = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+    const lessonRepository = new FileLessonRepository({
+      filePath: path.join(directory, "lessons.json"),
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: path.join(directory, "performance.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository: baseJournalRepository,
+    });
+
+    const result = await executeOperatorCommand({
+      command: parseOperatorCommand({
+        raw: "lessons add Respect failed breakout",
+      }),
+      wallet: "wallet_001",
+      requestedAt: "2026-04-22T12:00:00.000Z",
+      actionQueue,
+      stateRepository,
+      actionRepository,
+      journalRepository: failingJournalRepository,
+      lessonRepository,
+      performanceRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 1,
+            asOf: "2026-04-22T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-22T12:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: {
+        minReserveUsd: 10,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        maxCapitalUsagePct: 80,
+        maxPoolExposurePct: 45,
+        maxTokenExposurePct: 45,
+        maxConcurrentPositions: 3,
+        maxNewDeploysPerHour: 2,
+        maxRebalancesPerPosition: 2,
+      },
+    });
+
+    expect(result.text).toContain("journal write failed");
+    const lessons = await lessonRepository.list();
+    expect(lessons).toHaveLength(1);
+    expect(lessons[0]?.rule).toContain("Respect failed breakout");
+  });
 });

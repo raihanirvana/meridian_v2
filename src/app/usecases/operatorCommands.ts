@@ -42,6 +42,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown operator error";
 }
 
+async function appendOperatorJournalWithWarning(input: {
+  journalRepository: JournalRepository;
+  event: Parameters<JournalRepository["append"]>[0];
+}): Promise<string | null> {
+  try {
+    await input.journalRepository.append(input.event);
+    return null;
+  } catch (error) {
+    return errorMessage(error);
+  }
+}
+
 const OperatorCommandSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("STATUS"),
@@ -871,7 +883,9 @@ export async function executeOperatorCommand(
     case "LESSONS_PIN": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       await lessonRepository.update(input.command.id, { pinned: true });
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "LESSON_PINNED",
         actor: requestedBy,
@@ -883,17 +897,23 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "PINNED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: `lesson pinned: ${input.command.id}`,
+        text:
+          journalWarning === null
+            ? `lesson pinned: ${input.command.id}`
+            : `lesson pinned: ${input.command.id}, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
     case "LESSONS_UNPIN": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       await lessonRepository.update(input.command.id, { pinned: false });
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "LESSON_UNPINNED",
         actor: requestedBy,
@@ -905,10 +925,14 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "UNPINNED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: `lesson unpinned: ${input.command.id}`,
+        text:
+          journalWarning === null
+            ? `lesson unpinned: ${input.command.id}`
+            : `lesson unpinned: ${input.command.id}, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
@@ -924,7 +948,9 @@ export async function executeOperatorCommand(
         pinned: input.command.pinned,
         createdAt: requestedAt,
       });
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "LESSON_MANUAL_ADDED",
         actor: requestedBy,
@@ -942,17 +968,23 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "ADDED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: "lesson added",
+        text:
+          journalWarning === null
+            ? "lesson added"
+            : `lesson added, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
     case "LESSONS_REMOVE": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       const removed = await lessonRepository.remove(input.command.id);
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "LESSON_REMOVED",
         actor: requestedBy,
@@ -967,13 +999,18 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: removed > 0 ? "REMOVED" : "NOT_FOUND",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
         text:
           removed > 0
-            ? `lesson removed: ${input.command.id}`
-            : `lesson not found: ${input.command.id}`,
+            ? journalWarning === null
+              ? `lesson removed: ${input.command.id}`
+              : `lesson removed: ${input.command.id}, but journal write failed: ${journalWarning}`
+            : journalWarning === null
+              ? `lesson not found: ${input.command.id}`
+              : `lesson not found: ${input.command.id}, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
@@ -990,7 +1027,9 @@ export async function executeOperatorCommand(
           removed += await lessonRepository.remove(lesson.id);
         }
       }
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "LESSON_REMOVED_BY_KEYWORD",
         actor: requestedBy,
@@ -1005,17 +1044,23 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "REMOVED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: `lessons removed: ${removed}`,
+        text:
+          journalWarning === null
+            ? `lessons removed: ${removed}`
+            : `lessons removed: ${removed}, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
     case "LESSONS_CLEAR": {
       const lessonRepository = requireLessonsRepository(input.lessonRepository);
       const cleared = await lessonRepository.clear();
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "LESSON_CLEARED",
         actor: requestedBy,
@@ -1027,10 +1072,14 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "CLEARED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: `lessons cleared: ${cleared}`,
+        text:
+          journalWarning === null
+            ? `lessons cleared: ${cleared}`
+            : `lessons cleared: ${cleared}, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
@@ -1227,7 +1276,9 @@ export async function executeOperatorCommand(
         input.command.note,
         requestedAt,
       );
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "POOL_MEMORY_NOTE_ADDED",
         actor: requestedBy,
@@ -1242,10 +1293,14 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "ADDED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: "pool note added",
+        text:
+          journalWarning === null
+            ? "pool note added"
+            : `pool note added, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
@@ -1260,7 +1315,9 @@ export async function executeOperatorCommand(
         input.command.poolAddress,
         untilIso,
       );
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "POOL_MEMORY_COOLDOWN_SET",
         actor: requestedBy,
@@ -1276,10 +1333,14 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "SET",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: `pool cooldown set until ${untilIso}`,
+        text:
+          journalWarning === null
+            ? `pool cooldown set until ${untilIso}`
+            : `pool cooldown set until ${untilIso}, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }
@@ -1288,7 +1349,9 @@ export async function executeOperatorCommand(
         input.poolMemoryRepository,
       );
       await poolMemoryRepository.setCooldown(input.command.poolAddress, null);
-      await input.journalRepository.append({
+      const journalWarning = await appendOperatorJournalWithWarning({
+        journalRepository: input.journalRepository,
+        event: {
         timestamp: requestedAt,
         eventType: "POOL_MEMORY_COOLDOWN_CLEARED",
         actor: requestedBy,
@@ -1302,10 +1365,14 @@ export async function executeOperatorCommand(
         txIds: [],
         resultStatus: "CLEARED",
         error: null,
+        },
       });
       return {
         command: input.command.kind,
-        text: "pool cooldown cleared",
+        text:
+          journalWarning === null
+            ? "pool cooldown cleared"
+            : `pool cooldown cleared, but journal write failed: ${journalWarning}`,
         actionId: null,
       };
     }

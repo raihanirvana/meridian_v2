@@ -1908,4 +1908,41 @@ describe("claim flow", () => {
       txId: "tx_swap",
     });
   });
+
+  it("returns accepted action when CLAIM_REQUEST_ACCEPTED journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    await stateRepository.upsert(buildOpenPosition({
+      positionId: "pos_claim_request_journal_fail",
+    }));
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const action = await requestClaimFees({
+      actionQueue,
+      stateRepository,
+      journalRepository: failingJournal,
+      wallet: "wallet_001",
+      positionId: "pos_claim_request_journal_fail",
+      payload: { reason: "operator claim" },
+      requestedBy: "operator",
+    });
+
+    expect(action.type).toBe("CLAIM_FEES");
+    expect(action.status).toBe("QUEUED");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    expect(persistedAction?.status).toBe("QUEUED");
+  });
 });

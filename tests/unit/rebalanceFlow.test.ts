@@ -1940,4 +1940,66 @@ describe("rebalance flow", () => {
       }),
     ).rejects.toThrow(/allowRiskGuardBypass/);
   });
+
+  it("returns accepted action when REBALANCE_REQUEST_ACCEPTED journal fails", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_rebalance_request_fail"));
+
+    const failingJournal = {
+      async append() {
+        throw new Error("journal unavailable");
+      },
+    } as unknown as JournalRepository;
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository: failingJournal,
+      wallet: "wallet_001",
+      positionId: "pos_rebalance_request_fail",
+      payload: rebalancePayload,
+      requestedBy: "operator",
+      riskGuard: {
+        portfolio: {
+          walletBalance: 1_000,
+          reservedBalance: 100,
+          availableBalance: 900,
+          openPositions: 1,
+          pendingActions: 0,
+          dailyRealizedPnl: 0,
+          drawdownState: "NORMAL",
+          circuitBreakerState: "OFF",
+          exposureByToken: {},
+          exposureByPool: {},
+        },
+        policy: {
+          maxConcurrentPositions: 5,
+          maxCapitalUsagePct: 90,
+          minReserveUsd: 10,
+          maxTokenExposurePct: 90,
+          maxPoolExposurePct: 90,
+          maxRebalancesPerPosition: 5,
+          dailyLossLimitPct: 50,
+          circuitBreakerCooldownMin: 60,
+          maxNewDeploysPerHour: 5,
+        },
+      },
+    });
+
+    expect(action.type).toBe("REBALANCE");
+    expect(action.status).toBe("QUEUED");
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    expect(persistedAction?.status).toBe("QUEUED");
+  });
 });

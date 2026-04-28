@@ -656,6 +656,157 @@ describe("runtime supervisor", () => {
     expect(persistedSnapshot?.circuitBreakerState).toBe("COOLDOWN");
   });
 
+  it("does not fail the management tick when circuit breaker snapshot persistence fails after a successful run", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await stores.stateRepository.upsert({
+      positionId: "pos_001",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_base",
+      quoteMint: "mint_quote",
+      wallet: "wallet_001",
+      status: "OPEN",
+      openedAt: "2026-04-22T08:00:00.000Z",
+      lastSyncedAt: "2026-04-22T08:00:00.000Z",
+      closedAt: null,
+      deployAmountBase: 1,
+      deployAmountQuote: 0.5,
+      currentValueBase: 1,
+      currentValueUsd: 20,
+      feesClaimedBase: 0,
+      feesClaimedUsd: 0,
+      realizedPnlBase: 0,
+      realizedPnlUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      rebalanceCount: 0,
+      partialCloseCount: 0,
+      strategy: "bid_ask",
+      rangeLowerBin: 10,
+      rangeUpperBin: 20,
+      activeBin: 15,
+      outOfRangeSince: null,
+      lastManagementDecision: null,
+      lastManagementReason: null,
+      lastWriteActionId: null,
+      needsReconciliation: false,
+    });
+
+    const originalSetCircuitBreakerSnapshot =
+      stores.runtimeControlStore.setCircuitBreakerSnapshot.bind(
+        stores.runtimeControlStore,
+      );
+    let attemptedPersistence = false;
+    stores.runtimeControlStore.setCircuitBreakerSnapshot = async (...args) => {
+      attemptedPersistence = true;
+      await originalSetCircuitBreakerSnapshot(...args);
+      throw new Error("runtime control store unavailable");
+    };
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig: buildUserConfig(),
+      stores,
+      gateways: {
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "success",
+            value: {
+              actionType: "DEPLOY",
+              positionId: "pos_001",
+              txIds: ["tx_deploy"],
+            },
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "SOL/USDC",
+              binStep: 80,
+              activeBin: 10,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T11:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T11:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+      }),
+      now: () => "2026-04-22T11:00:00.000Z",
+    });
+
+    const management = await supervisor.runManagementTick("manual");
+
+    expect(attemptedPersistence).toBe(true);
+    expect(management.wallet).toBe("wallet_001");
+    expect(management.portfolioState).not.toBeNull();
+  });
+
   it("queues an auto deploy action from the top screening shortlist when enabled", async () => {
     const directory = await makeTempDir();
     const stores = createRuntimeStores({

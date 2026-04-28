@@ -622,6 +622,42 @@ describe("risk rules", () => {
     );
   });
 
+  it("does not force circuit breaker ON solely because SOL price is unavailable when realized pnl is positive", () => {
+    const updatedPortfolio = updatePortfolioDailyRiskState({
+      portfolio: buildPortfolio({
+        walletBalance: 100,
+        dailyRealizedPnl: 5,
+        solPriceUsd: undefined,
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 90,
+        maxDailyLossSol: 0.2,
+      }),
+      realizedPnlDelta: 10,
+      now: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(updatedPortfolio.circuitBreakerState).toBe("OFF");
+  });
+
+  it("marks the risk state snapshot circuit breaker ON when maxDailyLossSol is breached", () => {
+    const state = buildPortfolioRiskStateSnapshot({
+      portfolio: buildPortfolio({
+        walletBalance: 100,
+        dailyRealizedPnl: -25,
+        solPriceUsd: 100,
+      }),
+      policy: buildPolicy({
+        dailyLossLimitPct: 90,
+        maxDailyLossSol: 0.2,
+      }),
+      solPriceUsd: 100,
+    });
+
+    expect(state.dailyLossSol).toBe(0.25);
+    expect(state.circuitBreakerState).toBe("ON");
+  });
+
   it("keeps evaluatePortfolioRisk and daily risk updates aligned for missing SOL valuation under maxDailyLossSol", () => {
     const portfolio = buildPortfolio({
       walletBalance: 100,
