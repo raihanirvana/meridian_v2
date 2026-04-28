@@ -155,6 +155,11 @@ export class JupiterApiSwapGateway implements SwapGateway {
     }
 
     const parsedRequest = ExecuteSwapRequestSchema.parse(request);
+    if (parsedRequest.amountRaw === undefined) {
+      throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
+        "amountRaw: required for executeSwap",
+      ]);
+    }
     const executeResponse = await this.executeClient.request({
       method: "POST",
       path: "execute",
@@ -162,7 +167,7 @@ export class JupiterApiSwapGateway implements SwapGateway {
         wallet: parsedRequest.wallet,
         inputMint: parsedRequest.inputMint,
         outputMint: parsedRequest.outputMint,
-        amount: parsedRequest.amountRaw ?? parsedRequest.amount,
+        amount: parsedRequest.amountRaw,
       },
       responseSchema: JupiterExecuteResponseSchema,
     });

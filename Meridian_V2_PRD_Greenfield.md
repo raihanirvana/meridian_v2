@@ -3207,8 +3207,7 @@ Default prod awal:
 ```json
 {
   "screening": {
-    "detailEnrichmentTopN": 5,
-    "enrichmentConcurrency": 1
+    "detailEnrichmentTopN": 5
   }
 }
 ```
@@ -3269,7 +3268,6 @@ Tambahkan ke `user-config.json`:
 {
   "screening": {
     "detailEnrichmentTopN": 5,
-    "enrichmentConcurrency": 1,
     "detailRequestIntervalMs": 4000,
     "maxDetailRequestsPerCycle": 5,
     "maxDetailRequestsPerWindow": 20,
@@ -3287,7 +3285,6 @@ Untuk dry-run lokal yang lebih santai:
 {
   "screening": {
     "detailEnrichmentTopN": 3,
-    "enrichmentConcurrency": 1,
     "detailRequestIntervalMs": 5000,
     "maxDetailRequestsPerCycle": 3,
     "maxDetailRequestsPerWindow": 10,
@@ -3638,7 +3635,7 @@ Cover:
 ### DoD
 
 - `getCandidateDetails()` tidak pernah dipanggil lebih dari `maxDetailRequestsPerCycle` per screening cycle.
-- `enrichmentConcurrency` default prod awal = `1`.
+- `enrichmentConcurrency` sudah dihapus dari config aktif; detail enrichment sekarang serial-budgeted oleh rate limiter.
 - `detailEnrichmentTopN` default prod awal = `5`.
 - 429 membuka cooldown endpoint, bukan retry agresif.
 - Tidak ada auto-deploy tanpa fresh detail.

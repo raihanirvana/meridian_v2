@@ -14,6 +14,7 @@ import {
   type Position,
 } from "../../domain/entities/Position.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
+import { logger } from "../../infra/logging/logger.js";
 import type { QueueExecutionResult } from "../services/ActionQueue.js";
 
 import {
@@ -92,6 +93,18 @@ async function appendJournalEvent(
   }
 
   await journalRepository.append(event);
+}
+
+async function appendJournalEventBestEffort(
+  journalRepository: JournalRepository | undefined,
+  event: JournalEvent,
+  warningMessage: string,
+): Promise<void> {
+  try {
+    await appendJournalEvent(journalRepository, event);
+  } catch (error) {
+    logger.warn({ err: error, eventType: event.eventType }, warningMessage);
+  }
 }
 
 function assertClaimAction(action: Action): asserts action is Action & {
@@ -210,7 +223,9 @@ export async function processClaimFeesAction(
         submissionAmbiguous: true,
       });
 
-      await appendJournalEvent(input.journalRepository, {
+      await appendJournalEventBestEffort(
+        input.journalRepository,
+        {
         timestamp: now,
         eventType: "CLAIM_SUBMISSION_AMBIGUOUS",
         actor: input.action.requestedBy,
@@ -229,7 +244,9 @@ export async function processClaimFeesAction(
         txIds: claimResult.txIds,
         resultStatus: "WAITING_CONFIRMATION",
         error: errorMessage(error, "claim submission ambiguous"),
-      });
+        },
+        "claim submission ambiguous journal append failed",
+      );
 
       return {
         nextStatus: "WAITING_CONFIRMATION",
@@ -290,7 +307,9 @@ export async function processClaimFeesAction(
     });
     await input.stateRepository.upsert(claimingPosition);
 
-    await appendJournalEvent(input.journalRepository, {
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
       timestamp: now,
       eventType: "CLAIM_SUBMITTED",
       actor: input.action.requestedBy,
@@ -309,7 +328,9 @@ export async function processClaimFeesAction(
       txIds: claimResult.txIds,
       resultStatus: "WAITING_CONFIRMATION",
       error: null,
-    });
+      },
+      "claim submitted journal append failed",
+    );
 
     return {
       nextStatus: "WAITING_CONFIRMATION",
@@ -352,7 +373,9 @@ export async function processClaimFeesAction(
       // Best effort only; reconciliation can recover from action payload.
     }
 
-    await appendJournalEvent(input.journalRepository, {
+    await appendJournalEventBestEffort(
+      input.journalRepository,
+      {
       timestamp: now,
       eventType: "CLAIM_SUBMITTED_REQUIRES_RECONCILIATION",
       actor: input.action.requestedBy,
@@ -370,7 +393,9 @@ export async function processClaimFeesAction(
       txIds: claimResult.txIds,
       resultStatus: "WAITING_CONFIRMATION",
       error: errorMessage(error, "claim submission requires reconciliation"),
-    });
+      },
+      "claim reconciliation journal append failed",
+    );
 
     return {
       nextStatus: "WAITING_CONFIRMATION",

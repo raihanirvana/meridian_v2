@@ -892,6 +892,7 @@ describe("real adapters", () => {
         inputMint: "So11111111111111111111111111111111111111112",
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         amount: 100000000,
+        amountRaw: "100000000",
       }),
     ).resolves.toEqual({
       txId: "sig_001",
@@ -940,6 +941,31 @@ describe("real adapters", () => {
     await expect(priceGateway.getSolPriceUsd()).rejects.toBeInstanceOf(
       AdapterResponseValidationError,
     );
+  });
+
+  it("requires amountRaw for Jupiter executeSwap", async () => {
+    const jupiter = new JupiterApiSwapGateway({
+      executeBaseUrl: "https://api.jup.ag/ultra/v1/",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            signature: "sig_001",
+            inputAmountResult: "100000000",
+            outputAmountResult: "17057460",
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      jupiter.executeSwap({
+        wallet: "wallet_001",
+        inputMint: "So11111111111111111111111111111111111111112",
+        outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        amount: 0.25,
+      }),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
   });
 
   it("requires an explicit execution bridge for Jupiter executeSwap", async () => {

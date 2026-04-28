@@ -25,7 +25,6 @@
     "maxStrategySnapshotAgeMs": 120000,
     "aiReviewPoolSize": 30,
     "detailEnrichmentTopN": 5,
-    "enrichmentConcurrency": 1,
     "detailRequestIntervalMs": 4000,
     "maxDetailRequestsPerCycle": 5,
     "maxDetailRequestsPerWindow": 20,

@@ -748,7 +748,7 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - auto-deploy memakai urutan kandidat dari batch AI review, tapi tetap melewati `StrategyDecisionValidator`, full portfolio risk engine, live pool-info payload builder, dry-run/queue boundary, dan SDK preflight saat action diproses
   - rekomendasi AI `watch` / `reject`, high risk, low confidence, bins/slippage di luar policy, atau deploy dengan slippage tidak positif sekarang menjadi reject deterministic, bukan fallback deploy
   - deploy-mode AI juga sekarang wajib memberi `maxPositionAgeMinutes`, `stopLossPct`, dan `takeProfitPct` positif; `walletRiskMode` dipindahkan ke config AI agar prompt risk profile tidak hardcoded
-  - enrichment screening sekarang punya `screening.enrichmentConcurrency` default `10`, jadi top-30 AI review tidak lagi memicu enrichment request paralel tak terbatas ke screening/token-intel API
+  - enrichment screening sekarang dibudget serial oleh limiter detail; knob `screening.enrichmentConcurrency` sudah dihapus agar config tidak memberi kesan detail request masih paralel
 - Batch 8-11 hardening follow-up sekarang masuk:
   - `reconcilePortfolio(dryRun=true)` tidak lagi menulis snapshot sync/missing-position state; snapshot reconciliation hanya dilaporkan sebagai skipped retry record
   - trailing take-profit tetap diprioritaskan sebagai `HARD_EXIT` sebelum `RECONCILE_ONLY`, sesuai semantic hard-exit yang sudah dipilih
@@ -782,10 +782,10 @@ Status: Implemented with deferred enrichment gap (`N71`)
   - `MeteoraPoolDiscoveryScreeningGateway` memetakan HTTP 429 HTML/JSON menjadi `MeteoraRateLimitedError` typed, sehingga worker bisa membedakan rate limit dari error adapter biasa
   - `runScreeningCycle()` menulis journal `ENRICHMENT_PLAN_BUILT`, `METEORA_DETAIL_REQUEST_SKIPPED`, `METEORA_DETAIL_RATE_LIMITED`, dan `METEORA_DETAIL_COOLDOWN_STARTED`, plus `enrichmentSummary` di hasil screening
   - kandidat tanpa detail fresh tetap bisa muncul sebagai watch/report-only, tetapi `StrategyDecisionValidator` memblok auto-deploy dengan `DETAIL_NOT_FRESH_OR_MISSING`
-  - `user-config.json` dan example menambah knob detail budget/cooldown; default concurrency enrichment diturunkan ke `1` agar aman untuk provider Meteora
+  - `user-config.json` dan example menambah knob detail budget/cooldown; knob legacy `enrichmentConcurrency` dihapus dari config aktif
 - Batch 27.1 hardening follow-up juga sudah masuk:
   - detail limiter sekarang menghitung setiap attempt, bukan hanya request sukses; timeout/500 tetap menghabiskan rolling budget karena sudah hit endpoint Meteora
   - cooldown dan recent request timestamps disimpan ke `meteora-rate-limit-state.json` di data dir runtime, sehingga restart tidak langsung melupakan cooldown 429
   - detail sukses sekarang diaudit lewat journal `METEORA_DETAIL_FETCHED`, sehingga cycle bisa dibaca sebagai selected/fetched/failed/rate-limited secara eksplisit
-  - detail enrichment runtime dibuat serial-budgeted eksplisit; `enrichmentConcurrency` tidak lagi dipass sebagai control detail request agar tidak memberi kesan request detail masih paralel
+  - detail enrichment runtime dibuat serial-budgeted eksplisit; `enrichmentConcurrency` tidak lagi dipass sebagai control detail request dan tidak lagi muncul di config aktif
 - `npm test` terakhir hijau dengan total `381` tests passed; `npm run build`, `npm run lint`, dan `npm run format` juga hijau

@@ -15,6 +15,7 @@ import {
 import type { PortfolioRiskPolicy } from "../../domain/rules/riskRules.js";
 import { transitionActionStatus } from "../../domain/stateMachines/actionLifecycle.js";
 import { transitionPositionStatus } from "../../domain/stateMachines/positionLifecycle.js";
+import { logger } from "../../infra/logging/logger.js";
 import { PositionLock } from "../../infra/locks/positionLock.js";
 import { WalletLock } from "../../infra/locks/walletLock.js";
 import type { ActionQueue } from "../services/ActionQueue.js";
@@ -690,13 +691,28 @@ async function runClaimPostProcessing(input: {
             error: null,
           });
         } catch (error) {
+          const existingDeployAction = await input.actionRepository
+            .findByIdempotencyKey(
+              `${workingAction.actionId}:AUTO_COMPOUND_DEPLOY`,
+            )
+            .catch(() => null);
+          const compoundEnqueueFailed = existingDeployAction === null;
           compound = ClaimAutoCompoundStateSchema.parse({
             ...compound,
-            phase: "FAILED",
-            error: errorMessage(
-              error,
-              "claim auto-compound deploy enqueue failed",
-            ),
+            ...(compoundEnqueueFailed
+              ? {
+                  phase: "FAILED" as const,
+                  error: errorMessage(
+                    error,
+                    "claim auto-compound deploy enqueue failed",
+                  ),
+                }
+              : {
+                  phase: "DEPLOY_QUEUED" as const,
+                  deployActionId: existingDeployAction.actionId,
+                  error:
+                    "deploy action exists but requestDeploy returned an error",
+                }),
           });
           claimResult = ClaimConfirmationPayloadSchema.parse({
             ...claimResult,
@@ -707,22 +723,24 @@ async function runClaimPostProcessing(input: {
             action: workingAction,
             resultPayload: claimResult,
           });
-          await appendJournalEvent(input.journalRepository, {
-            timestamp: input.now,
-            eventType: "CLAIM_AUTO_COMPOUND_FAILED",
-            actor: workingAction.requestedBy,
-            wallet: workingAction.wallet,
-            positionId: workingAction.positionId,
-            actionId: workingAction.actionId,
-            before: null,
-            after: null,
-            txIds: [],
-            resultStatus: "FAILED",
-            error: errorMessage(
-              error,
-              "claim auto-compound deploy enqueue failed",
-            ),
-          }).catch(() => undefined);
+          if (compoundEnqueueFailed) {
+            await appendJournalEvent(input.journalRepository, {
+              timestamp: input.now,
+              eventType: "CLAIM_AUTO_COMPOUND_FAILED",
+              actor: workingAction.requestedBy,
+              wallet: workingAction.wallet,
+              positionId: workingAction.positionId,
+              actionId: workingAction.actionId,
+              before: null,
+              after: null,
+              txIds: [],
+              resultStatus: "FAILED",
+              error: errorMessage(
+                error,
+                "claim auto-compound deploy enqueue failed",
+              ),
+            }).catch(() => undefined);
+          }
         }
       }
 
@@ -754,25 +772,29 @@ async function runClaimPostProcessing(input: {
   } satisfies Action;
   await input.actionRepository.upsert(doneAction);
 
-  await appendJournalEvent(input.journalRepository, {
-    timestamp: input.now,
-    eventType: "CLAIM_FINALIZED",
-    actor: workingAction.requestedBy,
-    wallet: workingAction.wallet,
-    positionId: workingAction.positionId,
-    actionId: workingAction.actionId,
-    before: toJournalRecord({
-      action: workingAction,
-      position: input.reconcilingPosition,
-    }),
-    after: toJournalRecord({
-      action: doneAction,
-      position: openPosition,
-    }),
-    txIds: doneAction.txIds,
-    resultStatus: doneAction.status,
-    error: null,
-  });
+  try {
+    await appendJournalEvent(input.journalRepository, {
+      timestamp: input.now,
+      eventType: "CLAIM_FINALIZED",
+      actor: workingAction.requestedBy,
+      wallet: workingAction.wallet,
+      positionId: workingAction.positionId,
+      actionId: workingAction.actionId,
+      before: toJournalRecord({
+        action: workingAction,
+        position: input.reconcilingPosition,
+      }),
+      after: toJournalRecord({
+        action: doneAction,
+        position: openPosition,
+      }),
+      txIds: doneAction.txIds,
+      resultStatus: doneAction.status,
+      error: null,
+    });
+  } catch (error) {
+    logger.warn({ err: error }, "claim finalized journal append failed");
+  }
 
   return {
     action: doneAction,

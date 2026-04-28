@@ -142,6 +142,19 @@ describe("loadConfig", () => {
     expect(config.user.deploy.defaultAmountSol).toBe(0.5);
   });
 
+  it("loads the repo user-config.example.json without legacy unknown keys", () => {
+    const directory = makeTempDir();
+    const { envPath } = writeFixtureFiles(directory);
+
+    const config = loadConfig({
+      env: {},
+      envFilePath: envPath,
+      userConfigPath: path.resolve(process.cwd(), "user-config.example.json"),
+    });
+
+    expect(config.user.screening.detailEnrichmentTopN).toBeGreaterThan(0);
+  });
+
   it("rejects secret keys inside user-config.json", () => {
     const directory = makeTempDir();
     const { envPath, userConfigPath } = writeFixtureFiles(directory, {

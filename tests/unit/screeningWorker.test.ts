@@ -889,4 +889,158 @@ describe("screening worker", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps detail enrichment success when METEORA_DETAIL_FETCHED journal append fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const flakyJournal = {
+      append: async (event: { eventType?: string }) => {
+        if (event.eventType === "METEORA_DETAIL_FETCHED") {
+          throw new Error("journal unavailable");
+        }
+        await journalRepository.append(event as never);
+      },
+      list: () => journalRepository.list(),
+    } as unknown as JournalRepository;
+    const rateLimiter = new InMemoryMeteoraDetailRateLimiter({
+      detailRequestIntervalMs: 0,
+      maxDetailRequestsPerWindow: 5,
+      detailRequestWindowMs: 900_000,
+      detailCooldownAfter429Ms: 900_000,
+    });
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: new MockScreeningGateway({
+        listCandidates: {
+          type: "success",
+          value: [buildGatewayCandidate()],
+        },
+        getCandidateDetails: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "ABC-SOL",
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+          },
+        },
+      }),
+      stateRepository,
+      actionRepository,
+      journalRepository: flakyJournal,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: { wallet: "wallet_001", balanceSol: 5, asOf: now },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: { symbol: "SOL", priceUsd: 150, asOf: now },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy();
+        },
+      },
+      aiMode: "disabled",
+      detailRateLimiter: rateLimiter,
+      now: () => now,
+    });
+
+    expect(result.shortlist).toHaveLength(1);
+    expect(result.shortlist[0]?.dataFreshnessSnapshot.poolDetailFetchedAt).toBe(
+      now,
+    );
+    expect((await rateLimiter.snapshot()).requestCountInWindow).toBe(1);
+  });
+
+  it("stops by detail rate limit even when rate-limit journal append fails", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const flakyJournal = {
+      append: async (event: { eventType?: string }) => {
+        if (event.eventType === "METEORA_DETAIL_RATE_LIMITED") {
+          throw new Error("journal unavailable");
+        }
+        await journalRepository.append(event as never);
+      },
+      list: () => journalRepository.list(),
+    } as unknown as JournalRepository;
+    const rateLimiter = new InMemoryMeteoraDetailRateLimiter({
+      detailRequestIntervalMs: 0,
+      maxDetailRequestsPerWindow: 5,
+      detailRequestWindowMs: 900_000,
+      detailCooldownAfter429Ms: 900_000,
+    });
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: new MockScreeningGateway({
+        listCandidates: {
+          type: "success",
+          value: [buildGatewayCandidate()],
+        },
+        getCandidateDetails: {
+          type: "fail",
+          error: Object.assign(new Error("429"), {
+            status: 429,
+            endpoint: "candidate_detail",
+            poolAddress: "pool_001",
+            responseKind: "cloudflare_html",
+          }),
+        },
+      }),
+      stateRepository,
+      actionRepository,
+      journalRepository: flakyJournal,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: { wallet: "wallet_001", balanceSol: 5, asOf: now },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: { symbol: "SOL", priceUsd: 150, asOf: now },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy();
+        },
+      },
+      aiMode: "disabled",
+      detailRateLimiter: rateLimiter,
+      now: () => now,
+    });
+
+    expect(result.enrichmentSummary.rateLimitCooldownUntil).not.toBeNull();
+    expect((await rateLimiter.getCooldownUntil())).not.toBeNull();
+  });
 });

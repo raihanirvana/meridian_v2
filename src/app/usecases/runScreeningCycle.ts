@@ -44,6 +44,30 @@ function toJournalRecord(value: unknown): Record<string, unknown> {
     .parse(JSON.parse(JSON.stringify(value)));
 }
 
+async function appendJournalBestEffort(
+  journalRepository: JournalRepository,
+  event: {
+    timestamp: string;
+    eventType: string;
+    actor: "system" | "operator" | "ai";
+    wallet: string;
+    positionId: string | null;
+    actionId: string | null;
+    before: Record<string, unknown> | null;
+    after: Record<string, unknown> | null;
+    txIds: string[];
+    resultStatus: string;
+    error: string | null;
+  },
+  warningMessage: string,
+): Promise<void> {
+  try {
+    await journalRepository.append(event);
+  } catch (error) {
+    logger.warn({ err: error, eventType: event.eventType }, warningMessage);
+  }
+}
+
 function asNumber(value: unknown, fieldName: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`candidate field ${fieldName} must be a finite number`);
@@ -409,19 +433,23 @@ export async function runScreeningCycle(
     error: null,
   });
   for (const skipped of enrichmentPlan.skipped) {
-    await input.journalRepository.append({
-      timestamp: now,
-      eventType: "METEORA_DETAIL_REQUEST_SKIPPED",
-      actor: "system",
-      wallet: input.wallet,
-      positionId: null,
-      actionId: null,
-      before: null,
-      after: toJournalRecord(skipped),
-      txIds: [],
-      resultStatus: "SKIPPED",
-      error: null,
-    });
+    await appendJournalBestEffort(
+      input.journalRepository,
+      {
+        timestamp: now,
+        eventType: "METEORA_DETAIL_REQUEST_SKIPPED",
+        actor: "system",
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: toJournalRecord(skipped),
+        txIds: [],
+        resultStatus: "SKIPPED",
+        error: null,
+      },
+      "detail request skipped journal append failed",
+    );
   }
 
   const selectedIds = new Set(
@@ -460,25 +488,29 @@ export async function runScreeningCycle(
           : ((await input.detailRateLimiter?.getCooldownUntil()) ?? null);
       const remainingDetailsSkipped =
         enrichmentPlan.selectedForDetail.length - index;
-      await input.journalRepository.append({
-        timestamp: now,
-        eventType: "METEORA_DETAIL_REQUEST_SKIPPED",
-        actor: "system",
-        wallet: input.wallet,
-        positionId: null,
-        actionId: null,
-        before: null,
-        after: toJournalRecord({
-          candidateId: candidate.candidateId,
-          poolAddress: candidate.poolAddress,
-          reason: limiterDecision.reason,
-          retryAfterMs: limiterDecision.retryAfterMs,
-          remainingDetailsSkipped,
-        }),
-        txIds: [],
-        resultStatus: "SKIPPED",
-        error: limiterDecision.reason,
-      });
+      await appendJournalBestEffort(
+        input.journalRepository,
+        {
+          timestamp: now,
+          eventType: "METEORA_DETAIL_REQUEST_SKIPPED",
+          actor: "system",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: toJournalRecord({
+            candidateId: candidate.candidateId,
+            poolAddress: candidate.poolAddress,
+            reason: limiterDecision.reason,
+            retryAfterMs: limiterDecision.retryAfterMs,
+            remainingDetailsSkipped,
+          }),
+          txIds: [],
+          resultStatus: "SKIPPED",
+          error: limiterDecision.reason,
+        },
+        "detail request skipped journal append failed",
+      );
       break;
     }
     if (limiterDecision !== undefined && limiterDecision.waitMs > 0) {
@@ -559,31 +591,35 @@ export async function runScreeningCycle(
           ? {}
           : { holderDistributionSummary }),
       });
-      await input.journalRepository.append({
-        timestamp: now,
-        eventType: "METEORA_DETAIL_FETCHED",
-        actor: "system",
-        wallet: input.wallet,
-        positionId: null,
-        actionId: null,
-        before: null,
-        after: toJournalRecord({
-          candidateId: candidate.candidateId,
-          poolAddress: candidate.poolAddress,
-          detailFetchedAt: detailRequestNow,
-          hasMarketFeatureSnapshot:
-            details?.marketFeatureSnapshot !== undefined,
-          hasDlmmMicrostructureSnapshot:
-            details?.dlmmMicrostructureSnapshot !== undefined,
-          hasDataFreshnessSnapshot:
-            details?.dataFreshnessSnapshot !== undefined,
-          hasNarrative:
-            narrativeSummary !== null || holderDistributionSummary !== null,
-        }),
-        txIds: [],
-        resultStatus: "OK",
-        error: null,
-      });
+      await appendJournalBestEffort(
+        input.journalRepository,
+        {
+          timestamp: now,
+          eventType: "METEORA_DETAIL_FETCHED",
+          actor: "system",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: toJournalRecord({
+            candidateId: candidate.candidateId,
+            poolAddress: candidate.poolAddress,
+            detailFetchedAt: detailRequestNow,
+            hasMarketFeatureSnapshot:
+              details?.marketFeatureSnapshot !== undefined,
+            hasDlmmMicrostructureSnapshot:
+              details?.dlmmMicrostructureSnapshot !== undefined,
+            hasDataFreshnessSnapshot:
+              details?.dataFreshnessSnapshot !== undefined,
+            hasNarrative:
+              narrativeSummary !== null || holderDistributionSummary !== null,
+          }),
+          txIds: [],
+          resultStatus: "OK",
+          error: null,
+        },
+        "detail fetched journal append failed",
+      );
     } catch (error) {
       const rateLimit = isRateLimitedDetailError(error);
       if (rateLimit !== null) {
@@ -603,41 +639,49 @@ export async function runScreeningCycle(
           );
         const remainingDetailsSkipped =
           enrichmentPlan.selectedForDetail.length - index - 1;
-        await input.journalRepository.append({
-          timestamp: now,
-          eventType: "METEORA_DETAIL_RATE_LIMITED",
-          actor: "system",
-          wallet: input.wallet,
-          positionId: null,
-          actionId: null,
-          before: null,
-          after: toJournalRecord({
-            poolAddress: rateLimit.poolAddress ?? candidate.poolAddress,
-            endpoint: "candidate_detail",
-            responseKind: rateLimit.responseKind,
-            cooldownUntil: rateLimitCooldownUntil,
-            remainingDetailsSkipped,
-          }),
-          txIds: [],
-          resultStatus: "RATE_LIMITED",
-          error: error instanceof Error ? error.message : "rate limited",
-        });
-        await input.journalRepository.append({
-          timestamp: now,
-          eventType: "METEORA_DETAIL_COOLDOWN_STARTED",
-          actor: "system",
-          wallet: input.wallet,
-          positionId: null,
-          actionId: null,
-          before: null,
-          after: toJournalRecord({
-            endpoint: "candidate_detail",
-            cooldownUntil: rateLimitCooldownUntil,
-          }),
-          txIds: [],
-          resultStatus: "COOLDOWN",
-          error: null,
-        });
+        await appendJournalBestEffort(
+          input.journalRepository,
+          {
+            timestamp: now,
+            eventType: "METEORA_DETAIL_RATE_LIMITED",
+            actor: "system",
+            wallet: input.wallet,
+            positionId: null,
+            actionId: null,
+            before: null,
+            after: toJournalRecord({
+              poolAddress: rateLimit.poolAddress ?? candidate.poolAddress,
+              endpoint: "candidate_detail",
+              responseKind: rateLimit.responseKind,
+              cooldownUntil: rateLimitCooldownUntil,
+              remainingDetailsSkipped,
+            }),
+            txIds: [],
+            resultStatus: "RATE_LIMITED",
+            error: error instanceof Error ? error.message : "rate limited",
+          },
+          "detail rate-limited journal append failed",
+        );
+        await appendJournalBestEffort(
+          input.journalRepository,
+          {
+            timestamp: now,
+            eventType: "METEORA_DETAIL_COOLDOWN_STARTED",
+            actor: "system",
+            wallet: input.wallet,
+            positionId: null,
+            actionId: null,
+            before: null,
+            after: toJournalRecord({
+              endpoint: "candidate_detail",
+              cooldownUntil: rateLimitCooldownUntil,
+            }),
+            txIds: [],
+            resultStatus: "COOLDOWN",
+            error: null,
+          },
+          "detail cooldown journal append failed",
+        );
         stoppedByRateLimit = true;
         break;
       }
