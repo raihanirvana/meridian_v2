@@ -232,6 +232,51 @@ describe("reconciliation worker", () => {
     );
   });
 
+  it("does not mutate local positions when a wallet snapshot belongs to another wallet", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_wrong_wallet_snapshot"));
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_other",
+            positions: [],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedPosition = await stateRepository.get(
+      "pos_wrong_wallet_snapshot",
+    );
+    expect(persistedPosition?.status).toBe("OPEN");
+    expect(result.records).toEqual([
+      expect.objectContaining({
+        scope: "POSITION",
+        entityId: "wallet_001",
+        wallet: "wallet_001",
+        outcome: "MANUAL_REVIEW_REQUIRED",
+        detail: expect.stringMatching(/requested wallet wallet_001/i),
+      }),
+    ]);
+    await expect(journalRepository.list()).resolves.toEqual([]);
+  });
+
   it("does not write live snapshot sync or missing-position state while dry-run is enabled", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -858,6 +903,134 @@ describe("reconciliation worker", () => {
           outcome: "RECONCILED_OK",
           detail:
             "Rebalance reconciling recovery reconstructed a live OPEN redeploy leg and finalized the action",
+        }),
+      ]),
+    );
+  });
+
+  it("REBALANCE action RECONCILING + unconfirmed redeploy -> manual review instead of throwing", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+
+    await stateRepository.upsert(buildOpenPosition("pos_old_unconfirmed"));
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old_unconfirmed",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      allowRiskGuardBypass: true,
+    });
+
+    await actionRepository.upsert({
+      ...action,
+      status: "RECONCILING",
+      startedAt: action.requestedAt,
+      completedAt: null,
+      txIds: ["tx_redeploy_unconfirmed"],
+      resultPayload: {
+        phase: "REDEPLOY_SUBMITTED",
+        closeResult: {
+          actionType: "CLOSE",
+          closedPositionId: "pos_old_unconfirmed",
+          txIds: ["tx_close_unconfirmed"],
+          submissionStatus: "submitted",
+          releasedAmountBase: 0.8,
+          releasedAmountQuote: 0.4,
+          estimatedReleasedValueUsd: 80,
+          releasedAmountSource: "post_tx",
+        },
+        closeAccounting: {
+          releasedAmountBase: 0.8,
+          releasedAmountQuote: 0.4,
+          estimatedReleasedValueUsd: 80,
+          releasedAmountSource: "post_tx",
+          sourceConfidence: "post_tx",
+        },
+        closedPositionId: "pos_old_unconfirmed",
+        availableCapitalUsd: 80,
+        performanceSnapshot: buildOpenPosition("pos_old_unconfirmed"),
+        redeployResult: {
+          actionType: "DEPLOY",
+          positionId: "pos_new_unconfirmed",
+          txIds: ["tx_redeploy_unconfirmed"],
+          submissionStatus: "submitted",
+        },
+        redeployRequest: rebalancePayload.redeploy,
+      },
+    });
+
+    await stateRepository.upsert({
+      ...buildOpenPosition("pos_old_unconfirmed"),
+      status: "CLOSED",
+      closedAt: "2026-04-20T00:05:00.000Z",
+      currentValueBase: 0,
+      currentValueUsd: 0,
+      unrealizedPnlBase: 0,
+      unrealizedPnlUsd: 0,
+      needsReconciliation: false,
+      lastWriteActionId: action.actionId,
+    });
+    await stateRepository.upsert({
+      ...buildOpenPosition("pos_new_unconfirmed"),
+      poolAddress: rebalancePayload.redeploy.poolAddress,
+      status: "REDEPLOYING",
+      rangeLowerBin: rebalancePayload.redeploy.rangeLowerBin,
+      rangeUpperBin: rebalancePayload.redeploy.rangeUpperBin,
+      activeBin: rebalancePayload.redeploy.initialActiveBin,
+      currentValueUsd: rebalancePayload.redeploy.estimatedValueUsd,
+      lastWriteActionId: action.actionId,
+    });
+
+    const result = await runReconciliationWorker({
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: { type: "success", value: null },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedNewPosition = await stateRepository.get(
+      "pos_new_unconfirmed",
+    );
+
+    expect(persistedAction?.status).toBe("FAILED");
+    expect(persistedAction?.error).toMatch(/manual reconciliation required/i);
+    expect(persistedNewPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(persistedNewPosition?.needsReconciliation).toBe(true);
+    expect(result.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "ACTION",
+          entityId: action.actionId,
+          outcome: "MANUAL_REVIEW_REQUIRED",
+          detail:
+            "Rebalance reconciling recovery could not confirm redeploy; action downgraded for manual reconciliation",
         }),
       ]),
     );

@@ -877,6 +877,112 @@ describe("deploy flow", () => {
     expect(confirmation.position?.needsReconciliation).toBe(true);
   });
 
+  it("rejects mismatched deploy confirmation position identity", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const dlmmGateway = new MockDlmmGateway({
+      getPosition: {
+        type: "success",
+        value: buildConfirmedPosition("pos_wrong"),
+      },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_expected",
+          txIds: ["tx_expected"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "unused",
+          txIds: ["tx_unused"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 0,
+          txIds: ["tx_unused"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "unused",
+          remainingPercentage: 50,
+          txIds: ["tx_unused"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_001",
+          positions: [buildConfirmedPosition("pos_wrong")],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 15,
+        },
+      },
+    });
+
+    const action = await requestDeploy({
+      actionQueue,
+      journalRepository,
+      wallet: "wallet_001",
+      payload: deployPayload,
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processDeployAction({
+        action: queuedAction,
+        dlmmGateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T01:01:00.000Z",
+      }),
+    );
+
+    const confirmation = await confirmDeployAction({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway,
+      journalRepository,
+      now: () => "2026-04-20T01:05:00.000Z",
+    });
+
+    expect(confirmation.outcome).toBe("TIMED_OUT");
+    expect(confirmation.action.status).toBe("TIMED_OUT");
+    expect(confirmation.action.error).toMatch(/mismatched positionId/i);
+    expect(confirmation.position?.positionId).toBe("pos_expected");
+    expect(confirmation.position?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(await stateRepository.get("pos_wrong")).toBeNull();
+  });
+
   it("marks deploy as TIMED_OUT and position as RECONCILIATION_REQUIRED when confirmation never appears", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

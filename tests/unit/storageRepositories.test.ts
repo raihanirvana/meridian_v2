@@ -557,6 +557,36 @@ describe("storage repositories", () => {
     } satisfies Partial<JournalStoreCorruptError>);
   });
 
+  it("refuses to append when the journal has middle corruption", async () => {
+    const directory = await makeTempDir();
+    const journalPath = path.join(directory, "journal.jsonl");
+    await fs.writeFile(
+      journalPath,
+      [
+        JSON.stringify(buildJournalEvent("ACTION_QUEUED", "act_001")),
+        "{bad json}",
+        JSON.stringify(buildJournalEvent("ACTION_STARTED", "act_001")),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const journalRepository = new JournalRepository({ filePath: journalPath });
+
+    await expect(
+      journalRepository.append(
+        buildJournalEvent("ACTION_FINALIZED", "act_001"),
+      ),
+    ).rejects.toMatchObject({
+      name: "JournalStoreCorruptError",
+      filePath: journalPath,
+      lineNumber: 2,
+    } satisfies Partial<JournalStoreCorruptError>);
+
+    const raw = await fs.readFile(journalPath, "utf8");
+    expect(raw).not.toContain("ACTION_FINALIZED");
+  });
+
   it("validate rejects middle journal corruption before startup", async () => {
     const directory = await makeTempDir();
     const journalPath = path.join(directory, "journal.jsonl");

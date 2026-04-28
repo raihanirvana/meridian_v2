@@ -115,9 +115,15 @@ describe("ActionQueue", () => {
       actionQueue.processNext(handler),
     ]);
 
-    expect(firstResult?.status).toBe("WAITING_CONFIRMATION");
-    expect(secondResult?.status).toBe("WAITING_CONFIRMATION");
+    expect([firstResult?.status ?? null, secondResult?.status ?? null]).toEqual(
+      expect.arrayContaining(["WAITING_CONFIRMATION", null]),
+    );
     expect(maxConcurrentHandlers).toBe(1);
+
+    const actions = await actionRepository.list();
+    expect(actions.filter((action) => action.status === "QUEUED")).toHaveLength(
+      1,
+    );
   });
 
   it("does not duplicate actions when idempotency key is reused", async () => {
@@ -516,6 +522,93 @@ describe("ActionQueue", () => {
       "WAITING_CONFIRMATION",
     );
     expect([firstResult, secondResult]).toContain(null);
+  });
+
+  it("does not claim another queued action for a wallet with an active write", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const actionQueue = new ActionQueue({ actionRepository });
+
+    await actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_001",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_a",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_a",
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:00:00.000Z",
+    });
+    await actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_001",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_001",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_b",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_b",
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:00:01.000Z",
+    });
+    await actionQueue.enqueue({
+      type: "DEPLOY",
+      wallet: "wallet_002",
+      positionId: null,
+      idempotencyKey: createIdempotencyKey({
+        wallet: "wallet_002",
+        type: "DEPLOY",
+        positionId: null,
+        requestPayload: {
+          poolAddress: "pool_c",
+        },
+      }),
+      requestPayload: {
+        poolAddress: "pool_c",
+      },
+      requestedBy: "system",
+      requestedAt: "2026-04-20T00:00:02.000Z",
+    });
+
+    const processedWallets: string[] = [];
+    const handler = async (action: { wallet: string }) => {
+      processedWallets.push(action.wallet);
+      return {
+        nextStatus: "WAITING_CONFIRMATION" as const,
+      };
+    };
+
+    const first = await actionQueue.processNext(handler);
+    const second = await actionQueue.processNext(handler);
+    const third = await actionQueue.processNext(handler);
+    const actions = await actionRepository.list();
+    const walletOneQueued = actions.find(
+      (action) =>
+        action.wallet === "wallet_001" &&
+        action.requestPayload.poolAddress === "pool_b",
+    );
+
+    expect(first?.wallet).toBe("wallet_001");
+    expect(second?.wallet).toBe("wallet_002");
+    expect(third).toBeNull();
+    expect(processedWallets).toEqual(["wallet_001", "wallet_002"]);
+    expect(walletOneQueued?.status).toBe("QUEUED");
   });
 
   it("clears claimed action ids when processing fails before the handler runs", async () => {

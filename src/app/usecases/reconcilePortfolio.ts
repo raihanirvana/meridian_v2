@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DeployLiquidityResultSchema,
   type DlmmGateway,
+  type WalletPositionsSnapshot,
 } from "../../adapters/dlmm/DlmmGateway.js";
 import type { ActionRepository } from "../../adapters/storage/ActionRepository.js";
 import type { JournalRepository } from "../../adapters/storage/JournalRepository.js";
@@ -177,6 +178,25 @@ function shouldSyncLiveSnapshot(position: Position): boolean {
     position.status === "MANAGEMENT_REVIEW" ||
     position.status === "RECONCILIATION_REQUIRED"
   );
+}
+
+function assertWalletPositionsSnapshotMatchesRequestedWallet(input: {
+  requestedWallet: string;
+  snapshot: WalletPositionsSnapshot;
+}): void {
+  if (input.snapshot.wallet !== input.requestedWallet) {
+    throw new Error(
+      `Wallet positions snapshot wallet ${input.snapshot.wallet} does not match requested wallet ${input.requestedWallet}`,
+    );
+  }
+
+  for (const position of input.snapshot.positions) {
+    if (position.wallet !== input.requestedWallet) {
+      throw new Error(
+        `Wallet positions snapshot includes position ${position.positionId} for wallet ${position.wallet}; expected ${input.requestedWallet}`,
+      );
+    }
+  }
 }
 
 function mergeLiveSnapshotPosition(input: {
@@ -645,40 +665,69 @@ async function recoverReconcilingAction(
                 "Rebalance reconciling recovery reconstructed a live OPEN redeploy leg and finalized the action",
             });
           }
+
+          const sourceNewPosition = localNewPosition ?? confirmedNewPosition;
+          const reconciliationNewPosition =
+            sourceNewPosition !== null &&
+            sourceNewPosition.status !== "CLOSED" &&
+            sourceNewPosition.status !== "ABORTED"
+              ? buildReconciliationRequiredPosition(
+                  sourceNewPosition,
+                  latestAction.actionId,
+                  input.now,
+                )
+              : null;
+          if (reconciliationNewPosition !== null) {
+            await input.stateRepository.upsert(reconciliationNewPosition);
+          }
+
+          const failedAction = {
+            ...latestAction,
+            status: transitionActionStatus(latestAction.status, "FAILED"),
+            error:
+              "Startup recovery could not confirm rebalance redeploy; manual reconciliation required",
+            completedAt: input.now,
+          } satisfies Action;
+          await input.actionRepository.upsert(failedAction);
+
+          await safeAppendJournalEvent(
+            input.journalRepository,
+            {
+              timestamp: input.now,
+              eventType: "REBALANCE_REDEPLOY_STARTUP_RECOVERY_REQUIRED",
+              actor: latestAction.requestedBy,
+              wallet: latestAction.wallet,
+              positionId: newPositionId,
+              actionId: latestAction.actionId,
+              before: toJournalRecord({
+                action: latestAction,
+                newPosition: localNewPosition,
+                confirmedPosition: confirmedNewPosition,
+              }),
+              after: toJournalRecord({
+                action: failedAction,
+                newPosition: reconciliationNewPosition,
+              }),
+              txIds: failedAction.txIds,
+              resultStatus: failedAction.status,
+              error: failedAction.error,
+            },
+            "startup rebalance redeploy recovery required",
+            { actionId: failedAction.actionId },
+          );
+
+          return createRecord({
+            scope: "ACTION",
+            entityId: failedAction.actionId,
+            wallet: failedAction.wallet,
+            positionId: newPositionId,
+            actionId: failedAction.actionId,
+            outcome: "MANUAL_REVIEW_REQUIRED",
+            detail:
+              "Rebalance reconciling recovery could not confirm redeploy; action downgraded for manual reconciliation",
+          });
         }
       }
-
-      const result = await finalizeRebalance({
-        actionId: latestAction.actionId,
-        actionRepository: input.actionRepository,
-        stateRepository: input.stateRepository,
-        dlmmGateway: input.dlmmGateway,
-        walletLock: input.walletLock,
-        positionLock: input.positionLock,
-        now: () => input.now,
-        ...(input.runtimeControlStore === undefined
-          ? {}
-          : { runtimeControlStore: input.runtimeControlStore }),
-        ...(input.journalRepository === undefined
-          ? {}
-          : { journalRepository: input.journalRepository }),
-        ...(input.lessonHook === undefined
-          ? {}
-          : { lessonHook: input.lessonHook }),
-      });
-
-      return createRecord({
-        scope: "ACTION",
-        entityId: result.action.actionId,
-        wallet: result.action.wallet,
-        positionId:
-          result.newPosition?.positionId ??
-          result.oldPosition?.positionId ??
-          result.action.positionId,
-        actionId: result.action.actionId,
-        outcome: mapRebalanceReconciliationOutcome(result),
-        detail: `Rebalance reconciling recovery finished with ${result.outcome}`,
-      });
     }
 
     const position =
@@ -1158,6 +1207,10 @@ export async function reconcilePortfolio(
   for (const wallet of wallets) {
     try {
       const snapshot = await input.dlmmGateway.listPositionsForWallet(wallet);
+      assertWalletPositionsSnapshotMatchesRequestedWallet({
+        requestedWallet: wallet,
+        snapshot,
+      });
       const snapshotById = new Map(
         snapshot.positions.map((position) => [position.positionId, position]),
       );

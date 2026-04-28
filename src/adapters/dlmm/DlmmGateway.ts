@@ -167,10 +167,22 @@ export const DlmmSimulationResultSchema = z
   })
   .strict();
 
-export const WalletPositionsSnapshotSchema = z.object({
-  wallet: z.string().min(1),
-  positions: z.array(PositionSchema),
-});
+export const WalletPositionsSnapshotSchema = z
+  .object({
+    wallet: z.string().min(1),
+    positions: z.array(PositionSchema),
+  })
+  .superRefine((snapshot, ctx) => {
+    snapshot.positions.forEach((position, index) => {
+      if (position.wallet !== snapshot.wallet) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["positions", index, "wallet"],
+          message: `Position wallet ${position.wallet} does not match snapshot wallet ${snapshot.wallet}`,
+        });
+      }
+    });
+  });
 
 export const PoolInfoSchema = z.object({
   poolAddress: z.string().min(1),
@@ -308,11 +320,20 @@ export class MockDlmmGateway implements DlmmGateway {
   }
 
   public async listPositionsForWallet(
-    _wallet: string,
+    wallet: string,
   ): Promise<WalletPositionsSnapshot> {
-    return WalletPositionsSnapshotSchema.parse(
+    const parsedWallet = z.string().min(1).parse(wallet);
+    const snapshot = WalletPositionsSnapshotSchema.parse(
       await resolveMockBehavior(this.behaviors.listPositionsForWallet),
     );
+
+    if (snapshot.wallet !== parsedWallet) {
+      throw new Error(
+        `Wallet positions snapshot wallet ${snapshot.wallet} does not match requested wallet ${parsedWallet}`,
+      );
+    }
+
+    return snapshot;
   }
 
   public async getPoolInfo(_poolAddress: string): Promise<PoolInfo> {

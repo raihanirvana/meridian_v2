@@ -469,7 +469,7 @@ describe("AI advisory service", () => {
   });
 
   it("still falls back for management advisory when lesson loading and journal append both fail", async () => {
-    const directory = await makeTempDir();
+    await makeTempDir();
 
     const result = await adviseManagementDecision({
       aiMode: "advisory",

@@ -306,7 +306,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
-        allowRiskGuardBypass: true,
+      allowRiskGuardBypass: true,
     });
 
     const queuedResult = await actionQueue.processNext((queuedAction) =>
@@ -384,7 +384,7 @@ describe("rebalance flow", () => {
       payload: rebalancePayload,
       requestedBy: "system",
       requestedAt: "2026-04-20T00:01:00.000Z",
-        allowRiskGuardBypass: true,
+      allowRiskGuardBypass: true,
     });
 
     const queuedResult = await actionQueue.processNext((queuedAction) =>
@@ -629,7 +629,7 @@ describe("rebalance flow", () => {
       positionId: "pos_actual_amounts",
       payload: rebalancePayload,
       requestedBy: "system",
-        allowRiskGuardBypass: true,
+      allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -850,7 +850,7 @@ describe("rebalance flow", () => {
       positionId: "pos_zero_usd_estimate",
       payload: rebalancePayload,
       requestedBy: "system",
-        allowRiskGuardBypass: true,
+      allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1985,7 +1985,7 @@ describe("rebalance flow", () => {
 
     await stateRepository.upsert(buildOpenPosition("pos_old"));
 
-    const action = await requestRebalance({
+    await requestRebalance({
       actionQueue,
       stateRepository,
       wallet: "wallet_001",
@@ -2031,7 +2031,7 @@ describe("rebalance flow", () => {
 
     await stateRepository.upsert(buildOpenPosition("pos_old"));
 
-    const action = await requestRebalance({
+    await requestRebalance({
       actionQueue,
       stateRepository,
       wallet: "wallet_001",

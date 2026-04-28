@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { MockTokenIntelGateway } from "../../src/adapters/analytics/TokenIntelGateway.js";
-import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
+import {
+  MockDlmmGateway,
+  WalletPositionsSnapshotSchema,
+} from "../../src/adapters/dlmm/DlmmGateway.js";
 import { MockSwapGateway } from "../../src/adapters/jupiter/SwapGateway.js";
 import { MockLlmGateway } from "../../src/adapters/llm/LlmGateway.js";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
@@ -270,6 +273,89 @@ describe("mock gateways", () => {
     await expect(wallet.getWalletBalance("wallet_001")).resolves.toMatchObject({
       balanceSol: 2.5,
     });
+  });
+
+  it("rejects mock snapshots that belong to a different requested wallet", async () => {
+    const wallet = new MockWalletGateway({
+      getWalletBalance: {
+        type: "success",
+        value: {
+          wallet: "wallet_other",
+          balanceSol: 2.5,
+          asOf: "2026-04-21T00:00:00.000Z",
+        },
+      },
+    });
+    const dlmm = new MockDlmmGateway({
+      getPosition: { type: "success", value: null },
+      deployLiquidity: {
+        type: "success",
+        value: {
+          actionType: "DEPLOY",
+          positionId: "pos_001",
+          txIds: ["tx_001"],
+        },
+      },
+      closePosition: {
+        type: "success",
+        value: {
+          actionType: "CLOSE",
+          closedPositionId: "pos_001",
+          txIds: ["tx_002"],
+        },
+      },
+      claimFees: {
+        type: "success",
+        value: {
+          actionType: "CLAIM_FEES",
+          claimedBaseAmount: 1.25,
+          txIds: ["tx_003"],
+        },
+      },
+      partialClosePosition: {
+        type: "success",
+        value: {
+          actionType: "PARTIAL_CLOSE",
+          closedPositionId: "pos_001",
+          remainingPercentage: 50,
+          txIds: ["tx_004"],
+        },
+      },
+      listPositionsForWallet: {
+        type: "success",
+        value: {
+          wallet: "wallet_other",
+          positions: [],
+        },
+      },
+      getPoolInfo: {
+        type: "success",
+        value: {
+          poolAddress: "pool_001",
+          pairLabel: "SOL-USDC",
+          binStep: 100,
+          activeBin: 123,
+        },
+      },
+    });
+
+    await expect(wallet.getWalletBalance("wallet_001")).rejects.toThrow(
+      /requested wallet wallet_001/i,
+    );
+    await expect(dlmm.listPositionsForWallet("wallet_001")).rejects.toThrow(
+      /requested wallet wallet_001/i,
+    );
+    expect(() =>
+      WalletPositionsSnapshotSchema.parse({
+        wallet: "wallet_001",
+        positions: [
+          {
+            ...validPositionSnapshot,
+            wallet: "wallet_other",
+          },
+        ],
+      }),
+    ).toThrow(/does not match snapshot wallet/i);
   });
 
   it("can simulate failures", async () => {

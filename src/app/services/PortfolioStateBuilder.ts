@@ -61,7 +61,24 @@ function isSameUtcDay(left: string, right: string): boolean {
 
 function parsePositionSnapshot(value: unknown): Position | null {
   const parsed = PositionSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const nestedPosition = PositionSchema.safeParse(record["position"]);
+  if (nestedPosition.success) {
+    return nestedPosition.data;
+  }
+
+  const performanceSnapshot = PositionSchema.safeParse(
+    record["performanceSnapshot"],
+  );
+  return performanceSnapshot.success ? performanceSnapshot.data : null;
 }
 
 function deriveDailyRealizedPnlFromJournal(input: {
@@ -126,6 +143,17 @@ function assertFreshExternalSnapshot(input: {
       input.source,
       input.asOf,
       input.now,
+    );
+  }
+}
+
+function assertWalletBalanceSnapshotMatchesRequestedWallet(input: {
+  requestedWallet: string;
+  snapshotWallet: string;
+}): void {
+  if (input.snapshotWallet !== input.requestedWallet) {
+    throw new Error(
+      `Wallet balance snapshot wallet ${input.snapshotWallet} does not match requested wallet ${input.requestedWallet}`,
     );
   }
 }
@@ -225,6 +253,10 @@ export async function buildPortfolioState(
     input.priceGateway.getSolPriceUsd(),
   ]);
 
+  assertWalletBalanceSnapshotMatchesRequestedWallet({
+    requestedWallet: input.wallet,
+    snapshotWallet: walletBalanceSnapshot.wallet,
+  });
   assertFreshExternalSnapshot({
     source: "wallet",
     asOf: walletBalanceSnapshot.asOf,

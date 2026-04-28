@@ -246,6 +246,44 @@ function buildReconciliationRequiredPositionFromDeployData(input: {
   );
 }
 
+function validateConfirmedDeployPosition(input: {
+  confirmedPosition: Position | null;
+  deployResult: z.infer<typeof DeployActionResultPayloadSchema>;
+  action: Action;
+}): string | null {
+  if (input.confirmedPosition === null) {
+    return `Deploy confirmation not found for position ${input.deployResult.positionId}`;
+  }
+
+  if (input.confirmedPosition.positionId !== input.deployResult.positionId) {
+    return `Deploy confirmation returned mismatched positionId ${input.confirmedPosition.positionId}; expected ${input.deployResult.positionId}`;
+  }
+
+  if (input.confirmedPosition.wallet !== input.action.wallet) {
+    return `Deploy confirmation returned wallet ${input.confirmedPosition.wallet}; expected ${input.action.wallet}`;
+  }
+
+  if (input.confirmedPosition.status !== "OPEN") {
+    return `Deploy confirmation returned non-open status ${input.confirmedPosition.status} for ${input.deployResult.positionId}`;
+  }
+
+  return null;
+}
+
+function isUsableReconciliationSource(input: {
+  confirmedPosition: Position | null;
+  deployResult: z.infer<typeof DeployActionResultPayloadSchema>;
+  action: Action;
+}): boolean {
+  return (
+    input.confirmedPosition !== null &&
+    input.confirmedPosition.positionId === input.deployResult.positionId &&
+    input.confirmedPosition.wallet === input.action.wallet &&
+    input.confirmedPosition.status !== "CLOSED" &&
+    input.confirmedPosition.status !== "ABORTED"
+  );
+}
+
 export async function processDeployAction(
   input: ProcessDeployActionInput,
 ): Promise<QueueExecutionResult> {
@@ -559,6 +597,16 @@ export async function confirmDeployAction(
       const confirmedPosition = await input.dlmmGateway.getPosition(
         deployResult.positionId,
       );
+      const confirmationError = validateConfirmedDeployPosition({
+        confirmedPosition,
+        deployResult,
+        action: latestAction,
+      });
+      const pendingPositionCanOpen =
+        pendingPosition === null ||
+        pendingPosition.status === "DEPLOYING" ||
+        pendingPosition.status === "RECONCILIATION_REQUIRED" ||
+        pendingPosition.status === "OPEN";
       const recoverablePendingPosition =
         pendingPosition === null
           ? buildPendingDeployPosition({
@@ -570,12 +618,9 @@ export async function confirmDeployAction(
           : pendingPosition;
 
       if (
-        confirmedPosition !== null &&
-        confirmedPosition.status === "OPEN" &&
-        (pendingPosition === null ||
-          pendingPosition.status === "DEPLOYING" ||
-          pendingPosition.status === "RECONCILIATION_REQUIRED" ||
-          pendingPosition.status === "OPEN")
+        confirmationError === null &&
+        pendingPositionCanOpen &&
+        confirmedPosition !== null
       ) {
         const openPosition = buildOpenPosition({
           confirmedPosition,
@@ -637,38 +682,32 @@ export async function confirmDeployAction(
         };
       }
 
-      if (
-        confirmedPosition === null ||
-        confirmedPosition.status !== "OPEN" ||
-        (pendingPosition !== null &&
-          pendingPosition.status !== "DEPLOYING" &&
-          pendingPosition.status !== "RECONCILIATION_REQUIRED" &&
-          pendingPosition.status !== "OPEN")
-      ) {
+      if (confirmationError !== null || !pendingPositionCanOpen) {
+        const pendingPositionError =
+          pendingPosition !== null && !pendingPositionCanOpen
+            ? `Deploy confirmation requires reconciliation because local position status is ${pendingPosition.status} for ${deployResult.positionId}`
+            : `Deploy confirmation requires reconciliation for ${deployResult.positionId}`;
         const nextPosition = buildReconciliationRequiredPositionFromDeployData({
           action: latestAction,
           payload,
           positionId: deployResult.positionId,
           now,
-          sourcePosition: pendingPosition ?? confirmedPosition,
+          sourcePosition:
+            pendingPosition ??
+            (isUsableReconciliationSource({
+              confirmedPosition,
+              deployResult,
+              action: latestAction,
+            })
+              ? confirmedPosition
+              : null),
         });
         await input.stateRepository.upsert(nextPosition);
 
         const timedOutAction = {
           ...latestAction,
           status: transitionActionStatus(latestAction.status, "TIMED_OUT"),
-          error:
-            confirmedPosition === null
-              ? `Deploy confirmation not found for position ${deployResult.positionId}`
-              : confirmedPosition.status !== "OPEN"
-                ? `Deploy confirmation returned non-open status ${confirmedPosition.status} for ${deployResult.positionId}`
-                : pendingPosition === null
-                  ? `Deploy confirmation requires reconciliation because local pending position is missing for ${deployResult.positionId}`
-                  : pendingPosition.status !== "DEPLOYING" &&
-                      pendingPosition.status !== "RECONCILIATION_REQUIRED" &&
-                      pendingPosition.status !== "OPEN"
-                ? `Deploy confirmation requires reconciliation because local position status is ${pendingPosition.status} for ${deployResult.positionId}`
-                : `Deploy confirmation requires reconciliation for ${deployResult.positionId}`,
+          error: confirmationError ?? pendingPositionError,
           completedAt: now,
         } satisfies Action;
 
@@ -708,64 +747,9 @@ export async function confirmDeployAction(
         };
       }
 
-      const openPosition = buildOpenPosition({
-        confirmedPosition,
-        pendingPosition: recoverablePendingPosition,
-        actionId: latestAction.actionId,
-        now,
-      });
-      await input.stateRepository.upsert(openPosition);
-
-      const reconcilingAction = {
-        ...latestAction,
-        status: transitionActionStatus(latestAction.status, "RECONCILING"),
-      } satisfies Action;
-      await input.actionRepository.upsert(reconcilingAction);
-
-      const doneAction = {
-        ...reconcilingAction,
-        status: transitionActionStatus(reconcilingAction.status, "DONE"),
-        resultPayload: toJournalRecord({
-          ...deployResult,
-          confirmedPositionId: openPosition.positionId,
-        }),
-        completedAt: now,
-        error: null,
-      } satisfies Action;
-      await input.actionRepository.upsert(doneAction);
-
-      try {
-        await appendJournalEvent(input.journalRepository, {
-          timestamp: now,
-          eventType: "DEPLOY_CONFIRMED",
-          actor: latestAction.requestedBy,
-          wallet: latestAction.wallet,
-          positionId: openPosition.positionId,
-          actionId: latestAction.actionId,
-          before: toJournalRecord({
-            action: latestAction,
-            position: pendingPosition,
-          }),
-          after: toJournalRecord({
-            action: doneAction,
-            position: openPosition,
-          }),
-          txIds: doneAction.txIds,
-          resultStatus: doneAction.status,
-          error: null,
-        });
-      } catch (journalError) {
-        logger.warn(
-          { err: journalError, actionId: latestAction.actionId },
-          "deploy confirmed journal append failed",
-        );
-      }
-
-      return {
-        action: doneAction,
-        position: openPosition,
-        outcome: "CONFIRMED",
-      };
+      throw new Error(
+        `Deploy confirmation reached an unexpected state for ${deployResult.positionId}`,
+      );
     }),
   );
 }

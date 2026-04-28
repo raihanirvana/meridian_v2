@@ -267,6 +267,51 @@ describe("portfolio state builder", () => {
     expect(portfolio.exposureByPool.pool_001).toBeCloseTo(23.0769, 3);
   });
 
+  it("rejects wallet balance snapshots for a different wallet", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    await expect(
+      buildPortfolioState({
+        wallet: "wallet_001",
+        minReserveUsd: 10,
+        dailyLossLimitPct: 8,
+        circuitBreakerCooldownMin: 180,
+        stateRepository,
+        actionRepository,
+        journalRepository,
+        walletGateway: {
+          async getWalletBalance() {
+            return {
+              wallet: "wallet_other",
+              balanceSol: 5,
+              asOf: "2026-04-21T12:00:00.000Z",
+            };
+          },
+        },
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 20,
+              asOf: "2026-04-21T12:00:00.000Z",
+            },
+          },
+        }),
+        now: "2026-04-21T12:00:00.000Z",
+      }),
+    ).rejects.toThrow(/requested wallet wallet_001/i);
+  });
+
   it("enters cooldown when loss recovers below the limit after a previous breaker ON snapshot", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
@@ -472,6 +517,93 @@ describe("portfolio state builder", () => {
     });
 
     expect(portfolio.dailyRealizedPnl).toBe(8);
+  });
+
+  it("derives daily realized pnl from wrapped close/rebalance journal position payloads", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    const closingPosition = buildPosition({
+      positionId: "pos_wrapped_close",
+      status: "CLOSING",
+      realizedPnlUsd: 0,
+    });
+    const closedPosition = buildPosition({
+      positionId: "pos_wrapped_close",
+      status: "CLOSED",
+      openedAt: "2026-04-20T00:00:00.000Z",
+      closedAt: "2026-04-21T12:00:00.000Z",
+      currentValueUsd: 0,
+      realizedPnlUsd: -7,
+    });
+
+    await journalRepository.append(
+      buildJournalEvent({
+        eventType: "CLOSE_FINALIZED",
+        positionId: "pos_wrapped_close",
+        before: {
+          action: buildAction({
+            actionId: "act_wrapped_close",
+            type: "CLOSE",
+            positionId: "pos_wrapped_close",
+            idempotencyKey: "wallet_001:CLOSE:pos_wrapped_close:abc",
+          }),
+          position: closingPosition,
+        },
+        after: {
+          action: buildAction({
+            actionId: "act_wrapped_close",
+            type: "CLOSE",
+            status: "DONE",
+            positionId: "pos_wrapped_close",
+            idempotencyKey: "wallet_001:CLOSE:pos_wrapped_close:abc",
+          }),
+          position: closedPosition,
+        },
+      }),
+    );
+
+    const portfolio = await buildPortfolioState({
+      wallet: "wallet_001",
+      minReserveUsd: 10,
+      dailyLossLimitPct: 8,
+      circuitBreakerCooldownMin: 180,
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 20,
+            asOf: "2026-04-21T12:00:00.000Z",
+          },
+        },
+      }),
+      now: "2026-04-21T12:00:00.000Z",
+    });
+
+    expect(portfolio.dailyRealizedPnl).toBe(-7);
+    expect(portfolio.drawdownState).toBe("WARNING");
   });
 
   it("rejects stale wallet snapshots instead of building a portfolio from outdated balances", async () => {

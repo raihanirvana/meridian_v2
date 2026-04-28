@@ -29,6 +29,11 @@ export class ActionStoreCorruptError extends Error {
 }
 
 const TERMINAL_STATUSES = new Set(["DONE", "FAILED", "ABORTED", "TIMED_OUT"]);
+const ACTIVE_WRITE_STATUSES = new Set<Action["status"]>([
+  "RUNNING",
+  "WAITING_CONFIRMATION",
+  "RECONCILING",
+]);
 const STARTED_STATUSES = new Set([
   "RUNNING",
   "WAITING_CONFIRMATION",
@@ -240,8 +245,17 @@ export class ActionRepository {
 
         return left.actionId.localeCompare(right.actionId);
       });
+      const activeWallets = new Set(
+        actions
+          .filter((action) => ACTIVE_WRITE_STATUSES.has(action.status))
+          .map((action) => action.wallet),
+      );
       const nextAction =
-        sortedActions.find((action) => allowedStatuses.has(action.status)) ??
+        sortedActions.find(
+          (action) =>
+            allowedStatuses.has(action.status) &&
+            !activeWallets.has(action.wallet),
+        ) ??
         null;
 
       if (nextAction === null) {
