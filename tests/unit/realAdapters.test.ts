@@ -795,6 +795,7 @@ describe("real adapters", () => {
                 volume: 80_000,
                 fee: 250,
                 fee_active_tvl_ratio: 1,
+                fee_tvl_ratio: 1,
                 base_token_holders: 1_200,
                 dlmm_params: { bin_step: 100 },
                 token_x: {
@@ -825,6 +826,47 @@ describe("real adapters", () => {
     expect(candidates[0]?.marketFeatureSnapshot.fees5mUsd).toBe(250);
     expect(candidates[0]?.marketFeatureSnapshot.volume24hUsd).toBe(0);
     expect(candidates[0]?.marketFeatureSnapshot.fees24hUsd).toBe(0);
+  });
+
+  it("uses unwindowed fee-tvl ratio as 24h fee-per-TVL for Meteora details", async () => {
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      now: () => "2026-04-24T00:00:00.000Z",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify([
+            {
+              pool_address: "pool_001",
+              name: "MEME-SOL",
+              active_tvl: 25_000,
+              volume: 80_000,
+              fee_active_tvl_ratio: 1.2,
+              fee_tvl_ratio: 1.4,
+              base_token_holders: 1_500,
+              dlmm_params: { bin_step: 100 },
+              token_x: {
+                address: "mint_meme",
+                symbol: "MEME",
+                organic_score: 74,
+                market_cap: 600_000,
+              },
+              token_y: {
+                address: "So11111111111111111111111111111111111111112",
+                symbol: "SOL",
+              },
+            },
+          ]),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      screening.getCandidateDetails("pool_001"),
+    ).resolves.toMatchObject({
+      poolAddress: "pool_001",
+      feeToTvlRatio: 1.2,
+      feePerTvl24h: 1.4,
+    });
   });
 
   it("maps Meteora Pool Discovery details for enrichment", async () => {

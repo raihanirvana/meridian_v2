@@ -698,6 +698,93 @@ describe("screening worker", () => {
     expect(result.enrichmentSummary.skippedDetail).toBe(1);
   });
 
+  it("keeps snapshot-only candidates in the shortlist but marks them deploy-blocked", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: new MockScreeningGateway({
+        listCandidates: {
+          type: "success",
+          value: [buildGatewayCandidate()],
+        },
+        getCandidateDetails: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "ABC-SOL",
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+            dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+              now,
+              screeningSnapshotAt: now,
+              poolDetailFetchedAt: now,
+              tokenIntelFetchedAt: null,
+              chainSnapshotFetchedAt: now,
+              hasActiveBin: true,
+            }),
+          },
+        },
+      }),
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: now,
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: now,
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy({
+            shortlistLimit: 1,
+            requireFreshSnapshot: true,
+            requireDetailForDeploy: true,
+            allowSnapshotOnlyWatch: true,
+          });
+        },
+      },
+      aiMode: "disabled",
+      detailEnrichmentTopN: 1,
+      maxDetailRequestsPerCycle: 1,
+      now: () => now,
+    });
+
+    expect(result.shortlist).toHaveLength(1);
+    expect(
+      result.shortlist[0]?.dataFreshnessSnapshot.isFreshEnoughForDeploy,
+    ).toBe(false);
+    expect(result.enrichmentSummary.deployBlockedMissingDetailCount).toBe(1);
+  });
+
   it("continues screening when one candidate detail request fails", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({

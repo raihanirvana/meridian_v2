@@ -54,7 +54,7 @@
     ]
   },
   "schedule": {
-    "screeningIntervalSec": 1800,
+    "screeningIntervalSec": 300,
     "managementIntervalSec": 300,
     "reconciliationIntervalSec": 180,
     "reportingIntervalSec": 1800
@@ -100,7 +100,7 @@
   "deploy": {
     "defaultAmountSol": 0.15,
     "minAmountSol": 0.1,
-    "autoDeployFromShortlist": true,
+    "autoDeployFromShortlist": false,
     "maxAutoDeploysPerCycle": 2,
     "strategy": "bid_ask",
     "binsBelow": 60,

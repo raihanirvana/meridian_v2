@@ -313,6 +313,38 @@ describe("screening rules", () => {
     );
   });
 
+  it("allows snapshot-only watch candidates when deploy still requires fresh detail", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+          binStep: 100,
+          activeBin: null,
+          activeBinObservedAt: null,
+          now,
+        }),
+        dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+          now,
+          screeningSnapshotAt: now,
+          poolDetailFetchedAt: now,
+          tokenIntelFetchedAt: null,
+          chainSnapshotFetchedAt: now,
+          hasActiveBin: false,
+        }),
+      }),
+      portfolio: buildPortfolio(),
+      policy: {
+        ...screeningPolicy,
+        requireFreshSnapshot: true,
+        requireDetailForDeploy: true,
+        allowSnapshotOnlyWatch: true,
+      },
+    });
+
+    expect(result.hardFilterPassed).toBe(true);
+    expect(result.rejectionReasons).not.toContain("strategy snapshot is stale");
+    expect(result.rejectionReasons).not.toContain("active bin unavailable");
+  });
+
   it("rejects candidates when estimated DLMM slippage is above the deploy limit", () => {
     const result = evaluateScreeningHardFilters({
       candidate: buildCandidate({

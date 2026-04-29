@@ -783,6 +783,9 @@ export async function runScreeningCycle(
   const finalShortlist = aiShortlist.shortlist.map(
     (candidate) => finalCandidateById.get(candidate.candidateId) ?? candidate,
   );
+  const finalShortlistIds = new Set(
+    finalShortlist.map((candidate) => candidate.candidateId),
+  );
   const snapshotOnlyWatchCount = enrichedResults.filter(
     (item) =>
       item.selectedForDetail &&
@@ -791,9 +794,8 @@ export async function runScreeningCycle(
   ).length;
   const deployBlockedMissingDetailCount = finalCandidates.filter(
     (candidate) =>
-      candidate.dataFreshnessSnapshot.poolDetailFetchedAt === null &&
-      candidate.decision === "REJECTED_HARD_FILTER" &&
-      candidate.decisionReason === "strategy snapshot is stale",
+      finalShortlistIds.has(candidate.candidateId) &&
+      !candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy,
   ).length;
   const enrichmentSummary = {
     candidateCount: finalCandidates.length,

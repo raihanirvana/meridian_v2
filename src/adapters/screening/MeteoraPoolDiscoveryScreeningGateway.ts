@@ -230,6 +230,7 @@ function windowedValueForTimeframe(
 
 function extractFeePerTvl(input: {
   pool: Record<string, unknown>;
+  allowUnwindowedRatio?: boolean;
 }): number | undefined {
   const explicitFeePerTvl24h = firstNumber(
     input.pool.fee_per_tvl_24h,
@@ -237,9 +238,12 @@ function extractFeePerTvl(input: {
     input.pool.fee_tvl_24h,
     input.pool.feeTvl24h,
   );
-  return explicitFeePerTvl24h === undefined
-    ? undefined
-    : normalizeRatio(explicitFeePerTvl24h);
+  const feePerTvl =
+    explicitFeePerTvl24h ??
+    (input.allowUnwindowedRatio === true
+      ? firstNumber(input.pool.fee_tvl_ratio, input.pool.feeTvlRatio)
+      : undefined);
+  return feePerTvl === undefined ? undefined : normalizeRatio(feePerTvl);
 }
 
 function extractPools(
@@ -464,7 +468,10 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       0,
       100,
     );
-    const feePerTvl24h = extractFeePerTvl({ pool });
+    const feePerTvl24h = extractFeePerTvl({
+      pool,
+      allowUnwindowedRatio: detailFetched || timeframe === "24h",
+    });
     const timeframeVolume = windowedValueForTimeframe(volumeUsd, timeframe);
     const timeframeFee = windowedValueForTimeframe(feeUsd, timeframe);
     const volume5mUsd = firstNumber(pool.volume_5m, pool.volume5mUsd);

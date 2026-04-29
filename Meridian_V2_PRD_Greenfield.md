@@ -3668,6 +3668,231 @@ Refactor screening so getCandidateDetails is only called for the deterministic t
 Do not use stale market cache for deploy-critical data. Candidate without fresh detail may be WATCH/report-only but must not be auto-deploy eligible. Add journal events for enrichment plan, skipped detail requests, rate limit cooldown, and deploy blocked due to missing/stale detail. Add unit and integration tests proving only top N details are requested, 429 stops the cycle, cooldown prevents further requests, and deploy requires fresh detail.
 ```
 
+## Batch 28 — Deploy-readiness refresh dan optional token intel gate
+
+### Masalah yang ditemukan setelah Batch 27
+
+Batch 27 berhasil memisahkan screening universe dari detail enrichment dan mencegah retry spam ke Meteora. Namun saat memakai Meteora Pool Discovery langsung:
+
+- deterministic shortlist bisa muncul sebagai watch/report-only,
+- `poolDetailFetchedAt` sudah terisi,
+- tetapi `isFreshEnoughForDeploy` tetap false karena:
+  - `tokenIntelFetchedAt = null` saat `ANALYTICS_API_BASE_URL` tidak dikonfigurasi,
+  - `activeBin = null` karena Pool Discovery tidak selalu mengirim active bin,
+  - `DataFreshnessSnapshot` saat ini memperlakukan token intel dan active bin sebagai required timestamp/feature untuk deploy freshness.
+
+Akibatnya kandidat shortlist yang valid untuk observasi tetap terus `WATCH` dan tidak pernah menjadi deploy-ready, walaupun deploy path sebenarnya bisa mengambil active bin segar dari DLMM gateway.
+
+### Keputusan desain Batch 28
+
+Pisahkan dua konsep freshness:
+
+1. **Screening freshness**
+   - Dipakai untuk shortlist/report/watchlist.
+   - Boleh berasal dari Meteora Pool Discovery.
+   - Tidak boleh mengklaim kandidat deploy-ready jika active bin atau token intel belum lengkap.
+
+2. **Deploy-readiness freshness**
+   - Dipakai tepat sebelum enqueue deploy.
+   - Wajib refresh deploy-critical data dari DLMM gateway, terutama `activeBin`, active-bin age/drift, depth/slippage, dan pool state yang dipakai untuk range builder.
+   - Token intel tidak boleh menjadi blocker mutlak bila analytics gateway tidak dikonfigurasi.
+   - Jika analytics gateway dikonfigurasi dan fetch gagal, hasilnya menjadi risk flag/journal warning, bukan otomatis membuat candidate tidak deploy-ready kecuali policy eksplisit mewajibkan token intel.
+
+### Config baru / perubahan config
+
+Tambahkan ke `screening` atau `deploy`:
+
+```json
+{
+  "deploy": {
+    "requireTokenIntelForDeploy": false,
+    "refreshDeploySnapshotBeforeQueue": true
+  }
+}
+```
+
+Default:
+
+- `refreshDeploySnapshotBeforeQueue = true`
+- `requireTokenIntelForDeploy = false`
+
+Rationale:
+
+- Active bin adalah data chain/DLMM-critical dan wajib fresh.
+- Token intel adalah enrichment/risk context. Ia penting, tetapi tidak boleh membuat bot tidak pernah deploy-ready saat analytics provider belum tersedia.
+
+### Scope implementasi
+
+#### 1. Domain: deploy-readiness snapshot
+
+Buat rule/usecase pure untuk membangun snapshot deploy-ready dari kandidat shortlist + fresh DLMM pool info.
+
+File kandidat:
+
+```txt
+src/domain/rules/deployReadinessRules.ts
+```
+
+Kontrak minimal:
+
+```ts
+type DeployReadinessInput = {
+  candidate: Candidate;
+  poolInfo: DlmmPoolInfo;
+  now: string;
+  maxStrategySnapshotAgeMs: number;
+  requireTokenIntelForDeploy: boolean;
+};
+
+type DeployReadinessResult = {
+  candidate: Candidate;
+  deployReady: boolean;
+  reasonCodes: string[];
+  riskFlags: string[];
+};
+```
+
+Rule:
+
+- Inject fresh `activeBin` dari `poolInfo.activeBin` ke kandidat yang akan divalidasi deploy.
+- Rebuild `dlmmMicrostructureSnapshot.activeBinObservedAt = now`.
+- Rebuild `dataFreshnessSnapshot` untuk deploy-readiness.
+- `tokenIntelFetchedAt` hanya wajib jika `requireTokenIntelForDeploy = true`.
+- Jika token intel tidak wajib dan tidak ada, tambahkan risk flag `token_intel_unavailable`, tetapi jangan reject.
+- Jika `poolInfo.activeBin = null`, reject dengan `active_bin_unavailable`.
+
+#### 2. Runtime supervisor: refresh sebelum strategy validation
+
+Di `maybeAutoDeployFromShortlist()`:
+
+- Setelah `dlmmGateway.getPoolInfo(candidate.poolAddress)`, panggil deploy-readiness refresh.
+- Gunakan kandidat hasil refresh untuk:
+  - `validateStrategyDecision()`,
+  - `buildAutoDeployPayload()`,
+  - strategy decision journal,
+  - auto-deploy journal.
+- Jangan validate candidate stale lama jika fresh DLMM snapshot sudah tersedia.
+
+#### 3. StrategyDecisionValidator
+
+Update validator agar:
+
+- `requireFreshSnapshot` mengecek deploy-readiness candidate yang sudah di-refresh.
+- `DETAIL_NOT_FRESH_OR_MISSING` tetap muncul bila:
+  - pool detail missing dan `requireDetailForDeploy = true`,
+  - active bin missing,
+  - active bin age melebihi limit,
+  - deploy-critical DLMM snapshot tidak bisa dibuat.
+- Token intel missing hanya menjadi blocker bila `requireTokenIntelForDeploy = true`.
+
+#### 4. Journal dan observability
+
+Tambah event:
+
+```txt
+DEPLOY_READINESS_REFRESHED
+DEPLOY_READINESS_REFRESH_FAILED
+TOKEN_INTEL_UNAVAILABLE_FOR_DEPLOY
+```
+
+Payload minimal `DEPLOY_READINESS_REFRESHED`:
+
+```ts
+{
+  candidateId: string;
+  poolAddress: string;
+  activeBin: number | null;
+  deployReady: boolean;
+  reasonCodes: string[];
+  requireTokenIntelForDeploy: boolean;
+}
+```
+
+Update `SCREENING_COMPLETED` semantics:
+
+- `shortlistCount` = kandidat yang visible untuk watch/report/AI review.
+- `deployBlockedMissingDetailCount` = kandidat shortlist yang belum deploy-ready dari screening snapshot.
+- Deploy-readiness final tetap ditentukan oleh runtime refresh, bukan oleh screening snapshot.
+
+### Tests wajib
+
+#### Unit tests
+
+File:
+
+```txt
+tests/unit/domain/deployReadinessRules.test.ts
+```
+
+Cover:
+
+- Candidate watch-only dengan `activeBin=null` menjadi deploy-ready setelah DLMM poolInfo memberi active bin.
+- Token intel missing tidak reject saat `requireTokenIntelForDeploy=false`.
+- Token intel missing reject saat `requireTokenIntelForDeploy=true`.
+- Active bin null dari DLMM poolInfo tetap reject.
+- Snapshot age dihitung ulang dari `now`.
+
+File:
+
+```txt
+tests/unit/domain/strategyDecisionRules.test.ts
+```
+
+Cover:
+
+- Validator menerima candidate yang sudah di-refresh dan token intel optional.
+- Validator tetap reject active bin missing.
+- Validator tetap reject stale deploy-critical snapshot.
+
+#### Runtime tests
+
+File:
+
+```txt
+tests/unit/runtimeSupervisor.test.ts
+```
+
+Cover:
+
+- Auto-deploy path memanggil `dlmmGateway.getPoolInfo()` lalu memvalidasi candidate hasil deploy-readiness refresh.
+- Candidate watch-only dari screening bisa menjadi deploy-ready bila DLMM fresh snapshot valid.
+- Candidate tetap tidak enqueue bila DLMM active bin unavailable.
+- Journal `DEPLOY_READINESS_REFRESHED` ditulis.
+
+### Regression tests wajib
+
+1. Shortlist tidak kembali 0 hanya karena Pool Discovery tidak memberi active bin.
+2. Candidate tanpa analytics provider tidak selamanya stuck watch-only.
+3. Auto-deploy tetap tidak memakai stale active bin dari screening.
+4. `requireTokenIntelForDeploy=true` tetap bisa mengunci deploy untuk mode konservatif.
+5. AI tetap tidak punya write privilege langsung.
+6. Dry-run tetap hanya menulis rencana/journal, bukan enqueue live write.
+
+### DoD
+
+- Shortlist tetap bisa muncul dari Meteora Pool Discovery.
+- Runtime deploy path melakukan refresh deploy-critical snapshot dari DLMM gateway sebelum enqueue.
+- Token intel optional secara default.
+- Active bin fresh tetap wajib.
+- Semua deploy rejection punya reason code jelas.
+- Semua test batch hijau.
+
+### Jangan dikerjakan di Batch 28
+
+- Jangan menghapus fresh active-bin gate.
+- Jangan menganggap Pool Discovery active bin sebagai sumber utama deploy.
+- Jangan menyalakan AI direct write.
+- Jangan membuat analytics/token-intel provider wajib untuk semua user.
+- Jangan melemahkan risk guard, circuit breaker, action queue, atau dry-run boundary.
+
+### Prompt vibecode
+
+```txt
+Add Batch 28: deploy-readiness refresh and optional token intel gate.
+
+Keep screening shortlist/watchlist separate from deploy readiness. Before auto-deploy enqueue, refresh deploy-critical DLMM data with dlmmGateway.getPoolInfo(), inject the fresh active bin into a deploy-readiness candidate snapshot, rebuild freshness, and validate that refreshed candidate. Token intel must be optional by default; missing token intel should add a risk flag/journal warning but must not block deploy unless deploy.requireTokenIntelForDeploy=true. Add deploy-readiness domain rules, runtime supervisor wiring, journal visibility, and tests proving watch-only shortlist candidates can become deploy-ready only after fresh DLMM active-bin refresh.
+```
+
 ## 17. Urutan Aktivasi Fitur
 
 Agar bug minimal, aktifkan fitur dalam urutan ini:
@@ -3692,6 +3917,7 @@ Agar bug minimal, aktifkan fitur dalam urutan ini:
 18. Supervised live
 19. Live auto-learning wiring + lesson enforcement
 20. Meteora rate-budgeted enrichment + fresh-only deploy gate
+21. Deploy-readiness refresh + optional token intel gate
 
 ### Jangan dibalik
 

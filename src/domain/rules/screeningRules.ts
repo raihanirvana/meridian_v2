@@ -315,14 +315,22 @@ export function evaluateScreeningHardFilters(input: {
     candidate.dlmmMicrostructureSnapshot ?? defaultDlmmMicrostructureSnapshot();
   const dataFreshnessSnapshot =
     candidate.dataFreshnessSnapshot ?? defaultDataFreshnessSnapshot();
+  const requiresFreshSnapshot = policy.requireFreshSnapshot ?? true;
+  // Snapshot-only watch keeps candidates visible, while deploy validation still
+  // requires fresh detail before any queued write.
+  const allowSnapshotOnlyWatch =
+    (policy.allowSnapshotOnlyWatch ?? false) &&
+    (policy.requireDetailForDeploy ?? false);
   if (
-    (policy.requireFreshSnapshot ?? true) &&
+    requiresFreshSnapshot &&
+    !allowSnapshotOnlyWatch &&
     !dataFreshnessSnapshot.isFreshEnoughForDeploy
   ) {
     rejectionReasons.push("strategy snapshot is stale");
   }
   if (
-    (policy.requireFreshSnapshot ?? true) &&
+    requiresFreshSnapshot &&
+    !allowSnapshotOnlyWatch &&
     dlmmMicrostructureSnapshot.activeBin === null
   ) {
     rejectionReasons.push("active bin unavailable");
