@@ -21,6 +21,7 @@ import {
   evaluatePortfolioRisk,
   type PortfolioRiskPolicy,
 } from "../domain/rules/riskRules.js";
+import { refreshCandidateDeployReadiness } from "../domain/rules/deployReadinessRules.js";
 import {
   type FinalStrategyDecision,
   type StrategyDecisionValidationPolicy,
@@ -773,9 +774,117 @@ export function createRuntimeSupervisor(
               pendingActions: portfolio.pendingActions + deployedThisCycle,
               openPositions: portfolio.openPositions + deployedThisCycle,
             };
-        const poolInfo = await input.gateways.dlmmGateway.getPoolInfo(
-          candidate.poolAddress,
-        );
+        const poolInfo = await input.gateways.dlmmGateway
+          .getPoolInfo(candidate.poolAddress)
+          .catch(async (error: unknown) => {
+            await input.stores.journalRepository
+              .append({
+                timestamp,
+                eventType: "DEPLOY_READINESS_REFRESH_FAILED",
+                actor: "system",
+                wallet: input.wallet,
+                positionId: null,
+                actionId: null,
+                before: null,
+                after: {
+                  candidateId: candidate.candidateId,
+                  poolAddress: candidate.poolAddress,
+                  requireTokenIntelForDeploy:
+                    input.config.deploy.requireTokenIntelForDeploy,
+                },
+                txIds: [],
+                resultStatus: "FAILED",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "deploy-readiness refresh failed",
+              })
+              .catch((journalError: unknown) => {
+                logger.warn(
+                  { err: journalError, candidateId: candidate.candidateId },
+                  "deploy-readiness failure journal append failed",
+                );
+              });
+            throw error;
+          });
+        const deployReadiness =
+          input.config.deploy.refreshDeploySnapshotBeforeQueue
+            ? refreshCandidateDeployReadiness({
+                candidate,
+                poolInfo,
+                now: timestamp,
+                maxStrategySnapshotAgeMs:
+                  input.config.screening.maxStrategySnapshotAgeMs,
+                requireTokenIntelForDeploy:
+                  input.config.deploy.requireTokenIntelForDeploy,
+              })
+            : {
+                candidate,
+                deployReady:
+                  candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy,
+                reasonCodes: [],
+                riskFlags: [],
+              };
+        const deployCandidate = deployReadiness.candidate;
+        await input.stores.journalRepository.append({
+          timestamp,
+          eventType: "DEPLOY_READINESS_REFRESHED",
+          actor: "system",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: {
+            candidateId: deployCandidate.candidateId,
+            poolAddress: deployCandidate.poolAddress,
+            activeBin: deployCandidate.dlmmMicrostructureSnapshot.activeBin,
+            deployReady: deployReadiness.deployReady,
+            reasonCodes: deployReadiness.reasonCodes,
+            riskFlags: deployReadiness.riskFlags,
+            requireTokenIntelForDeploy:
+              input.config.deploy.requireTokenIntelForDeploy,
+          },
+          txIds: [],
+          resultStatus: deployReadiness.deployReady ? "OK" : "BLOCKED",
+          error:
+            deployReadiness.reasonCodes.length === 0
+              ? null
+              : deployReadiness.reasonCodes.join("; "),
+        }).catch((err: unknown) => {
+          logger.warn(
+            { err, candidateId: candidate.candidateId },
+            "deploy-readiness journal append failed; continuing with validation",
+          );
+        });
+        if (deployReadiness.riskFlags.includes("token_intel_unavailable")) {
+          await input.stores.journalRepository.append({
+            timestamp,
+            eventType: "TOKEN_INTEL_UNAVAILABLE_FOR_DEPLOY",
+            actor: "system",
+            wallet: input.wallet,
+            positionId: null,
+            actionId: null,
+            before: null,
+            after: {
+              candidateId: deployCandidate.candidateId,
+              poolAddress: deployCandidate.poolAddress,
+              requireTokenIntelForDeploy:
+                input.config.deploy.requireTokenIntelForDeploy,
+            },
+            txIds: [],
+            resultStatus: input.config.deploy.requireTokenIntelForDeploy
+              ? "BLOCKED"
+              : "WARN",
+            error: input.config.deploy.requireTokenIntelForDeploy
+              ? "TOKEN_INTEL_NOT_FRESH_OR_MISSING"
+              : null,
+          }).catch((err: unknown) => {
+            logger.warn(
+              { err, candidateId: candidate.candidateId },
+              "token-intel deploy warning journal append failed; continuing with validation",
+            );
+          });
+        }
         const reviewItem = strategyReviewByCandidateId.get(
           candidate.candidateId,
         );
@@ -803,6 +912,8 @@ export function createRuntimeSupervisor(
             requireFreshSnapshot: input.config.deploy.requireFreshSnapshot,
             requireDetailForDeploy:
               input.config.screening.requireDetailForDeploy,
+            requireTokenIntelForDeploy:
+              input.config.deploy.requireTokenIntelForDeploy,
             maxStrategySnapshotAgeMs:
               input.config.screening.maxStrategySnapshotAgeMs,
             strategyFallbackMode: input.config.deploy.strategyFallbackMode,
@@ -814,7 +925,7 @@ export function createRuntimeSupervisor(
           slippageBps: input.config.deploy.slippageBps,
         };
         const tentativeStrategyDecision = validateStrategyDecision({
-          candidate,
+          candidate: deployCandidate,
           mode: strategyMode,
           aiReview: reviewItem?.review ?? null,
           configStrategy,
@@ -829,7 +940,7 @@ export function createRuntimeSupervisor(
             ? await input.gateways.dlmmGateway.simulateDeployLiquidity({
                 wallet: input.wallet,
                 ...buildAutoDeployPayload({
-                  candidate,
+                  candidate: deployCandidate,
                   poolInfo,
                   deployConfig: input.config.deploy,
                   solPriceUsd: solPrice.priceUsd,
@@ -840,7 +951,7 @@ export function createRuntimeSupervisor(
         const finalStrategyDecision =
           shouldPreQueueSimulate && !tentativeStrategyDecision.rejected
             ? validateStrategyDecision({
-                candidate,
+                candidate: deployCandidate,
                 mode: strategyMode,
                 aiReview: reviewItem?.review ?? null,
                 configStrategy,
@@ -852,7 +963,7 @@ export function createRuntimeSupervisor(
             : tentativeStrategyDecision;
         await appendStrategyDecisionJournal({
           timestamp,
-          candidate,
+          candidate: deployCandidate,
           finalStrategyDecision,
           aiSource: reviewItem?.source ?? null,
           aiError: reviewItem?.aiError ?? null,
@@ -880,8 +991,8 @@ export function createRuntimeSupervisor(
               actionId: null,
               before: null,
               after: {
-                poolAddress: candidate.poolAddress,
-                candidateId: candidate.candidateId,
+                poolAddress: deployCandidate.poolAddress,
+                candidateId: deployCandidate.candidateId,
                 reasonCode: "DETAIL_NOT_FRESH_OR_MISSING",
                 requireDetailForDeploy:
                   input.config.screening.requireDetailForDeploy,
@@ -898,7 +1009,7 @@ export function createRuntimeSupervisor(
           }
           await appendAutoDeployJournal({
             timestamp,
-            candidate,
+            candidate: deployCandidate,
             actionId: null,
             resultStatus: "BLOCKED",
             detail: "auto deploy blocked by strategy decision validator",
@@ -908,7 +1019,7 @@ export function createRuntimeSupervisor(
         }
 
         const payload = buildAutoDeployPayload({
-          candidate,
+          candidate: deployCandidate,
           poolInfo,
           deployConfig: input.config.deploy,
           solPriceUsd: solPrice.priceUsd,
@@ -955,7 +1066,7 @@ export function createRuntimeSupervisor(
           });
           await appendStrategyDecisionJournal({
             timestamp,
-            candidate,
+            candidate: deployCandidate,
             finalStrategyDecision,
             aiSource: reviewItem?.source ?? null,
             aiError: reviewItem?.aiError ?? null,
@@ -973,7 +1084,7 @@ export function createRuntimeSupervisor(
           });
           await appendAutoDeployJournal({
             timestamp,
-            candidate,
+            candidate: deployCandidate,
             actionId: null,
             resultStatus: "BLOCKED",
             detail: "auto deploy blocked by full portfolio risk engine",
@@ -986,7 +1097,7 @@ export function createRuntimeSupervisor(
         if (payload.estimatedValueUsd > portfolio.availableBalance) {
           await appendAutoDeployJournal({
             timestamp,
-            candidate,
+            candidate: deployCandidate,
             actionId: null,
             resultStatus: "BLOCKED",
             detail: "auto deploy blocked by available balance",
@@ -999,7 +1110,7 @@ export function createRuntimeSupervisor(
         if (input.config.runtime.dryRun) {
           await appendAutoDeployJournal({
             timestamp,
-            candidate,
+            candidate: deployCandidate,
             actionId: null,
             resultStatus: "DRY_RUN",
             detail:
@@ -1027,7 +1138,7 @@ export function createRuntimeSupervisor(
         });
         await appendAutoDeployJournal({
           timestamp,
-          candidate,
+          candidate: deployCandidate,
           actionId: action.actionId,
           resultStatus: "QUEUED",
           detail: "auto deploy queued from shortlist",

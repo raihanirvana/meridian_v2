@@ -28,7 +28,7 @@
     "requireFreshSnapshot": true,
     "maxEstimatedSlippageBps": 500,
     "maxStrategySnapshotAgeMs": 180000,
-    "aiReviewPoolSize": 30,
+    "aiReviewPoolSize": 3,
     "detailEnrichmentTopN": 10,
     "detailRequestIntervalMs": 3500,
     "maxDetailRequestsPerCycle": 10,
@@ -89,8 +89,8 @@
     "mode": "advisory",
     "generalModel": "openrouter/free",
     "managementModel": "openrouter/free",
-    "screeningModel": "openrouter/free",
-    "timeoutMs": 5000,
+    "screeningModel": "openai/gpt-oss-20b:free",
+    "timeoutMs": 30000,
     "strategyReviewEnabled": true,
     "strategyReviewMode": "guarded_auto",
     "allowAiStrategyForDeploy": true,
@@ -100,7 +100,7 @@
   "deploy": {
     "defaultAmountSol": 0.15,
     "minAmountSol": 0.1,
-    "autoDeployFromShortlist": false,
+    "autoDeployFromShortlist": true,
     "maxAutoDeploysPerCycle": 2,
     "strategy": "bid_ask",
     "binsBelow": 60,
@@ -111,6 +111,8 @@
     "maxBinsAbove": 120,
     "maxSlippageBps": 500,
     "requireFreshSnapshot": true,
+    "refreshDeploySnapshotBeforeQueue": true,
+    "requireTokenIntelForDeploy": false,
     "strategyFallbackMode": "deterministic_best"
   },
   "notifications": {

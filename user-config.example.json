@@ -106,6 +106,8 @@
     "maxBinsAbove": 120,
     "maxSlippageBps": 300,
     "requireFreshSnapshot": true,
+    "refreshDeploySnapshotBeforeQueue": true,
+    "requireTokenIntelForDeploy": false,
     "strategyFallbackMode": "config_static"
   },
   "notifications": {

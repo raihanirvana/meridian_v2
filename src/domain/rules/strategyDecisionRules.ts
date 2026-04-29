@@ -36,6 +36,7 @@ export const StrategyDecisionValidationPolicySchema = z
     maxSlippageBps: z.number().int().positive().default(300),
     requireFreshSnapshot: z.boolean().default(true),
     requireDetailForDeploy: z.boolean().default(false),
+    requireTokenIntelForDeploy: z.boolean().default(false),
     maxStrategySnapshotAgeMs: z.number().int().positive().default(120_000),
     strategyFallbackMode: StrategyFallbackModeSchema.default("config_static"),
   })
@@ -217,11 +218,17 @@ function collectCandidateBlockers(input: {
   }
   if (
     input.policy.requireDetailForDeploy &&
-    (input.candidate.dataFreshnessSnapshot.poolDetailFetchedAt === null ||
-      !input.candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy)
+    input.candidate.dataFreshnessSnapshot.poolDetailFetchedAt === null
   ) {
     reasonCodes.push("DETAIL_NOT_FRESH_OR_MISSING");
     riskFlags.push("detail_not_fresh_or_missing");
+  }
+  if (
+    input.policy.requireTokenIntelForDeploy &&
+    input.candidate.dataFreshnessSnapshot.tokenIntelFetchedAt === null
+  ) {
+    reasonCodes.push("TOKEN_INTEL_NOT_FRESH_OR_MISSING");
+    riskFlags.push("token_intel_unavailable");
   }
   if (input.candidate.dlmmMicrostructureSnapshot.activeBin === null) {
     reasonCodes.push("active_bin_unavailable");

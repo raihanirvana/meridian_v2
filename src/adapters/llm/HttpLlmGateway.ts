@@ -117,6 +117,48 @@ function jsonInstruction(schemaName: string): string {
   ].join(" ");
 }
 
+const CANDIDATE_RANKING_RESULT_CONTRACT = [
+  "CandidateRankingResult JSON contract:",
+  "- rankedCandidateIds: array of candidateId strings.",
+  "- reasoning: non-empty concise string.",
+  "rankedCandidateIds must include every input candidateId exactly once.",
+  "Do not add extra keys such as rankedCandidates, candidates, score, notes, markdown, or commentary.",
+  'Valid example: {"rankedCandidateIds":["cand_a","cand_b"],"reasoning":"cand_a has better liquidity quality and lower risk."}',
+].join("\n");
+
+const MANAGEMENT_EXPLANATION_RESULT_CONTRACT = [
+  "ManagementExplanationResult JSON contract:",
+  "- action: one of HOLD, CLAIM_FEES, PARTIAL_CLOSE, REBALANCE, CLOSE, RECONCILE_ONLY.",
+  "- reasoning: non-empty concise string.",
+  "The action should normally match the proposedAction unless the prompt explicitly asks for a different safe explanation.",
+  "Do not add extra keys such as reason, notes, markdown, or commentary.",
+  'Valid example: {"action":"CLAIM_FEES","reasoning":"Fees exceed the configured claim threshold while position risk remains acceptable."}',
+].join("\n");
+
+const AI_REBALANCE_DECISION_CONTRACT = [
+  "AiRebalanceDecision JSON contract:",
+  "- action: one of hold, claim_only, rebalance_same_pool, exit.",
+  "- confidence: number from 0 to 1.",
+  "- riskLevel: one of low, medium, high.",
+  "- reason: array of strings.",
+  "- rebalancePlan: object or null.",
+  "- rejectIf: array of strings.",
+  "rebalancePlan object fields, when action is rebalance_same_pool:",
+  "- strategy: one of spot, curve, bid_ask.",
+  "- binsBelow: non-negative integer.",
+  "- binsAbove: non-negative integer.",
+  "- slippageBps: non-negative integer.",
+  "- maxPositionAgeMinutes: non-negative integer.",
+  "- stopLossPct: non-negative number.",
+  "- takeProfitPct: non-negative number.",
+  "- trailingStopPct: non-negative number.",
+  "If action is rebalance_same_pool, rebalancePlan must be present.",
+  "If action is not rebalance_same_pool, rebalancePlan must be null.",
+  "Do not add extra keys such as reasoning, plan, strategy, notes, markdown, or commentary.",
+  'Valid hold example: {"action":"hold","confidence":0.71,"riskLevel":"medium","reason":["Position is still manageable but confidence is below rebalance threshold."],"rebalancePlan":null,"rejectIf":["active bin drifts further"]}',
+  'Valid rebalance example: {"action":"rebalance_same_pool","confidence":0.82,"riskLevel":"medium","reason":["Position is out of range and pool depth remains adequate."],"rebalancePlan":{"strategy":"spot","binsBelow":60,"binsAbove":20,"slippageBps":250,"maxPositionAgeMinutes":720,"stopLossPct":5,"takeProfitPct":10,"trailingStopPct":2},"rejectIf":["simulation fails","active bin drifts more than allowed"]}',
+].join("\n");
+
 export class HttpLlmGateway implements LlmGateway {
   private readonly client: JsonHttpClient;
   private readonly generalModel: string | null;
@@ -213,6 +255,7 @@ export class HttpLlmGateway implements LlmGateway {
       systemPrompt: [
         parsedInput.systemPrompt,
         jsonInstruction("CandidateRankingResult"),
+        CANDIDATE_RANKING_RESULT_CONTRACT,
       ]
         .filter((part): part is string => part !== null)
         .join("\n\n"),
@@ -254,6 +297,7 @@ export class HttpLlmGateway implements LlmGateway {
       systemPrompt: [
         parsedInput.systemPrompt,
         jsonInstruction("ManagementExplanationResult"),
+        MANAGEMENT_EXPLANATION_RESULT_CONTRACT,
       ]
         .filter((part): part is string => part !== null)
         .join("\n\n"),
@@ -299,6 +343,7 @@ export class HttpLlmGateway implements LlmGateway {
         "If confidence is below 0.75, action must be hold or exit.",
         "If action is not rebalance_same_pool, rebalancePlan must be null.",
         jsonInstruction("AiRebalanceDecision"),
+        AI_REBALANCE_DECISION_CONTRACT,
       ].join("\n"),
       userPrompt: JSON.stringify(parsedInput),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
   buildMarketFeatureSnapshot,
 } from "../../../src/domain/rules/poolFeatureRules.js";
@@ -41,5 +42,21 @@ describe("pool feature rules", () => {
     expect(snapshot.fees24hUsd).toBe(0);
     expect(snapshot.volumeTvlRatio24h).toBe(0);
     expect(snapshot.feeTvlRatio24h).toBe(0);
+  });
+
+  it("excludes optional token intel from required deploy freshness age", () => {
+    const snapshot = buildDataFreshnessSnapshot({
+      now: "2026-04-22T10:00:00.000Z",
+      screeningSnapshotAt: "2026-04-22T09:59:30.000Z",
+      poolDetailFetchedAt: "2026-04-22T09:59:45.000Z",
+      tokenIntelFetchedAt: null,
+      chainSnapshotFetchedAt: "2026-04-22T10:00:00.000Z",
+      maxAgeMs: 120_000,
+      hasActiveBin: true,
+      requireTokenIntel: false,
+    });
+
+    expect(snapshot.isFreshEnoughForDeploy).toBe(true);
+    expect(snapshot.oldestRequiredSnapshotAgeMs).toBe(30_000);
   });
 });

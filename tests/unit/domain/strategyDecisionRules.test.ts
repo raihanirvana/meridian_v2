@@ -344,4 +344,128 @@ describe("validateStrategyDecision", () => {
     expect(decision.reasonCodes).toContain("DETAIL_NOT_FRESH_OR_MISSING");
     expect(decision.riskFlags).toContain("detail_not_fresh_or_missing");
   });
+
+  it("accepts refreshed deploy candidate when token intel is optional", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate({
+        dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+          now,
+          screeningSnapshotAt: now,
+          poolDetailFetchedAt: now,
+          tokenIntelFetchedAt: null,
+          chainSnapshotFetchedAt: now,
+          hasActiveBin: true,
+          requireTokenIntel: false,
+        }),
+      }),
+      mode: "recommendation_only",
+      aiReview: null,
+      configStrategy,
+      policy: {
+        requireFreshSnapshot: true,
+        requireDetailForDeploy: true,
+        requireTokenIntelForDeploy: false,
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(false);
+    expect(decision.riskFlags).not.toContain("token_intel_unavailable");
+  });
+
+  it("rejects refreshed deploy candidate when token intel is required", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate({
+        dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+          now,
+          screeningSnapshotAt: now,
+          poolDetailFetchedAt: now,
+          tokenIntelFetchedAt: null,
+          chainSnapshotFetchedAt: now,
+          hasActiveBin: true,
+          requireTokenIntel: false,
+        }),
+      }),
+      mode: "recommendation_only",
+      aiReview: null,
+      configStrategy,
+      policy: {
+        requireFreshSnapshot: true,
+        requireDetailForDeploy: true,
+        requireTokenIntelForDeploy: true,
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.reasonCodes).toContain("TOKEN_INTEL_NOT_FRESH_OR_MISSING");
+    expect(decision.riskFlags).toContain("token_intel_unavailable");
+  });
+
+  it("rejects deploy when active bin is still missing after refresh", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate({
+        dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+          binStep: 80,
+          activeBin: null,
+          activeBinObservedAt: null,
+          depthNearActiveUsd: 25_000,
+          depthWithin10BinsUsd: 50_000,
+          depthWithin25BinsUsd: 75_000,
+          estimatedSlippageBpsForDefaultSize: 100,
+          now,
+        }),
+        dataFreshnessSnapshot: buildDataFreshnessSnapshot({
+          now,
+          screeningSnapshotAt: now,
+          poolDetailFetchedAt: now,
+          tokenIntelFetchedAt: now,
+          chainSnapshotFetchedAt: now,
+          hasActiveBin: false,
+        }),
+      }),
+      mode: "recommendation_only",
+      aiReview: null,
+      configStrategy,
+      policy: {
+        requireFreshSnapshot: true,
+        requireDetailForDeploy: true,
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.reasonCodes).toContain("active_bin_unavailable");
+    expect(decision.riskFlags).toContain("missing_active_bin");
+  });
+
+  it("rejects deploy when deploy-critical active-bin snapshot is stale", () => {
+    const decision = validateStrategyDecision({
+      candidate: buildCandidate({
+        dlmmMicrostructureSnapshot: buildDlmmMicrostructureSnapshot({
+          binStep: 80,
+          activeBin: 1000,
+          activeBinObservedAt: "2026-04-24T23:00:00.000Z",
+          depthNearActiveUsd: 25_000,
+          depthWithin10BinsUsd: 50_000,
+          depthWithin25BinsUsd: 75_000,
+          estimatedSlippageBpsForDefaultSize: 100,
+          now,
+        }),
+      }),
+      mode: "recommendation_only",
+      aiReview: null,
+      configStrategy,
+      policy: {
+        requireFreshSnapshot: true,
+        requireDetailForDeploy: true,
+        maxStrategySnapshotAgeMs: 120_000,
+        strategyFallbackMode: "reject",
+      },
+    });
+
+    expect(decision.rejected).toBe(true);
+    expect(decision.reasonCodes).toContain("DETAIL_NOT_FRESH_OR_MISSING");
+    expect(decision.riskFlags).toContain("detail_not_fresh_or_missing");
+  });
 });

@@ -151,6 +151,8 @@ export const UserConfigSchema = z
         maxBinsAbove: z.number().int().nonnegative().default(120),
         maxSlippageBps: z.number().int().positive().max(10_000).default(300),
         requireFreshSnapshot: z.boolean().default(true),
+        refreshDeploySnapshotBeforeQueue: z.boolean().default(true),
+        requireTokenIntelForDeploy: z.boolean().default(false),
         strategyFallbackMode:
           StrategyFallbackModeSchema.default("config_static"),
       })

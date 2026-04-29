@@ -189,6 +189,7 @@ export function buildDataFreshnessSnapshot(input: {
   chainSnapshotFetchedAt?: string | null;
   maxAgeMs?: number;
   hasActiveBin: boolean;
+  requireTokenIntel?: boolean;
 }): DataFreshnessSnapshot {
   const nowMs = Date.parse(input.now);
   const safeNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
@@ -199,14 +200,17 @@ export function buildDataFreshnessSnapshot(input: {
   const hasRequiredTimestamps =
     screeningSnapshotAt !== null &&
     poolDetailFetchedAt !== null &&
-    tokenIntelFetchedAt !== null &&
+    (input.requireTokenIntel === false || tokenIntelFetchedAt !== null) &&
     chainSnapshotFetchedAt !== null;
-  const oldestRequiredSnapshotAgeMs = Math.max(
+  const requiredSnapshotAges = [
     ageMs(screeningSnapshotAt, safeNowMs),
     ageMs(poolDetailFetchedAt, safeNowMs),
-    ageMs(tokenIntelFetchedAt, safeNowMs),
     ageMs(chainSnapshotFetchedAt, safeNowMs),
-  );
+  ];
+  if (input.requireTokenIntel !== false) {
+    requiredSnapshotAges.push(ageMs(tokenIntelFetchedAt, safeNowMs));
+  }
+  const oldestRequiredSnapshotAgeMs = Math.max(...requiredSnapshotAges);
   const maxAgeMs = input.maxAgeMs ?? DefaultFreshnessMaxAgeMs;
 
   return DataFreshnessSnapshotSchema.parse({

@@ -188,6 +188,12 @@ export {
   type StrategyFallbackMode,
 } from "./domain/rules/strategyDecisionRules.js";
 export {
+  DeployReadinessResultSchema,
+  refreshCandidateDeployReadiness,
+  type DeployReadinessPoolInfo,
+  type DeployReadinessResult,
+} from "./domain/rules/deployReadinessRules.js";
+export {
   AiRebalanceModeSchema,
   deriveRebalanceTriggerSnapshot,
   RebalanceDecisionValidationPolicySchema,

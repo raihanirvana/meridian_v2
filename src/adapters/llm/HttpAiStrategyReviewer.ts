@@ -115,6 +115,29 @@ function buildSystemContent(systemPrompt: string | null): string {
     .join("\n\n");
 }
 
+const STRATEGY_REVIEW_RESULT_CONTRACT = [
+  "StrategyReviewResult JSON contract:",
+  "- poolAddress: string, copied exactly from the candidate.",
+  "- decision: one of deploy, watch, reject.",
+  "- recommendedStrategy: one of curve, spot, bid_ask, none.",
+  "- confidence: number from 0 to 1.",
+  "- riskLevel: one of low, medium, high.",
+  "- binsBelow: non-negative integer.",
+  "- binsAbove: non-negative integer.",
+  "- slippageBps: non-negative integer.",
+  "- maxPositionAgeMinutes: non-negative integer.",
+  "- stopLossPct: non-negative number.",
+  "- takeProfitPct: non-negative number.",
+  "- trailingStopPct: non-negative number.",
+  "- reasons: array of strings.",
+  "- rejectIf: array of strings.",
+  "If decision is deploy, recommendedStrategy must not be none.",
+  "If decision is reject, recommendedStrategy must be none.",
+  "Do not add extra keys such as strategy, reason, notes, markdown, or commentary.",
+  "Valid item example:",
+  '{"poolAddress":"POOL_ADDRESS","decision":"watch","recommendedStrategy":"spot","confidence":0.72,"riskLevel":"medium","binsBelow":60,"binsAbove":20,"slippageBps":300,"maxPositionAgeMinutes":720,"stopLossPct":5,"takeProfitPct":10,"trailingStopPct":2,"reasons":["fresh active bin","moderate volatility"],"rejectIf":["active bin drifts more than allowed"]}',
+].join("\n");
+
 function buildCandidatePayload(input: AiStrategyReviewInput) {
   return {
     poolAddress: input.candidate.poolAddress,
@@ -163,7 +186,7 @@ export class HttpAiStrategyReviewer implements AiStrategyReviewer {
         messages: [
           {
             role: "system",
-            content: `${buildSystemContent(parsedInput.systemPrompt)}\n\nReturn one StrategyReviewResult JSON object exactly.`,
+            content: `${buildSystemContent(parsedInput.systemPrompt)}\n\n${STRATEGY_REVIEW_RESULT_CONTRACT}\n\nReturn one StrategyReviewResult JSON object exactly.`,
           },
           {
             role: "user",
@@ -221,7 +244,7 @@ export class HttpAiStrategyReviewer implements AiStrategyReviewer {
         messages: [
           {
             role: "system",
-            content: `${buildSystemContent(parsedInput.systemPrompt)}\n\nReturn one JSON array. Each item must match StrategyReviewResult exactly. Include exactly one item for every candidate poolAddress.`,
+            content: `${buildSystemContent(parsedInput.systemPrompt)}\n\n${STRATEGY_REVIEW_RESULT_CONTRACT}\n\nReturn one JSON array. Each item must match StrategyReviewResult exactly. Include exactly one item for every candidate poolAddress.`,
           },
           {
             role: "user",
