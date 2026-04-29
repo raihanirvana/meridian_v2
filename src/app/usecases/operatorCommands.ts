@@ -223,6 +223,77 @@ function requireCapture(value: string | undefined, label: string): string {
   return value;
 }
 
+function parseLessonsAddPayload(tail: string): Record<string, unknown> {
+  const args = tail.trim().length === 0 ? [] : tail.trim().split(/\s+/);
+  const ruleParts: string[] = [];
+  const tags: string[] = [];
+  const payload: Record<string, unknown> = {
+    kind: "LESSONS_ADD",
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const part = args[index];
+    if (part === undefined) {
+      continue;
+    }
+    if (part === "--role") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error("--role requires a value");
+      }
+      payload.role = value;
+      index += 1;
+      continue;
+    }
+    if (part === "--tag") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error("--tag requires a value");
+      }
+      tags.push(value);
+      index += 1;
+      continue;
+    }
+    if (part === "--tags") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error("--tags requires a value");
+      }
+      tags.push(
+        ...value
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter((tag) => tag.length > 0),
+      );
+      index += 1;
+      continue;
+    }
+    if (part === "--pinned") {
+      payload.pinned = true;
+      continue;
+    }
+    if (part === "--unpinned") {
+      payload.pinned = false;
+      continue;
+    }
+    if (part.startsWith("--")) {
+      throw new Error(`unknown lessons add flag: ${part}`);
+    }
+    ruleParts.push(part);
+  }
+
+  const rule = ruleParts.join(" ").trim();
+  if (rule.length === 0) {
+    throw new Error("lessons add requires a rule");
+  }
+
+  return {
+    ...payload,
+    rule,
+    ...(tags.length === 0 ? {} : { tags }),
+  };
+}
+
 export function parseOperatorCommand(
   input: OperatorCommandParseInput,
 ): OperatorCommand {
@@ -369,10 +440,13 @@ export function parseOperatorCommand(
       }
       if (part === "--pinned") {
         payload.pinned = true;
+        continue;
       }
       if (part === "--unpinned") {
         payload.pinned = false;
+        continue;
       }
+      throw new Error(`unknown lessons list flag: ${part}`);
     }
     return OperatorCommandSchema.parse(payload);
   }
@@ -395,10 +469,9 @@ export function parseOperatorCommand(
 
   const lessonsAddMatch = normalized.match(/^lessons\s+add\s+(.+)$/s);
   if (lessonsAddMatch !== null) {
-    return OperatorCommandSchema.parse({
-      kind: "LESSONS_ADD",
-      rule: requireCapture(lessonsAddMatch[1], "lessons add").trim(),
-    });
+    return OperatorCommandSchema.parse(
+      parseLessonsAddPayload(requireCapture(lessonsAddMatch[1], "lessons add")),
+    );
   }
 
   const lessonsRemoveMatch = normalized.match(/^lessons\s+remove\s+(\S+)$/);

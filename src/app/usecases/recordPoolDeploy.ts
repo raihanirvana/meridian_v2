@@ -51,13 +51,15 @@ export async function recordPoolDeploy(
         ? currentDeploys
         : [...currentDeploys, deploy].slice(-50);
       const aggregates = computePoolAggregates(nextDeploys);
-      const cooldownUntil = shouldCooldown({
-        closeReason: deploy.closeReason,
-      })
-        ? new Date(
-            Date.parse(input.now) + cooldownHours * 60 * 60 * 1000,
-          ).toISOString()
-        : current?.cooldownUntil;
+      const cooldownUntil =
+        !alreadyRecorded &&
+        shouldCooldown({
+          closeReason: deploy.closeReason,
+        })
+          ? new Date(
+              Date.parse(input.now) + cooldownHours * 60 * 60 * 1000,
+            ).toISOString()
+          : current?.cooldownUntil;
 
       return PoolMemoryEntrySchema.parse({
         poolAddress: input.poolAddress,

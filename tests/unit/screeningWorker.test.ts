@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   MockLlmGateway,
@@ -509,6 +509,99 @@ describe("screening worker", () => {
     expect(
       rankingInput.candidates[0]?.smartMoneySnapshot.holderDistributionSummary,
     ).toBe("Holder spread attached");
+  });
+
+  it("falls back without calling LLM when AI screening has no lesson prompt service", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const rankCandidates = vi.fn<NonNullable<LlmGateway["rankCandidates"]>>();
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: new MockScreeningGateway({
+        listCandidates: {
+          type: "success",
+          value: [
+            buildGatewayCandidate(),
+            buildGatewayCandidate({
+              candidateId: "cand_002",
+              poolAddress: "pool_002",
+              symbolPair: "XYZ-SOL",
+            }),
+          ],
+        },
+        getCandidateDetails: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "ABC-SOL",
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+          },
+        },
+      }),
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy({
+            minVolumeTrendPct: -50,
+          });
+        },
+      },
+      aiMode: "advisory",
+      llmGateway: {
+        rankCandidates,
+        async explainManagementDecision() {
+          return {
+            action: "HOLD",
+            reasoning: "unused",
+          };
+        },
+      },
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    expect(result.aiSource).toBe("FALLBACK");
+    expect(rankCandidates).not.toHaveBeenCalled();
+    expect(
+      (await journalRepository.list()).some(
+        (event) => event.eventType === "AI_LESSON_INJECTION_FAILED",
+      ),
+    ).toBe(true);
   });
 
   it("only enriches top-N candidates with detail requests", async () => {

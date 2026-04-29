@@ -486,6 +486,123 @@ describe("claim flow", () => {
     expect(finalized.position?.status).toBe("OPEN");
   });
 
+  it("rejects mismatched claim confirmation position identity", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    await stateRepository.upsert(
+      buildOpenPosition({
+        status: "CLAIMING",
+        lastWriteActionId: "act_claim_mismatch",
+      }),
+    );
+    await actionRepository.upsert({
+      actionId: "act_claim_mismatch",
+      type: "CLAIM_FEES",
+      status: "WAITING_CONFIRMATION",
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      idempotencyKey: "claim:mismatch",
+      requestPayload: { reason: "operator claim" },
+      resultPayload: {
+        actionType: "CLAIM_FEES",
+        claimedBaseAmount: 1,
+        txIds: ["tx_claim"],
+        reason: "operator claim",
+      },
+      txIds: ["tx_claim"],
+      error: null,
+      requestedAt: "2026-04-22T10:00:00.000Z",
+      startedAt: "2026-04-22T10:00:30.000Z",
+      completedAt: null,
+      requestedBy: "operator",
+    });
+
+    const finalized = await finalizeClaimFees({
+      actionId: "act_claim_mismatch",
+      actionRepository,
+      stateRepository,
+      dlmmGateway: new MockDlmmGateway({
+        getPosition: {
+          type: "success",
+          value: buildOpenPosition({
+            positionId: "pos_wrong",
+            status: "CLAIM_CONFIRMED",
+            feesClaimedBase: 1,
+            feesClaimedUsd: 12,
+          }),
+        },
+        deployLiquidity: {
+          type: "success",
+          value: {
+            actionType: "DEPLOY",
+            positionId: "unused",
+            txIds: [],
+          },
+        },
+        closePosition: {
+          type: "success",
+          value: {
+            actionType: "CLOSE",
+            closedPositionId: "unused",
+            txIds: [],
+          },
+        },
+        claimFees: {
+          type: "success",
+          value: {
+            actionType: "CLAIM_FEES",
+            claimedBaseAmount: 1,
+            txIds: ["tx_claim"],
+          },
+        },
+        partialClosePosition: {
+          type: "success",
+          value: {
+            actionType: "PARTIAL_CLOSE",
+            closedPositionId: "unused",
+            remainingPercentage: 50,
+            txIds: [],
+          },
+        },
+        listPositionsForWallet: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            positions: [],
+          },
+        },
+        getPoolInfo: {
+          type: "success",
+          value: {
+            poolAddress: "pool_001",
+            pairLabel: "X-Y",
+            binStep: 100,
+            activeBin: 15,
+          },
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-22T10:02:00.000Z",
+    });
+
+    const originalPosition = await stateRepository.get("pos_001");
+    expect(finalized.outcome).toBe("TIMED_OUT");
+    expect(finalized.action.status).toBe("TIMED_OUT");
+    expect(finalized.action.error).toMatch(/mismatched positionId/i);
+    expect(originalPosition?.status).toBe("RECONCILIATION_REQUIRED");
+    expect(originalPosition?.needsReconciliation).toBe(true);
+    await expect(stateRepository.get("pos_wrong")).resolves.toBeNull();
+  });
+
   it("queues a child DEPLOY action when auto-compound succeeds", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({
@@ -1303,6 +1420,11 @@ describe("claim flow", () => {
 
     const actions = await actionRepository.list();
     expect(actions.filter((item) => item.type === "DEPLOY")).toHaveLength(0);
+    expect(
+      (await journalRepository.list()).some(
+        (event) => event.eventType === "CLAIM_AUTO_COMPOUND_FAILED",
+      ),
+    ).toBe(true);
   });
 
   it("resumes compound redeploy from RECONCILING state after restart", async () => {
@@ -1882,6 +2004,8 @@ describe("claim flow", () => {
           txId: "tx_swap",
           inputAmountRaw: "250000000",
           outputAmountRaw: "100000000",
+          outputAmountUi: 0.1,
+          outputAmountUsd: 10,
         };
       },
     });
@@ -1900,6 +2024,8 @@ describe("claim flow", () => {
     expect(capturedAmountRaw).toBe("250000000");
     expect(result).toMatchObject({
       txId: "tx_swap",
+      outputAmountUi: 0.1,
+      outputAmountUsd: 10,
     });
   });
 

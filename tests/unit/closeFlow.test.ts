@@ -1127,6 +1127,76 @@ describe("close flow", () => {
     expect(finalized.position?.needsReconciliation).toBe(true);
   });
 
+  it("rejects mismatched close confirmation position identity", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_001"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      payload: {
+        reason: "identity guard test",
+      },
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close_identity"],
+            },
+          },
+        }),
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: buildCloseConfirmedPosition("pos_wrong"),
+        },
+      }),
+      journalRepository,
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("TIMED_OUT");
+    expect(finalized.action.status).toBe("TIMED_OUT");
+    expect(finalized.action.error).toMatch(/mismatched positionId/i);
+    expect((await stateRepository.get("pos_001"))?.status).toBe(
+      "RECONCILIATION_REQUIRED",
+    );
+    expect(await stateRepository.get("pos_wrong")).toBeNull();
+  });
+
   it("marks close as reconciliation-required when accounting finalization fails after confirmation", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({

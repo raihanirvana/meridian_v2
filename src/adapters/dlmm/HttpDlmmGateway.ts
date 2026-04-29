@@ -6,6 +6,7 @@ import {
 } from "../../domain/entities/Position.js";
 import {
   AdapterHttpStatusError,
+  AdapterResponseValidationError,
   JsonHttpClient,
   type FetchLike,
 } from "../http/HttpJsonClient.js";
@@ -156,11 +157,20 @@ export class HttpDlmmGateway implements DlmmGateway {
   public async listPositionsForWallet(
     wallet: string,
   ): Promise<WalletPositionsSnapshot> {
-    return this.client.request({
+    const parsedWallet = z.string().min(1).parse(wallet);
+    const snapshot = await this.client.request({
       method: "GET",
-      path: `/wallets/${encodeURIComponent(z.string().min(1).parse(wallet))}/positions`,
+      path: `/wallets/${encodeURIComponent(parsedWallet)}/positions`,
       responseSchema: WalletPositionsSnapshotSchema,
     });
+
+    if (snapshot.wallet !== parsedWallet) {
+      throw new AdapterResponseValidationError("HttpDlmmGateway", [
+        `wallet: response wallet ${snapshot.wallet} does not match requested wallet ${parsedWallet}`,
+      ]);
+    }
+
+    return snapshot;
   }
 
   public async getPoolInfo(poolAddress: string): Promise<PoolInfo> {

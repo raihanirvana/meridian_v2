@@ -571,10 +571,7 @@ describe("rebalance flow", () => {
 
     expect(firstFinalize.outcome).toBe("REDEPLOY_SUBMITTED");
 
-    gateway.positions.set("pos_new", {
-      ...buildRedeployedOpenPosition("pos_new"),
-      poolAddress: "pool_unexpected",
-    });
+    gateway.positions.set("pos_new", buildRedeployedOpenPosition("pos_wrong"));
 
     const secondFinalize = await finalizeRebalance({
       actionId: action.actionId,
@@ -591,10 +588,84 @@ describe("rebalance flow", () => {
     expect(secondFinalize.outcome).toBe("TIMED_OUT");
     expect(persistedAction?.status).toBe("TIMED_OUT");
     expect(newPosition?.status).toBe("RECONCILIATION_REQUIRED");
-    expect(persistedAction?.error).toMatch(/poolAddress mismatch/);
+    expect(persistedAction?.error).toMatch(/positionId mismatch/);
+    expect(await stateRepository.get("pos_wrong")).toBeNull();
     expect(
       (await journalRepository.list()).map((event) => event.eventType),
     ).toContain("REBALANCE_REDEPLOY_IDENTITY_MISMATCH");
+  });
+
+  it("rejects mismatched rebalance close confirmation position identity", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+      journalRepository,
+    });
+    const gateway = new RebalanceTestGateway();
+
+    await stateRepository.upsert(buildOpenPosition("pos_old_close_identity"));
+    gateway.closeResult = {
+      actionType: "CLOSE",
+      closedPositionId: "pos_old_close_identity",
+      txIds: ["tx_close_identity"],
+      releasedAmountBase: 1.2,
+      releasedAmountQuote: 0.6,
+      estimatedReleasedValueUsd: 120,
+      releasedAmountSource: "post_tx",
+      submissionStatus: "submitted",
+    };
+
+    const action = await requestRebalance({
+      actionQueue,
+      stateRepository,
+      journalRepository,
+      wallet: "wallet_001",
+      positionId: "pos_old_close_identity",
+      payload: rebalancePayload,
+      requestedBy: "system",
+      allowRiskGuardBypass: true,
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processRebalanceAction({
+        action: queuedAction,
+        dlmmGateway: gateway,
+        stateRepository,
+        journalRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    gateway.positions.set(
+      "pos_old_close_identity",
+      buildCloseConfirmedPosition("pos_wrong_close_identity"),
+    );
+
+    const finalized = await finalizeRebalance({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: gateway,
+      journalRepository,
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("TIMED_OUT");
+    expect(finalized.action.status).toBe("TIMED_OUT");
+    expect(finalized.action.error).toMatch(/positionId mismatch/i);
+    expect((await stateRepository.get("pos_old_close_identity"))?.status).toBe(
+      "RECONCILIATION_REQUIRED",
+    );
+    expect(await stateRepository.get("pos_wrong_close_identity")).toBeNull();
   });
 
   it("redeploys with post-close token amounts instead of the stale request amounts", async () => {

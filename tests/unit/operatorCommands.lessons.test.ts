@@ -55,6 +55,17 @@ describe("operatorCommands lessons", () => {
         confirm: true,
       },
     );
+    expect(
+      parseOperatorCommand({
+        raw: "lessons add Avoid thin pools --role MANAGER --tag risk --tags dlmm,exit --pinned",
+      }),
+    ).toEqual({
+      kind: "LESSONS_ADD",
+      rule: "Avoid thin pools",
+      tags: ["risk", "dlmm", "exit"],
+      role: "MANAGER",
+      pinned: true,
+    });
     expect(() =>
       parseOperatorCommand({
         raw: "lessons list --role",
@@ -65,6 +76,16 @@ describe("operatorCommands lessons", () => {
         raw: "lessons list --tag",
       }),
     ).toThrow(/--tag requires a value/i);
+    expect(() =>
+      parseOperatorCommand({
+        raw: "lessons list --unknown",
+      }),
+    ).toThrow(/unknown lessons list flag/i);
+    expect(() =>
+      parseOperatorCommand({
+        raw: "lessons add --role MANAGER",
+      }),
+    ).toThrow(/requires a rule/i);
   });
 
   it("executes lesson add/list and performance summary commands", async () => {

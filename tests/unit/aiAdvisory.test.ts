@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LlmGateway } from "../../src/adapters/llm/LlmGateway.js";
 import { MockLlmGateway } from "../../src/adapters/llm/LlmGateway.js";
@@ -820,6 +820,9 @@ describe("AI advisory service", () => {
     });
 
     await stateRepository.upsert(buildPosition());
+    const rankCandidates = vi.fn<NonNullable<LlmGateway["rankCandidates"]>>();
+    const explainManagementDecision =
+      vi.fn<NonNullable<LlmGateway["explainManagementDecision"]>>();
 
     const result = await runManagementWorker({
       wallet: "wallet_001",
@@ -859,12 +862,8 @@ describe("AI advisory service", () => {
         dataIncomplete: false,
       }),
       llmGateway: {
-        rankCandidates: async () => {
-          throw new Error("rankCandidates should not be called");
-        },
-        explainManagementDecision: async () => {
-          throw new Error("explainManagementDecision should not be called");
-        },
+        rankCandidates,
+        explainManagementDecision,
       },
       aiMode: "advisory",
       aiTimeoutMs: 1,
@@ -879,5 +878,12 @@ describe("AI advisory service", () => {
     const actions = await actionRepository.list();
     expect(actions).toHaveLength(1);
     expect(actions[0]?.type).toBe("CLOSE");
+    expect(rankCandidates).not.toHaveBeenCalled();
+    expect(explainManagementDecision).not.toHaveBeenCalled();
+    expect(
+      (await journalRepository.list()).some(
+        (event) => event.eventType === "AI_LESSON_INJECTION_FAILED",
+      ),
+    ).toBe(true);
   });
 });

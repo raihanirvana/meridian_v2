@@ -159,10 +159,12 @@ export class InMemoryMeteoraDetailRateLimiter implements MeteoraDetailRateLimite
             this.lastRequestAtMs + this.detailRequestIntervalMs - nowMs,
           );
 
-    // Reserve the slot synchronously — no await between check and mutation
-    // so concurrent callers cannot both read "allowed" before either records.
-    this.requestTimestampsMs.push(nowMs);
-    this.lastRequestAtMs = nowMs;
+    // Reserve the actual request slot after the required wait. Recording the
+    // pre-wait timestamp would let the next caller skip the intended spacing.
+    const reservedRequestMs = nowMs + waitMs;
+    this.prune(reservedRequestMs);
+    this.requestTimestampsMs.push(reservedRequestMs);
+    this.lastRequestAtMs = reservedRequestMs;
 
     return { allowed: true, waitMs };
   }
@@ -286,9 +288,8 @@ export class FileMeteoraDetailRateLimiter
     now: string,
   ): Promise<DetailRateLimitDecision> {
     await this.load(now);
-    const decision = await super.beforeRequest(now);
+    const decision = await super.reserveRequest(now);
     if (decision.allowed) {
-      await super.recordAttempt(now);
       await this.persist(now);
     }
     return decision;

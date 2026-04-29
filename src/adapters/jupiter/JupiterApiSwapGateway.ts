@@ -46,6 +46,29 @@ function parseNumericString(value: string, fieldName: string): number {
   return parsed;
 }
 
+function parseOptionalNonnegativeNumber(
+  value: unknown,
+  fieldName: string,
+): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
+      `${fieldName}: invalid non-negative number`,
+    ]);
+  }
+
+  return parsed;
+}
+
 function parseRawAmountString(value: string, fieldName: string): string {
   if (!/^\d+$/.test(value)) {
     throw new AdapterResponseValidationError("JupiterApiSwapGateway", [
@@ -169,11 +192,26 @@ export class JupiterApiSwapGateway implements SwapGateway {
       executeResponse.totalOutputAmount,
       "outputAmountResult",
     );
+    const inputAmountUi = parseOptionalNonnegativeNumber(
+      executeResponse.inputAmountUi,
+      "inputAmountUi",
+    );
+    const outputAmountUi = parseOptionalNonnegativeNumber(
+      executeResponse.outputAmountUi,
+      "outputAmountUi",
+    );
+    const outputAmountUsd = parseOptionalNonnegativeNumber(
+      executeResponse.outputAmountUsd,
+      "outputAmountUsd",
+    );
 
     return ExecuteSwapResultSchema.parse({
       txId: executeResponse.signature,
       inputAmountRaw,
+      ...(inputAmountUi === undefined ? {} : { inputAmountUi }),
       outputAmountRaw,
+      ...(outputAmountUi === undefined ? {} : { outputAmountUi }),
+      ...(outputAmountUsd === undefined ? {} : { outputAmountUsd }),
     });
   }
 }

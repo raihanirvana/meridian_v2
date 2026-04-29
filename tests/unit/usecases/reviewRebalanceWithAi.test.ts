@@ -144,6 +144,89 @@ describe("reviewRebalanceWithAi", () => {
     expect(result.aiError).toBe("llm unavailable");
   });
 
+  it("journals lesson injection failure when rebalance lessons cannot be loaded", async () => {
+    const journal: Array<Record<string, unknown>> = [];
+    let plannerCalled = false;
+
+    const result = await reviewRebalanceWithAi({
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      mode: "constrained_action",
+      review: buildReview(),
+      planner: {
+        async reviewRebalanceDecision() {
+          plannerCalled = true;
+          return buildDecision();
+        },
+      },
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          throw new Error("lesson store unavailable");
+        },
+      },
+      journalRepository: {
+        async append(event: Record<string, unknown>) {
+          journal.push(event);
+        },
+      } as unknown as JournalRepository,
+      now,
+    });
+
+    expect(result.source).toBe("FALLBACK");
+    expect(result.decision.action).toBe("hold");
+    expect(result.aiError).toBe("lesson store unavailable");
+    expect(plannerCalled).toBe(false);
+    expect(journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "AI_LESSON_INJECTION_FAILED",
+          wallet: "wallet_001",
+          positionId: "pos_001",
+          resultStatus: "FAILED",
+          error: "lesson store unavailable",
+          after: {
+            stage: "rebalance_review",
+          },
+        }),
+      ]),
+    );
+  });
+
+  it("does not journal lesson injection failure when the rebalance planner fails", async () => {
+    const journal: Array<Record<string, unknown>> = [];
+
+    const result = await reviewRebalanceWithAi({
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      mode: "constrained_action",
+      review: buildReview(),
+      planner: {
+        async reviewRebalanceDecision() {
+          throw new Error("llm unavailable");
+        },
+      },
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return "Prefer stable manager lessons.";
+        },
+      },
+      journalRepository: {
+        async append(event: Record<string, unknown>) {
+          journal.push(event);
+        },
+      } as unknown as JournalRepository,
+      now,
+    });
+
+    expect(result.source).toBe("FALLBACK");
+    expect(result.aiError).toBe("llm unavailable");
+    expect(
+      journal.some(
+        (entry) => entry.eventType === "AI_LESSON_INJECTION_FAILED",
+      ),
+    ).toBe(false);
+  });
+
   it("returns a validated result when rebalance review journal append fails", async () => {
     const failingJournal = {
       async append() {

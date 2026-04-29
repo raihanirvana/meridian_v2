@@ -219,6 +219,25 @@ function assertCloseAction(action: Action): asserts action is Action & {
   }
 }
 
+function validateCloseConfirmationIdentity(input: {
+  confirmedPosition: Position | null;
+  action: Action & { type: "CLOSE"; positionId: string };
+}): string | null {
+  if (input.confirmedPosition === null) {
+    return null;
+  }
+
+  if (input.confirmedPosition.positionId !== input.action.positionId) {
+    return `Close confirmation returned mismatched positionId ${input.confirmedPosition.positionId}; expected ${input.action.positionId}`;
+  }
+
+  if (input.confirmedPosition.wallet !== input.action.wallet) {
+    return `Close confirmation returned wallet ${input.confirmedPosition.wallet}; expected ${input.action.wallet}`;
+  }
+
+  return null;
+}
+
 function buildCloseConfirmedPosition(input: {
   confirmedPosition: Position;
   closingPosition: Position;
@@ -556,9 +575,16 @@ export async function finalizeClose(
       const confirmedPosition = await input.dlmmGateway.getPosition(
         latestAction.positionId,
       );
+      const confirmationIdentityError = validateCloseConfirmationIdentity({
+        confirmedPosition,
+        action: latestAction,
+      });
+      const confirmedPositionForAction =
+        confirmationIdentityError === null ? confirmedPosition : null;
       const canRecoverAmbiguousOpenOnlyClose =
         input.dlmmGateway.reconciliationReadModel === "open_only" &&
-        confirmedPosition === null &&
+        confirmedPositionForAction === null &&
+        confirmationIdentityError === null &&
         closingPosition !== null &&
         closingPosition.status === "RECONCILIATION_REQUIRED" &&
         closeResult.submissionAmbiguous === true;
@@ -572,7 +598,7 @@ export async function finalizeClose(
           : null;
       const closeConfirmedPositionLike = inferCloseConfirmedPosition(
         closingPosition,
-        confirmedPosition,
+        confirmedPositionForAction,
         input.dlmmGateway.reconciliationReadModel === "open_only",
         latestAction.actionId,
         now,
@@ -674,7 +700,7 @@ export async function finalizeClose(
           resumeReconcilingPosition === null) ||
         closeConfirmedPositionLike === null
       ) {
-        const sourcePosition = closingPosition ?? confirmedPosition;
+        const sourcePosition = closingPosition ?? confirmedPositionForAction;
 
         if (sourcePosition === null) {
           throw new Error(
@@ -697,6 +723,8 @@ export async function finalizeClose(
               ? `Close finalization requires reconciliation because local closing position is missing for ${latestAction.positionId}`
               : closingPosition.status !== "CLOSING"
                 ? `Close finalization requires reconciliation because local position status is ${closingPosition.status} for ${latestAction.positionId}`
+                : confirmationIdentityError !== null
+                  ? confirmationIdentityError
                 : closeConfirmedPositionLike === null
                   ? `Close confirmation not found for position ${latestAction.positionId}`
                   : `Close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,

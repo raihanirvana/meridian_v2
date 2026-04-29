@@ -31,6 +31,7 @@ export const ExecuteSwapResultSchema = z.object({
   // Required for auto-compound deploy; adapters that only return raw atomic amounts
   // must leave this undefined, which will cause auto-compound to fail explicitly.
   outputAmountUi: z.number().nonnegative().optional(),
+  outputAmountUsd: z.number().nonnegative().optional(),
 });
 
 export type SwapQuoteRequest = z.infer<typeof SwapQuoteRequestSchema>;

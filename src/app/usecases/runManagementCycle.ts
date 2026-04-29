@@ -409,7 +409,7 @@ function advisoryBypassForDeterministicResult(
 
 const missingLessonPromptService: LessonPromptService = {
   async buildLessonsPrompt(): Promise<string | null> {
-    return null;
+    throw new Error("LessonPromptService is required when AI mode is enabled");
   },
 };
 

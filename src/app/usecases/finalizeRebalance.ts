@@ -242,6 +242,25 @@ function getNewPositionIdFromPayload(
   return null;
 }
 
+function validateRebalanceCloseConfirmationIdentity(input: {
+  confirmedPosition: Position | null;
+  action: Action & { type: "REBALANCE"; positionId: string };
+}): string | null {
+  if (input.confirmedPosition === null) {
+    return null;
+  }
+
+  if (input.confirmedPosition.positionId !== input.action.positionId) {
+    return `rebalance close confirmation positionId mismatch: expected ${input.action.positionId}, got ${input.confirmedPosition.positionId}`;
+  }
+
+  if (input.confirmedPosition.wallet !== input.action.wallet) {
+    return `rebalance close confirmation wallet mismatch: expected ${input.action.wallet}, got ${input.confirmedPosition.wallet}`;
+  }
+
+  return null;
+}
+
 function buildCloseConfirmedPosition(input: {
   confirmedPosition: Position;
   closingPosition: Position;
@@ -505,9 +524,23 @@ function validateRedeployConfirmationIdentity(input: {
   const fields: Array<
     keyof Pick<
       Position,
-      "poolAddress" | "tokenXMint" | "tokenYMint" | "wallet" | "baseMint" | "quoteMint"
+      | "positionId"
+      | "poolAddress"
+      | "tokenXMint"
+      | "tokenYMint"
+      | "wallet"
+      | "baseMint"
+      | "quoteMint"
     >
-  > = ["poolAddress", "tokenXMint", "tokenYMint", "wallet", "baseMint", "quoteMint"];
+  > = [
+    "positionId",
+    "poolAddress",
+    "tokenXMint",
+    "tokenYMint",
+    "wallet",
+    "baseMint",
+    "quoteMint",
+  ];
 
   for (const field of fields) {
     if (input.pendingPosition[field] !== input.confirmedPosition[field]) {
@@ -727,9 +760,15 @@ async function finalizeCloseLeg(input: {
   const confirmedPosition = await input.dlmmGateway.getPosition(
     input.latestAction.positionId,
   );
+  const confirmationIdentityError = validateRebalanceCloseConfirmationIdentity({
+    confirmedPosition,
+    action: input.latestAction,
+  });
+  const confirmedPositionForAction =
+    confirmationIdentityError === null ? confirmedPosition : null;
   const closeConfirmedPositionLike = inferCloseConfirmedPosition(
     closingPosition,
-    confirmedPosition,
+    confirmedPositionForAction,
     input.dlmmGateway.reconciliationReadModel === "open_only",
     input.latestAction.actionId,
     input.now,
@@ -745,7 +784,7 @@ async function finalizeCloseLeg(input: {
     !isClosingStatusValid ||
     closeConfirmedPositionLike === null
   ) {
-    const sourcePosition = closingPosition ?? confirmedPosition;
+    const sourcePosition = closingPosition ?? confirmedPositionForAction;
 
     if (sourcePosition === null) {
       throw new Error(
@@ -758,6 +797,8 @@ async function finalizeCloseLeg(input: {
         ? `Rebalance close finalization requires reconciliation because local closing position is missing for ${input.latestAction.positionId}`
         : closingPosition.status !== "CLOSING_FOR_REBALANCE"
           ? `Rebalance close finalization requires reconciliation because local position status is ${closingPosition.status} for ${input.latestAction.positionId}`
+          : confirmationIdentityError !== null
+            ? confirmationIdentityError
           : closeConfirmedPositionLike === null
             ? `Rebalance close confirmation not found for position ${input.latestAction.positionId}`
             : `Rebalance close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${input.latestAction.positionId}`;

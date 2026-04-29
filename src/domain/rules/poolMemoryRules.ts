@@ -37,7 +37,7 @@ export function computePoolAggregates(deploys: PoolDeploy[]): {
     winRatePct: Number(((wins / totalDeploys) * 100).toFixed(2)),
     lastOutcome:
       lastDeploy === null ? null : lastDeploy.pnlPct >= 0 ? "profit" : "loss",
-    lastDeployedAt: lastDeploy?.closedAt ?? null,
+    lastDeployedAt: lastDeploy?.deployedAt ?? null,
   };
 }
 

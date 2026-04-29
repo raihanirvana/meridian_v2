@@ -336,10 +336,9 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       }
       throw error;
     }
-    const pool =
-      extractPools(response).find(
-        (item) => extractPoolAddress(item) === parsedPoolAddress,
-      ) ?? extractPools(response)[0];
+    const pool = extractPools(response).find(
+      (item) => extractPoolAddress(item) === parsedPoolAddress,
+    );
 
     if (pool === undefined) {
       return CandidateDetailsSchema.parse({

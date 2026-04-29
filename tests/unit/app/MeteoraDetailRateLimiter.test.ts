@@ -137,6 +137,39 @@ describe("InMemoryMeteoraDetailRateLimiter", () => {
     });
   });
 
+  it("reserves the post-wait timestamp so consecutive reserved requests stay spaced", async () => {
+    const limiter = new InMemoryMeteoraDetailRateLimiter({
+      detailRequestIntervalMs: 4_000,
+      maxDetailRequestsPerWindow: 5,
+      detailRequestWindowMs: 60_000,
+      detailCooldownAfter429Ms: 900_000,
+    });
+
+    await expect(
+      limiter.reserveRequest("2026-04-26T00:00:00.000Z"),
+    ).resolves.toEqual({
+      allowed: true,
+      waitMs: 0,
+    });
+    await expect(
+      limiter.reserveRequest("2026-04-26T00:00:00.000Z"),
+    ).resolves.toEqual({
+      allowed: true,
+      waitMs: 4_000,
+    });
+    await expect(
+      limiter.reserveRequest("2026-04-26T00:00:04.000Z"),
+    ).resolves.toEqual({
+      allowed: true,
+      waitMs: 4_000,
+    });
+
+    await expect(limiter.snapshot()).resolves.toMatchObject({
+      requestCountInWindow: 3,
+      lastRequestAt: "2026-04-26T00:00:08.000Z",
+    });
+  });
+
   it("persists cooldown and attempts across limiter instances", async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), "meridian-v2-rate-limit-"),

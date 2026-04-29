@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
+import {
+  AdapterResponseValidationError,
+  JsonHttpClient,
+  type FetchLike,
+} from "../http/HttpJsonClient.js";
 
 import {
   SmartMoneySnapshotSchema,
@@ -38,32 +42,72 @@ export class HttpTokenIntelGateway implements TokenIntelGateway {
   public async getTokenRiskSnapshot(
     tokenMint: string,
   ): Promise<TokenRiskSnapshot> {
-    return this.client.request({
+    const parsedTokenMint = z.string().min(1).parse(tokenMint);
+    const snapshot = await this.client.request({
       method: "GET",
-      path: `/tokens/${encodeURIComponent(z.string().min(1).parse(tokenMint))}/risk`,
+      path: `/tokens/${encodeURIComponent(parsedTokenMint)}/risk`,
       responseSchema: TokenRiskSnapshotSchema,
     });
+
+    assertRequestedTokenMint({
+      methodName: "getTokenRiskSnapshot",
+      requestedTokenMint: parsedTokenMint,
+      responseTokenMint: snapshot.tokenMint,
+    });
+
+    return snapshot;
   }
 
   public async getSmartMoneySnapshot(
     tokenMint: string,
   ): Promise<SmartMoneySnapshot> {
-    return this.client.request({
+    const parsedTokenMint = z.string().min(1).parse(tokenMint);
+    const snapshot = await this.client.request({
       method: "GET",
-      path: `/tokens/${encodeURIComponent(z.string().min(1).parse(tokenMint))}/smart-money`,
+      path: `/tokens/${encodeURIComponent(parsedTokenMint)}/smart-money`,
       responseSchema: SmartMoneySnapshotSchema,
     });
+
+    assertRequestedTokenMint({
+      methodName: "getSmartMoneySnapshot",
+      requestedTokenMint: parsedTokenMint,
+      responseTokenMint: snapshot.tokenMint,
+    });
+
+    return snapshot;
   }
 
   public async getTokenNarrativeSnapshot(
     tokenMint: string,
   ): Promise<TokenNarrativeSnapshot> {
-    return this.client.request({
+    const parsedTokenMint = z.string().min(1).parse(tokenMint);
+    const snapshot = await this.client.request({
       method: "GET",
       path:
-        `/tokens/${encodeURIComponent(z.string().min(1).parse(tokenMint))}` +
-        "/narrative",
+        `/tokens/${encodeURIComponent(parsedTokenMint)}` + "/narrative",
       responseSchema: TokenNarrativeSnapshotSchema,
     });
+
+    assertRequestedTokenMint({
+      methodName: "getTokenNarrativeSnapshot",
+      requestedTokenMint: parsedTokenMint,
+      responseTokenMint: snapshot.tokenMint,
+    });
+
+    return snapshot;
   }
+}
+
+function assertRequestedTokenMint(input: {
+  methodName: string;
+  requestedTokenMint: string;
+  responseTokenMint: string;
+}): void {
+  if (input.responseTokenMint === input.requestedTokenMint) {
+    return;
+  }
+
+  throw new AdapterResponseValidationError("HttpTokenIntelGateway", [
+    `${input.methodName}.tokenMint: response token ${input.responseTokenMint} does not match requested token ${input.requestedTokenMint}`,
+  ]);
 }

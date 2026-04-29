@@ -628,6 +628,48 @@ describe("real adapters", () => {
     expect(requestedUrl).toContain("limit=5");
   });
 
+  it("rejects screening detail responses for a different requested pool", async () => {
+    const screening = new HttpScreeningGateway({
+      baseUrl: "https://screening.example.com/v1/",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            poolAddress: "pool_other",
+            pairLabel: "OTHER-SOL",
+            feeToTvlRatio: 1.2,
+            organicScore: 80,
+            holderCount: 1_000,
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      screening.getCandidateDetails("pool_001"),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+  });
+
+  it("rejects token intel snapshots for a different requested token", async () => {
+    const intel = new HttpTokenIntelGateway({
+      baseUrl: "https://intel.example.com/v1/",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            tokenMint: "mint_other",
+            narrativeSummary: "Wrong token narrative",
+            holderDistributionSummary: "Wrong token holders",
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      intel.getTokenNarrativeSnapshot("mint_001"),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+  });
+
   it("maps Meteora Pool Discovery pools into screening candidates", async () => {
     let requestedUrl = "";
     const screening = new MeteoraPoolDiscoveryScreeningGateway({
@@ -838,6 +880,49 @@ describe("real adapters", () => {
     expect(filterBy).toBe("pool_address=pool_001");
   });
 
+  it("does not enrich Meteora details from the first pool when the filtered pool is absent", async () => {
+    const screening = new MeteoraPoolDiscoveryScreeningGateway({
+      baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
+      now: () => "2026-04-24T00:00:00.000Z",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify([
+            {
+              pool_address: "pool_other",
+              name: "OTHER-SOL",
+              active_tvl: 25_000,
+              volume: 80_000,
+              fee_active_tvl_ratio: 1.2,
+              fee_per_tvl_24h: 1.4,
+              base_token_holders: 1_500,
+              dlmm_params: { bin_step: 100 },
+              token_x: {
+                address: "mint_other",
+                symbol: "OTHER",
+                organic_score: 74,
+                market_cap: 600_000,
+              },
+              token_y: {
+                address: "So11111111111111111111111111111111111111112",
+                symbol: "SOL",
+              },
+            },
+          ]),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      screening.getCandidateDetails("pool_001"),
+    ).resolves.toMatchObject({
+      poolAddress: "pool_001",
+      pairLabel: "pool_001",
+      feeToTvlRatio: 0,
+      organicScore: 0,
+      holderCount: 0,
+    });
+  });
+
   it("maps Meteora Pool Discovery 429 details to typed rate-limit errors", async () => {
     const screening = new MeteoraPoolDiscoveryScreeningGateway({
       baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
@@ -870,6 +955,25 @@ describe("real adapters", () => {
     await expect(dlmm.getPosition("pos_missing")).resolves.toBeNull();
   });
 
+  it("rejects DLMM wallet position snapshots for a different requested wallet", async () => {
+    const dlmm = new HttpDlmmGateway({
+      baseUrl: "https://dlmm.example.com/v1/",
+      fetchFn: createFetchFromResponse(
+        new Response(
+          JSON.stringify({
+            wallet: "wallet_other",
+            positions: [],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(
+      dlmm.listPositionsForWallet("wallet_001"),
+    ).rejects.toBeInstanceOf(AdapterResponseValidationError);
+  });
+
   it("maps Jupiter execute response into existing SwapGateway contract", async () => {
     const jupiter = new JupiterApiSwapGateway({
       executeBaseUrl: "https://api.jup.ag/ultra/v1/",
@@ -878,7 +982,10 @@ describe("real adapters", () => {
           JSON.stringify({
             signature: "sig_001",
             inputAmountResult: "100000000",
+            inputAmountUi: "0.1",
             outputAmountResult: "17057460",
+            outputAmountUi: 17.05746,
+            outputAmountUsd: "17.05",
           }),
           { status: 200 },
         ),
@@ -895,7 +1002,10 @@ describe("real adapters", () => {
     ).resolves.toEqual({
       txId: "sig_001",
       inputAmountRaw: "100000000",
+      inputAmountUi: 0.1,
       outputAmountRaw: "17057460",
+      outputAmountUi: 17.05746,
+      outputAmountUsd: 17.05,
     });
   });
 

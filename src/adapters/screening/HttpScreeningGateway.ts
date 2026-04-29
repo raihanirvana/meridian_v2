@@ -4,7 +4,11 @@ import {
   CandidateSchema,
   type Candidate,
 } from "../../domain/entities/Candidate.js";
-import { JsonHttpClient, type FetchLike } from "../http/HttpJsonClient.js";
+import {
+  AdapterResponseValidationError,
+  JsonHttpClient,
+  type FetchLike,
+} from "../http/HttpJsonClient.js";
 
 import {
   CandidateDetailsSchema,
@@ -55,10 +59,19 @@ export class HttpScreeningGateway implements ScreeningGateway {
   public async getCandidateDetails(
     poolAddress: string,
   ): Promise<CandidateDetails> {
-    return this.client.request({
+    const parsedPoolAddress = z.string().min(1).parse(poolAddress);
+    const details = await this.client.request({
       method: "GET",
-      path: `/candidates/${encodeURIComponent(z.string().min(1).parse(poolAddress))}`,
+      path: `/candidates/${encodeURIComponent(parsedPoolAddress)}`,
       responseSchema: CandidateDetailsSchema,
     });
+
+    if (details.poolAddress !== parsedPoolAddress) {
+      throw new AdapterResponseValidationError("HttpScreeningGateway", [
+        `poolAddress: response pool ${details.poolAddress} does not match requested pool ${parsedPoolAddress}`,
+      ]);
+    }
+
+    return details;
   }
 }

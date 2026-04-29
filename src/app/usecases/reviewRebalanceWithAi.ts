@@ -81,6 +81,41 @@ function deterministicHoldDecision(): AiRebalanceDecision {
   });
 }
 
+async function appendLessonInjectionFailedJournal(input: {
+  journalRepository?: JournalRepository;
+  timestamp: string;
+  wallet: string;
+  positionId: string;
+  error: unknown;
+}): Promise<void> {
+  if (input.journalRepository === undefined) {
+    return;
+  }
+
+  try {
+    await input.journalRepository.append({
+      timestamp: input.timestamp,
+      eventType: "AI_LESSON_INJECTION_FAILED",
+      actor: "system",
+      wallet: input.wallet,
+      positionId: input.positionId,
+      actionId: null,
+      before: null,
+      after: {
+        stage: "rebalance_review",
+      },
+      txIds: [],
+      resultStatus: "FAILED",
+      error: errorMessage(input.error),
+    });
+  } catch (journalError) {
+    logger.warn(
+      { err: journalError, positionId: input.positionId },
+      "AI rebalance lesson failure journal append failed",
+    );
+  }
+}
+
 async function appendJournal(input: {
   journalRepository?: JournalRepository;
   timestamp: string;
@@ -156,6 +191,7 @@ export async function reviewRebalanceWithAi(
   } else if (input.planner === undefined) {
     source = "DETERMINISTIC";
   } else {
+    let aiStage: "lesson_injection" | "planner" = "lesson_injection";
     try {
       const aiWork = async (): Promise<AiRebalanceDecision> => {
         if (input.lessonPromptService === undefined) {
@@ -172,6 +208,7 @@ export async function reviewRebalanceWithAi(
           lessonsPrompt?.includes("### POOL MEMORY") === true
             ? []
             : ["### POOL MEMORY", "No pool memory recorded for this pool yet."];
+        aiStage = "planner";
         return AiRebalanceDecisionSchema.parse(
           await input.planner!.reviewRebalanceDecision({
             ...review,
@@ -193,10 +230,26 @@ export async function reviewRebalanceWithAi(
           : await aiWork();
       source = "AI";
     } catch (error) {
-      logger.warn(
-        { err: error, eventType: "AI_LESSON_INJECTION_FAILED" },
-        "AI rebalance review fallback to hold",
-      );
+      if (aiStage === "lesson_injection") {
+        logger.warn(
+          { err: error, eventType: "AI_LESSON_INJECTION_FAILED" },
+          "AI rebalance review fallback to hold because lesson injection failed",
+        );
+        await appendLessonInjectionFailedJournal({
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          timestamp,
+          wallet: input.wallet,
+          positionId: input.positionId,
+          error,
+        });
+      } else {
+        logger.warn(
+          { err: error },
+          "AI rebalance review fallback to hold",
+        );
+      }
       source = "FALLBACK";
       aiError = errorMessage(error);
       decision = deterministicHoldDecision();

@@ -156,6 +156,45 @@ describe("recordPoolDeploy", () => {
     expect(entry.avgPnlPct).toBe(5);
   });
 
+  it("does not extend cooldown when the same deploy is replayed", async () => {
+    const directory = await makeTempDir();
+    const repository = new FilePoolMemoryRepository({
+      filePath: path.join(directory, "pool-memory.json"),
+    });
+
+    await recordPoolDeploy({
+      poolMemoryRepository: repository,
+      poolAddress: "pool_001",
+      name: "SOL-USDC",
+      baseMint: "mint_sol",
+      deploy: buildDeploy({
+        closeReason: "volume_collapse",
+        positionId: "pos_001",
+        sourceActionId: "action_001",
+        pnlPct: -6,
+        pnlUsd: -6,
+      }),
+      now: "2026-04-22T02:00:00.000Z",
+    });
+    const replayed = await recordPoolDeploy({
+      poolMemoryRepository: repository,
+      poolAddress: "pool_001",
+      name: "SOL-USDC",
+      baseMint: "mint_sol",
+      deploy: buildDeploy({
+        closeReason: "volume_collapse",
+        positionId: "pos_001",
+        sourceActionId: "action_001",
+        pnlPct: -6,
+        pnlUsd: -6,
+      }),
+      now: "2026-04-22T05:00:00.000Z",
+    });
+
+    expect(replayed.totalDeploys).toBe(1);
+    expect(replayed.cooldownUntil).toBe("2026-04-22T06:00:00.000Z");
+  });
+
   it("returns the updated entry when pool memory persistence succeeds but journaling fails", async () => {
     const directory = await makeTempDir();
     const repository = new FilePoolMemoryRepository({

@@ -729,7 +729,9 @@ export async function runScreeningCycle(
         }
       : (input.lessonPromptService ?? {
           async buildLessonsPrompt(): Promise<string | null> {
-            return null;
+            throw new Error(
+              "LessonPromptService is required when AI mode is enabled",
+            );
           },
         });
   const aiShortlist = await rankShortlistWithAi({

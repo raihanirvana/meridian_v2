@@ -171,6 +171,27 @@ async function appendJournalEvent(
   await journalRepository.append(event);
 }
 
+async function appendAutoCompoundFailed(input: {
+  journalRepository?: JournalRepository;
+  timestamp: string;
+  action: Action;
+  error: string;
+}): Promise<void> {
+  await appendJournalEvent(input.journalRepository, {
+    timestamp: input.timestamp,
+    eventType: "CLAIM_AUTO_COMPOUND_FAILED",
+    actor: input.action.requestedBy,
+    wallet: input.action.wallet,
+    positionId: input.action.positionId,
+    actionId: input.action.actionId,
+    before: null,
+    after: null,
+    txIds: [],
+    resultStatus: "FAILED",
+    error: input.error,
+  }).catch(() => undefined);
+}
+
 function assertClaimAction(action: Action): asserts action is Action & {
   type: "CLAIM_FEES";
   positionId: string;
@@ -214,6 +235,25 @@ function buildClaimConfirmedPosition(input: {
     lastWriteActionId: input.actionId,
     needsReconciliation: false,
   });
+}
+
+function validateClaimConfirmationIdentity(input: {
+  confirmedPosition: Position | null;
+  action: Action & { type: "CLAIM_FEES"; positionId: string };
+}): string | null {
+  if (input.confirmedPosition === null) {
+    return null;
+  }
+
+  if (input.confirmedPosition.positionId !== input.action.positionId) {
+    return `Claim confirmation returned mismatched positionId ${input.confirmedPosition.positionId}; expected ${input.action.positionId}`;
+  }
+
+  if (input.confirmedPosition.wallet !== input.action.wallet) {
+    return `Claim confirmation returned wallet ${input.confirmedPosition.wallet}; expected ${input.action.wallet}`;
+  }
+
+  return null;
 }
 
 function buildReconcilingPosition(
@@ -562,11 +602,31 @@ async function runClaimPostProcessing(input: {
           phase: "FAILED",
           error: "post claim swap hook unavailable for auto-compound",
         });
+        await appendAutoCompoundFailed({
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          timestamp: input.now,
+          action: workingAction,
+          error:
+            compound.error ??
+            "post claim swap hook unavailable for auto-compound",
+        });
       } else if (claimResult.claimedBaseAmountSource === "unavailable") {
         compound = ClaimAutoCompoundStateSchema.parse({
           ...compound,
           phase: "FAILED",
           error:
+            "claimed base amount unavailable after claim; auto-compound skipped",
+        });
+        await appendAutoCompoundFailed({
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          timestamp: input.now,
+          action: workingAction,
+          error:
+            compound.error ??
             "claimed base amount unavailable after claim; auto-compound skipped",
         });
       } else {
@@ -604,19 +664,14 @@ async function runClaimPostProcessing(input: {
             action: workingAction,
             resultPayload: claimResult,
           });
-          await appendJournalEvent(input.journalRepository, {
+          await appendAutoCompoundFailed({
+            ...(input.journalRepository === undefined
+              ? {}
+              : { journalRepository: input.journalRepository }),
             timestamp: input.now,
-            eventType: "CLAIM_AUTO_COMPOUND_FAILED",
-            actor: workingAction.requestedBy,
-            wallet: workingAction.wallet,
-            positionId: workingAction.positionId,
-            actionId: workingAction.actionId,
-            before: null,
-            after: null,
-            txIds: [],
-            resultStatus: "FAILED",
+            action: workingAction,
             error: errorMessage(error, "claim auto-compound swap failed"),
-          }).catch(() => undefined);
+          });
         }
       }
 
@@ -652,6 +707,16 @@ async function runClaimPostProcessing(input: {
           ...compound,
           phase: "FAILED",
           error: "action queue unavailable for auto-compound redeploy",
+        });
+        await appendAutoCompoundFailed({
+          ...(input.journalRepository === undefined
+            ? {}
+            : { journalRepository: input.journalRepository }),
+          timestamp: input.now,
+          action: workingAction,
+          error:
+            compound.error ??
+            "action queue unavailable for auto-compound redeploy",
         });
       } else {
         try {
@@ -745,22 +810,17 @@ async function runClaimPostProcessing(input: {
             resultPayload: claimResult,
           });
           if (compoundEnqueueFailed) {
-            await appendJournalEvent(input.journalRepository, {
+            await appendAutoCompoundFailed({
+              ...(input.journalRepository === undefined
+                ? {}
+                : { journalRepository: input.journalRepository }),
               timestamp: input.now,
-              eventType: "CLAIM_AUTO_COMPOUND_FAILED",
-              actor: workingAction.requestedBy,
-              wallet: workingAction.wallet,
-              positionId: workingAction.positionId,
-              actionId: workingAction.actionId,
-              before: null,
-              after: null,
-              txIds: [],
-              resultStatus: "FAILED",
+              action: workingAction,
               error: errorMessage(
                 error,
                 "claim auto-compound deploy enqueue failed",
               ),
-            }).catch(() => undefined);
+            });
           }
         }
       }
@@ -903,12 +963,18 @@ export async function finalizeClaimFees(
         const confirmedPosition = await input.dlmmGateway.getPosition(
           latestAction.positionId,
         );
+        const confirmationIdentityError = validateClaimConfirmationIdentity({
+          confirmedPosition,
+          action: latestAction,
+        });
+        const confirmedPositionForAction =
+          confirmationIdentityError === null ? confirmedPosition : null;
 
         if (
           claimingPosition !== null &&
           claimingPosition.status === "OPEN" &&
-          confirmedPosition !== null &&
-          confirmedPosition.status === "OPEN"
+          confirmedPositionForAction !== null &&
+          confirmedPositionForAction.status === "OPEN"
         ) {
           const reconcilingAction = {
             ...latestAction,
@@ -938,13 +1004,13 @@ export async function finalizeClaimFees(
         if (
           claimingPosition !== null &&
           claimingPosition.status === "RECONCILIATION_REQUIRED" &&
-          confirmedPosition !== null &&
-          confirmedPosition.status === "OPEN"
+          confirmedPositionForAction !== null &&
+          confirmedPositionForAction.status === "OPEN"
         ) {
           const reconcilingPosition = buildReconcilingPosition(
             PositionSchema.parse({
               ...claimingPosition,
-              ...confirmedPosition,
+              ...confirmedPositionForAction,
               status: transitionPositionStatus(
                 "RECONCILIATION_REQUIRED",
                 "RECONCILING",
@@ -983,11 +1049,11 @@ export async function finalizeClaimFees(
         }
 
         const claimConfirmedLikePosition =
-          confirmedPosition !== null &&
-          (confirmedPosition.status === "CLAIM_CONFIRMED" ||
+          confirmedPositionForAction !== null &&
+          (confirmedPositionForAction.status === "CLAIM_CONFIRMED" ||
             (input.dlmmGateway.reconciliationReadModel === "open_only" &&
-              confirmedPosition.status === "OPEN"))
-            ? confirmedPosition
+              confirmedPositionForAction.status === "OPEN"))
+            ? confirmedPositionForAction
             : null;
 
         if (
@@ -995,7 +1061,7 @@ export async function finalizeClaimFees(
           claimingPosition.status !== "CLAIMING" ||
           claimConfirmedLikePosition === null
         ) {
-          const sourcePosition = claimingPosition ?? confirmedPosition;
+          const sourcePosition = claimingPosition ?? confirmedPositionForAction;
           if (sourcePosition === null) {
             throw new Error(
               `Claim finalization cannot build reconciliation state for ${latestAction.positionId}`,
@@ -1017,7 +1083,9 @@ export async function finalizeClaimFees(
                 ? `Claim finalization requires reconciliation because local claiming position is missing for ${latestAction.positionId}`
                 : claimingPosition.status !== "CLAIMING"
                   ? `Claim finalization requires reconciliation because local position status is ${claimingPosition.status} for ${latestAction.positionId}`
-                  : claimConfirmedLikePosition === null
+                  : confirmationIdentityError !== null
+                    ? confirmationIdentityError
+                    : claimConfirmedLikePosition === null
                     ? `Claim confirmation not found for position ${latestAction.positionId}`
                     : `Claim confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
             completedAt: now,

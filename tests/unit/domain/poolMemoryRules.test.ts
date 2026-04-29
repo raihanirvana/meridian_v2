@@ -92,14 +92,18 @@ describe("pool memory rules", () => {
       computePoolAggregates([
         buildDeploy({ pnlPct: 5 }),
         buildDeploy({ pnlPct: -2 }),
-        buildDeploy({ pnlPct: 1 }),
+        buildDeploy({
+          deployedAt: "2026-04-22T03:00:00.000Z",
+          closedAt: "2026-04-22T05:00:00.000Z",
+          pnlPct: 1,
+        }),
       ]),
     ).toEqual({
       totalDeploys: 3,
       avgPnlPct: 1.33,
       winRatePct: 66.67,
       lastOutcome: "profit",
-      lastDeployedAt: "2026-04-22T02:00:00.000Z",
+      lastDeployedAt: "2026-04-22T03:00:00.000Z",
     });
 
     expect(
