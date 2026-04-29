@@ -1,4 +1,4 @@
-import type { DlmmGateway } from "../adapters/dlmm/DlmmGateway.js";
+import type { DlmmGateway, PoolInfo } from "../adapters/dlmm/DlmmGateway.js";
 import type { AiStrategyReviewer } from "../adapters/llm/AiStrategyReviewer.js";
 import type { LlmGateway } from "../adapters/llm/LlmGateway.js";
 import type { PriceGateway } from "../adapters/pricing/PriceGateway.js";
@@ -21,7 +21,10 @@ import {
   evaluatePortfolioRisk,
   type PortfolioRiskPolicy,
 } from "../domain/rules/riskRules.js";
-import { refreshCandidateDeployReadiness } from "../domain/rules/deployReadinessRules.js";
+import {
+  refreshCandidateDeployReadiness,
+  type DeployReadinessResult,
+} from "../domain/rules/deployReadinessRules.js";
 import {
   type FinalStrategyDecision,
   type StrategyDecisionValidationPolicy,
@@ -157,6 +160,28 @@ const TERMINAL_ACTION_STATUSES = new Set<Action["status"]>([
   "FAILED",
   "ABORTED",
   "TIMED_OUT",
+]);
+
+const ACTIVE_POSITION_CAPACITY_STATUSES = new Set<Position["status"]>([
+  "DEPLOYING",
+  "OPEN",
+  "MANAGEMENT_REVIEW",
+  "HOLD",
+  "CLAIM_REQUESTED",
+  "CLAIMING",
+  "CLAIM_CONFIRMED",
+  "PARTIAL_CLOSE_REQUESTED",
+  "PARTIAL_CLOSING",
+  "PARTIAL_CLOSE_CONFIRMED",
+  "REBALANCE_REQUESTED",
+  "CLOSING_FOR_REBALANCE",
+  "CLOSE_REQUESTED",
+  "CLOSING",
+  "CLOSE_CONFIRMED",
+  "REDEPLOY_REQUESTED",
+  "REDEPLOYING",
+  "RECONCILIATION_REQUIRED",
+  "RECONCILING",
 ]);
 
 function asOptionalNumberFromRecord(
@@ -359,6 +384,26 @@ function buildAutoDeployPayload(input: {
   };
 }
 
+function countRecentDeployActions(input: {
+  actions: Action[];
+  wallet: string;
+  timestamp: string;
+}): number {
+  const oneHourAgo = Date.parse(input.timestamp) - 60 * 60 * 1000;
+  return input.actions.filter((action) => {
+    const requestedAtMs = Date.parse(action.requestedAt);
+    return (
+      action.wallet === input.wallet &&
+      action.type === "DEPLOY" &&
+      action.status !== "FAILED" &&
+      action.status !== "ABORTED" &&
+      action.status !== "TIMED_OUT" &&
+      Number.isFinite(requestedAtMs) &&
+      requestedAtMs >= oneHourAgo
+    );
+  }).length;
+}
+
 export function createRuntimeSupervisor(
   input: RuntimeSupervisorInput,
 ): RuntimeSupervisor {
@@ -447,6 +492,14 @@ export function createRuntimeSupervisor(
       ? undefined
       : createPostClaimSwapHook(input.gateways.swapGateway);
 
+  function journalError(
+    error: string | null | undefined,
+    fallback: string | null = null,
+  ): string | null {
+    const trimmed = error?.trim() ?? "";
+    return trimmed.length > 0 ? trimmed : fallback;
+  }
+
   async function appendAutoDeployJournal(inputEvent: {
     timestamp: string;
     candidate: Candidate | null;
@@ -477,7 +530,7 @@ export function createRuntimeSupervisor(
         },
         txIds: [],
         resultStatus: inputEvent.resultStatus,
-        error: inputEvent.error ?? null,
+        error: journalError(inputEvent.error),
       });
     } catch (error) {
       logger.warn(
@@ -556,10 +609,13 @@ export function createRuntimeSupervisor(
       error:
         inputEvent.finalStrategyDecision.rejected ||
         inputEvent.riskDecision?.allowed === false
-          ? [
-              ...inputEvent.finalStrategyDecision.riskFlags,
-              ...(inputEvent.riskDecision?.blockingRules ?? []),
-            ].join("; ")
+          ? journalError(
+              [
+                ...inputEvent.finalStrategyDecision.riskFlags,
+                ...(inputEvent.riskDecision?.blockingRules ?? []),
+              ].join("; "),
+              "strategy decision rejected",
+            )
           : null,
     });
   }
@@ -668,20 +724,12 @@ export function createRuntimeSupervisor(
       return;
     }
 
-    const oneHourAgo = Date.parse(timestamp) - 60 * 60 * 1000;
-    const recentDeploys = actions.filter((action) => {
-      const requestedAtMs = Date.parse(action.requestedAt);
-      return (
-        action.wallet === input.wallet &&
-        action.type === "DEPLOY" &&
-        action.status !== "FAILED" &&
-        action.status !== "ABORTED" &&
-        action.status !== "TIMED_OUT" &&
-        Number.isFinite(requestedAtMs) &&
-        requestedAtMs >= oneHourAgo
-      );
+    const recentDeployCount = countRecentDeployActions({
+      actions,
+      wallet: input.wallet,
+      timestamp,
     });
-    if (recentDeploys.length >= input.config.risk.maxNewDeploysPerHour) {
+    if (recentDeployCount >= input.config.risk.maxNewDeploysPerHour) {
       await appendAutoDeployJournal({
         timestamp,
         candidate: screening.shortlist[0] ?? null,
@@ -701,10 +749,176 @@ export function createRuntimeSupervisor(
       dailyRealizedPnlUsd: portfolio.dailyRealizedPnl,
       solPriceUsd: solPrice.priceUsd,
     });
+
+    const poolInfoByCandidateId = new Map<string, PoolInfo>();
+    const deployReadinessByCandidateId = new Map<
+      string,
+      DeployReadinessResult
+    >();
+    const refreshDeployReadiness = async (
+      candidate: Candidate,
+    ): Promise<{
+      poolInfo: PoolInfo;
+      deployReadiness: DeployReadinessResult;
+    }> => {
+      const existingPoolInfo = poolInfoByCandidateId.get(candidate.candidateId);
+      const existingDeployReadiness = deployReadinessByCandidateId.get(
+        candidate.candidateId,
+      );
+      if (
+        existingPoolInfo !== undefined &&
+        existingDeployReadiness !== undefined
+      ) {
+        return {
+          poolInfo: existingPoolInfo,
+          deployReadiness: existingDeployReadiness,
+        };
+      }
+
+      const poolInfo =
+        existingPoolInfo ??
+        (await input.gateways.dlmmGateway
+          .getPoolInfo(candidate.poolAddress)
+          .catch(async (error: unknown) => {
+            await input.stores.journalRepository
+              .append({
+                timestamp,
+                eventType: "DEPLOY_READINESS_REFRESH_FAILED",
+                actor: "system",
+                wallet: input.wallet,
+                positionId: null,
+                actionId: null,
+                before: null,
+                after: {
+                  candidateId: candidate.candidateId,
+                  poolAddress: candidate.poolAddress,
+                  requireTokenIntelForDeploy:
+                    input.config.deploy.requireTokenIntelForDeploy,
+                },
+                txIds: [],
+                resultStatus: "FAILED",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "deploy-readiness refresh failed",
+              })
+              .catch((journalError: unknown) => {
+                logger.warn(
+                  { err: journalError, candidateId: candidate.candidateId },
+                  "deploy-readiness failure journal append failed",
+                );
+              });
+            throw error;
+          }));
+      poolInfoByCandidateId.set(candidate.candidateId, poolInfo);
+
+      const deployReadiness =
+        input.config.deploy.refreshDeploySnapshotBeforeQueue
+          ? refreshCandidateDeployReadiness({
+              candidate,
+              poolInfo,
+              now: timestamp,
+              maxStrategySnapshotAgeMs:
+                input.config.screening.maxStrategySnapshotAgeMs,
+              requireTokenIntelForDeploy:
+                input.config.deploy.requireTokenIntelForDeploy,
+            })
+          : {
+              candidate,
+              deployReady:
+                candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy,
+              reasonCodes: [],
+              riskFlags: [],
+            };
+      deployReadinessByCandidateId.set(candidate.candidateId, deployReadiness);
+
+      const deployCandidate = deployReadiness.candidate;
+      await input.stores.journalRepository
+        .append({
+          timestamp,
+          eventType: "DEPLOY_READINESS_REFRESHED",
+          actor: "system",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: {
+            candidateId: deployCandidate.candidateId,
+            poolAddress: deployCandidate.poolAddress,
+            activeBin: deployCandidate.dlmmMicrostructureSnapshot.activeBin,
+            deployReady: deployReadiness.deployReady,
+            reasonCodes: deployReadiness.reasonCodes,
+            riskFlags: deployReadiness.riskFlags,
+            requireTokenIntelForDeploy:
+              input.config.deploy.requireTokenIntelForDeploy,
+          },
+          txIds: [],
+          resultStatus: deployReadiness.deployReady ? "OK" : "BLOCKED",
+          error:
+            deployReadiness.reasonCodes.length === 0
+              ? null
+              : deployReadiness.reasonCodes.join("; "),
+        })
+        .catch((err: unknown) => {
+          logger.warn(
+            { err, candidateId: candidate.candidateId },
+            "deploy-readiness journal append failed; continuing with validation",
+          );
+        });
+
+      if (deployReadiness.riskFlags.includes("token_intel_unavailable")) {
+        await input.stores.journalRepository
+          .append({
+            timestamp,
+            eventType: "TOKEN_INTEL_UNAVAILABLE_FOR_DEPLOY",
+            actor: "system",
+            wallet: input.wallet,
+            positionId: null,
+            actionId: null,
+            before: null,
+            after: {
+              candidateId: deployCandidate.candidateId,
+              poolAddress: deployCandidate.poolAddress,
+              requireTokenIntelForDeploy:
+                input.config.deploy.requireTokenIntelForDeploy,
+            },
+            txIds: [],
+            resultStatus: input.config.deploy.requireTokenIntelForDeploy
+              ? "BLOCKED"
+              : "WARN",
+            error: input.config.deploy.requireTokenIntelForDeploy
+              ? "TOKEN_INTEL_NOT_FRESH_OR_MISSING"
+              : null,
+          })
+          .catch((err: unknown) => {
+            logger.warn(
+              { err, candidateId: candidate.candidateId },
+              "token-intel deploy warning journal append failed; continuing with validation",
+            );
+          });
+      }
+
+      return { poolInfo, deployReadiness };
+    };
+
+    const aiReviewCandidates: Candidate[] = [];
+    for (const candidate of screening.shortlist) {
+      try {
+        const { deployReadiness } = await refreshDeployReadiness(candidate);
+        aiReviewCandidates.push(deployReadiness.candidate);
+      } catch (error) {
+        logger.warn(
+          { err: error, candidateId: candidate.candidateId },
+          "deploy-readiness refresh before AI strategy review failed; using screening snapshot",
+        );
+        aiReviewCandidates.push(candidate);
+      }
+    }
+
     const strategyReviews = input.config.ai.strategyReviewEnabled
       ? await reviewStrategyWithAi({
           wallet: input.wallet,
-          candidates: screening.shortlist,
+          candidates: aiReviewCandidates,
           aiMode: input.config.ai.mode,
           ...(input.gateways.aiStrategyReviewer === undefined
             ? {}
@@ -742,20 +956,20 @@ export function createRuntimeSupervisor(
       ]),
     );
     const candidateById = new Map(
-      screening.shortlist.map((candidate) => [
+      aiReviewCandidates.map((candidate) => [
         candidate.candidateId,
         candidate,
       ]),
     );
     const aiOrderedCandidates =
       strategyReviews === null
-        ? screening.shortlist
+        ? aiReviewCandidates
         : [
             ...strategyReviews.reviews.flatMap((review) => {
               const candidate = candidateById.get(review.candidateId);
               return candidate === undefined ? [] : [candidate];
             }),
-            ...screening.shortlist.filter(
+            ...aiReviewCandidates.filter(
               (candidate) =>
                 !strategyReviewByCandidateId.has(candidate.candidateId),
             ),
@@ -774,117 +988,9 @@ export function createRuntimeSupervisor(
               pendingActions: portfolio.pendingActions + deployedThisCycle,
               openPositions: portfolio.openPositions + deployedThisCycle,
             };
-        const poolInfo = await input.gateways.dlmmGateway
-          .getPoolInfo(candidate.poolAddress)
-          .catch(async (error: unknown) => {
-            await input.stores.journalRepository
-              .append({
-                timestamp,
-                eventType: "DEPLOY_READINESS_REFRESH_FAILED",
-                actor: "system",
-                wallet: input.wallet,
-                positionId: null,
-                actionId: null,
-                before: null,
-                after: {
-                  candidateId: candidate.candidateId,
-                  poolAddress: candidate.poolAddress,
-                  requireTokenIntelForDeploy:
-                    input.config.deploy.requireTokenIntelForDeploy,
-                },
-                txIds: [],
-                resultStatus: "FAILED",
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "deploy-readiness refresh failed",
-              })
-              .catch((journalError: unknown) => {
-                logger.warn(
-                  { err: journalError, candidateId: candidate.candidateId },
-                  "deploy-readiness failure journal append failed",
-                );
-              });
-            throw error;
-          });
-        const deployReadiness =
-          input.config.deploy.refreshDeploySnapshotBeforeQueue
-            ? refreshCandidateDeployReadiness({
-                candidate,
-                poolInfo,
-                now: timestamp,
-                maxStrategySnapshotAgeMs:
-                  input.config.screening.maxStrategySnapshotAgeMs,
-                requireTokenIntelForDeploy:
-                  input.config.deploy.requireTokenIntelForDeploy,
-              })
-            : {
-                candidate,
-                deployReady:
-                  candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy,
-                reasonCodes: [],
-                riskFlags: [],
-              };
+        const { poolInfo, deployReadiness } =
+          await refreshDeployReadiness(candidate);
         const deployCandidate = deployReadiness.candidate;
-        await input.stores.journalRepository.append({
-          timestamp,
-          eventType: "DEPLOY_READINESS_REFRESHED",
-          actor: "system",
-          wallet: input.wallet,
-          positionId: null,
-          actionId: null,
-          before: null,
-          after: {
-            candidateId: deployCandidate.candidateId,
-            poolAddress: deployCandidate.poolAddress,
-            activeBin: deployCandidate.dlmmMicrostructureSnapshot.activeBin,
-            deployReady: deployReadiness.deployReady,
-            reasonCodes: deployReadiness.reasonCodes,
-            riskFlags: deployReadiness.riskFlags,
-            requireTokenIntelForDeploy:
-              input.config.deploy.requireTokenIntelForDeploy,
-          },
-          txIds: [],
-          resultStatus: deployReadiness.deployReady ? "OK" : "BLOCKED",
-          error:
-            deployReadiness.reasonCodes.length === 0
-              ? null
-              : deployReadiness.reasonCodes.join("; "),
-        }).catch((err: unknown) => {
-          logger.warn(
-            { err, candidateId: candidate.candidateId },
-            "deploy-readiness journal append failed; continuing with validation",
-          );
-        });
-        if (deployReadiness.riskFlags.includes("token_intel_unavailable")) {
-          await input.stores.journalRepository.append({
-            timestamp,
-            eventType: "TOKEN_INTEL_UNAVAILABLE_FOR_DEPLOY",
-            actor: "system",
-            wallet: input.wallet,
-            positionId: null,
-            actionId: null,
-            before: null,
-            after: {
-              candidateId: deployCandidate.candidateId,
-              poolAddress: deployCandidate.poolAddress,
-              requireTokenIntelForDeploy:
-                input.config.deploy.requireTokenIntelForDeploy,
-            },
-            txIds: [],
-            resultStatus: input.config.deploy.requireTokenIntelForDeploy
-              ? "BLOCKED"
-              : "WARN",
-            error: input.config.deploy.requireTokenIntelForDeploy
-              ? "TOKEN_INTEL_NOT_FRESH_OR_MISSING"
-              : null,
-          }).catch((err: unknown) => {
-            logger.warn(
-              { err, candidateId: candidate.candidateId },
-              "token-intel deploy warning journal append failed; continuing with validation",
-            );
-          });
-        }
         const reviewItem = strategyReviewByCandidateId.get(
           candidate.candidateId,
         );
@@ -1035,7 +1141,7 @@ export function createRuntimeSupervisor(
           proposedTokenMints: [
             ...new Set([payload.tokenXMint, payload.tokenYMint]),
           ],
-          recentNewDeploys: recentDeploys.length + deployedThisCycle,
+          recentNewDeploys: recentDeployCount + deployedThisCycle,
           position: null,
           solPriceUsd: solPrice.priceUsd,
         });
@@ -1132,7 +1238,7 @@ export function createRuntimeSupervisor(
           riskGuard: {
             portfolio: portfolioForRisk,
             policy: input.config.risk,
-            recentNewDeploys: recentDeploys.length + deployedThisCycle,
+            recentNewDeploys: recentDeployCount + deployedThisCycle,
             solPriceUsd: solPrice.priceUsd,
           },
         });
@@ -1161,6 +1267,120 @@ export function createRuntimeSupervisor(
     }
   }
 
+  async function evaluateScreeningCapacitySkip(
+    timestamp: string,
+  ): Promise<
+    | {
+        reason: "maxConcurrentPositions" | "maxNewDeploysPerHour";
+        detail: string;
+        activePositionCount: number;
+        pendingDeployCount: number;
+        recentDeployCount: number;
+      }
+    | null
+  > {
+    if (!input.config.deploy.autoDeployFromShortlist) {
+      return null;
+    }
+
+    const [positions, actions] = await Promise.all([
+      input.stores.stateRepository.list(),
+      input.stores.actionRepository.list(),
+    ]);
+    const activePositionCount = positions.filter(
+      (position) =>
+        position.wallet === input.wallet &&
+        ACTIVE_POSITION_CAPACITY_STATUSES.has(position.status),
+    ).length;
+    const pendingDeployCount = actions.filter(
+      (action) =>
+        action.wallet === input.wallet &&
+        action.type === "DEPLOY" &&
+        !TERMINAL_ACTION_STATUSES.has(action.status),
+    ).length;
+    const recentDeployCount = countRecentDeployActions({
+      actions,
+      wallet: input.wallet,
+      timestamp,
+    });
+
+    if (
+      activePositionCount + pendingDeployCount >=
+      input.config.risk.maxConcurrentPositions
+    ) {
+      return {
+        reason: "maxConcurrentPositions",
+        detail:
+          "screening skipped because max concurrent position capacity is already filled",
+        activePositionCount,
+        pendingDeployCount,
+        recentDeployCount,
+      };
+    }
+
+    if (recentDeployCount >= input.config.risk.maxNewDeploysPerHour) {
+      return {
+        reason: "maxNewDeploysPerHour",
+        detail:
+          "screening skipped because hourly deploy limit is already reached",
+        activePositionCount,
+        pendingDeployCount,
+        recentDeployCount,
+      };
+    }
+
+    return null;
+  }
+
+  async function recordScreeningCapacitySkipped(inputEvent: {
+    timestamp: string;
+    triggerSource: "cron" | "manual" | "startup";
+    intervalSec?: number;
+    skip: NonNullable<Awaited<ReturnType<typeof evaluateScreeningCapacitySkip>>>;
+  }): Promise<void> {
+    const scheduled = await input.stores.schedulerMetadataStore.tryStartRun({
+      worker: "screening",
+      triggerSource: inputEvent.triggerSource,
+      startedAt: inputEvent.timestamp,
+      intervalSec:
+        inputEvent.intervalSec ?? input.config.schedule.screeningIntervalSec,
+    });
+    if (!scheduled.started) {
+      return;
+    }
+
+    try {
+      await input.stores.journalRepository.append({
+        timestamp: inputEvent.timestamp,
+        eventType: "SCREENING_SKIPPED_CAPACITY",
+        actor: "system",
+        wallet: input.wallet,
+        positionId: null,
+        actionId: null,
+        before: null,
+        after: {
+          reason: inputEvent.skip.reason,
+          detail: inputEvent.skip.detail,
+          activePositionCount: inputEvent.skip.activePositionCount,
+          pendingDeployCount: inputEvent.skip.pendingDeployCount,
+          recentDeployCount: inputEvent.skip.recentDeployCount,
+          maxConcurrentPositions: input.config.risk.maxConcurrentPositions,
+          maxNewDeploysPerHour: input.config.risk.maxNewDeploysPerHour,
+        },
+        txIds: [],
+        resultStatus: "SKIPPED",
+        error: null,
+      });
+    } finally {
+      await input.stores.schedulerMetadataStore.finishRun({
+        worker: "screening",
+        completedAt: inputEvent.timestamp,
+        success: true,
+        error: null,
+      });
+    }
+  }
+
   async function buildCompoundDeployRiskGuard(inputEvent: {
     wallet: string;
     now: string;
@@ -1181,19 +1401,11 @@ export function createRuntimeSupervisor(
       input.stores.actionRepository.list(),
       input.gateways.priceGateway.getSolPriceUsd(),
     ]);
-    const oneHourAgo = Date.parse(inputEvent.now) - 60 * 60 * 1000;
-    const recentNewDeploys = actions.filter((action) => {
-      const requestedAtMs = Date.parse(action.requestedAt);
-      return (
-        action.wallet === inputEvent.wallet &&
-        action.type === "DEPLOY" &&
-        action.status !== "FAILED" &&
-        action.status !== "ABORTED" &&
-        action.status !== "TIMED_OUT" &&
-        Number.isFinite(requestedAtMs) &&
-        requestedAtMs >= oneHourAgo
-      );
-    }).length;
+    const recentNewDeploys = countRecentDeployActions({
+      actions,
+      wallet: inputEvent.wallet,
+      timestamp: inputEvent.now,
+    });
 
     return {
       portfolio,
@@ -1270,6 +1482,29 @@ export function createRuntimeSupervisor(
 
     async runScreeningTick(triggerSource = "cron", intervalSecOverride) {
       if (input.gateways.screeningGateway === undefined) {
+        return null;
+      }
+
+      const timestamp = nowIso(input.now);
+      const capacitySkip = await evaluateScreeningCapacitySkip(timestamp);
+      if (capacitySkip !== null) {
+        await recordScreeningCapacitySkipped({
+          timestamp,
+          triggerSource,
+          ...(intervalSecOverride === undefined
+            ? {}
+            : { intervalSec: intervalSecOverride }),
+          skip: capacitySkip,
+        });
+        logger.info(
+          {
+            reason: capacitySkip.reason,
+            activePositionCount: capacitySkip.activePositionCount,
+            pendingDeployCount: capacitySkip.pendingDeployCount,
+            recentDeployCount: capacitySkip.recentDeployCount,
+          },
+          "screening skipped because deploy capacity is already filled",
+        );
         return null;
       }
 

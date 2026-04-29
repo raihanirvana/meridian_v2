@@ -5,7 +5,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MockDlmmGateway } from "../../src/adapters/dlmm/DlmmGateway.js";
-import { MockAiStrategyReviewer } from "../../src/adapters/llm/AiStrategyReviewer.js";
+import {
+  MockAiStrategyReviewer,
+  type AiStrategyBatchReviewInput,
+} from "../../src/adapters/llm/AiStrategyReviewer.js";
 import { MockPriceGateway } from "../../src/adapters/pricing/PriceGateway.js";
 import { MockScreeningGateway } from "../../src/adapters/screening/ScreeningGateway.js";
 import { MockWalletGateway } from "../../src/adapters/wallet/WalletGateway.js";
@@ -13,6 +16,7 @@ import {
   CandidateSchema,
   type Candidate,
 } from "../../src/domain/entities/Candidate.js";
+import { PositionSchema } from "../../src/domain/entities/Position.js";
 import {
   buildDataFreshnessSnapshot,
   buildDlmmMicrostructureSnapshot,
@@ -276,6 +280,47 @@ function buildCandidate(): Candidate {
   });
 }
 
+function buildOpenPosition(positionId: string) {
+  return PositionSchema.parse({
+    positionId,
+    poolAddress: `pool_${positionId}`,
+    tokenXMint: `mint_${positionId}`,
+    tokenYMint: "So11111111111111111111111111111111111111112",
+    baseMint: `mint_${positionId}`,
+    quoteMint: "So11111111111111111111111111111111111111112",
+    wallet: "wallet_001",
+    status: "OPEN",
+    openedAt: "2026-04-22T09:00:00.000Z",
+    lastSyncedAt: "2026-04-22T10:00:00.000Z",
+    closedAt: null,
+    deployAmountBase: 0,
+    deployAmountQuote: 0.1,
+    currentValueBase: 0,
+    currentValueQuote: 0.1,
+    currentValueUsd: 10,
+    feesClaimedBase: 0,
+    feesClaimedUsd: 0,
+    realizedPnlBase: 0,
+    realizedPnlUsd: 0,
+    unrealizedPnlBase: 0,
+    unrealizedPnlUsd: 0,
+    peakPnlPct: null,
+    peakPnlRecordedAt: null,
+    lastRebalanceAt: null,
+    rebalanceCount: 0,
+    partialCloseCount: 0,
+    strategy: "curve",
+    rangeLowerBin: 900,
+    rangeUpperBin: 1020,
+    activeBin: 1000,
+    outOfRangeSince: null,
+    lastManagementDecision: null,
+    lastManagementReason: null,
+    lastWriteActionId: null,
+    needsReconciliation: false,
+  });
+}
+
 function buildWatchOnlyCandidate(): Candidate {
   return CandidateSchema.parse({
     ...buildCandidate(),
@@ -309,6 +354,148 @@ function buildWatchOnlyCandidate(): Candidate {
 }
 
 describe("runtime supervisor", () => {
+  it("skips screening when auto-deploy position capacity is already full", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+    await stores.stateRepository.upsert(buildOpenPosition("pos_001"));
+    await stores.stateRepository.upsert(buildOpenPosition("pos_002"));
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig: buildUserConfig({
+        risk: {
+          maxConcurrentPositions: 2,
+        },
+        deploy: {
+          autoDeployFromShortlist: true,
+        },
+      }),
+      stores,
+      gateways: {
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "fail",
+            error: new Error("screening should be skipped"),
+          },
+          getCandidateDetails: {
+            type: "fail",
+            error: new Error("details should be skipped"),
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "success",
+            value: {
+              actionType: "DEPLOY",
+              positionId: "pos_unused",
+              txIds: ["tx_unused"],
+            },
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_unused",
+              txIds: ["tx_unused"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_unused"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_unused",
+              remainingPercentage: 50,
+              txIds: ["tx_unused"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_unused",
+              pairLabel: "UNUSED-SOL",
+              binStep: 80,
+              activeBin: 1000,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    const result = await supervisor.runScreeningTick("manual", 300);
+
+    const journal = await stores.journalRepository.list();
+    const screeningWorker =
+      await stores.schedulerMetadataStore.get("screening");
+    expect(result).toBeNull();
+    expect(screeningWorker.status).toBe("SUCCEEDED");
+    expect(screeningWorker.nextDueAt).toBe("2026-04-22T10:05:00.000Z");
+    expect(journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "SCREENING_SKIPPED_CAPACITY",
+          resultStatus: "SKIPPED",
+          after: expect.objectContaining({
+            reason: "maxConcurrentPositions",
+            activePositionCount: 2,
+            pendingDeployCount: 0,
+            maxConcurrentPositions: 2,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("boots from file-backed stores and updates shared scheduler metadata across ticks", async () => {
     const directory = await makeTempDir();
     const stores = createRuntimeStores({
@@ -405,6 +592,11 @@ describe("runtime supervisor", () => {
         dataIncomplete: false,
         circuitBreakerState: "OFF",
       }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
       now: () => "2026-04-22T10:00:00.000Z",
     });
 
@@ -1136,6 +1328,11 @@ describe("runtime supervisor", () => {
         dataIncomplete: false,
         circuitBreakerState: "OFF",
       }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
       now: () => "2026-04-22T10:00:00.000Z",
     });
 
@@ -1173,6 +1370,195 @@ describe("runtime supervisor", () => {
           resultStatus: "WARN",
         }),
       ]),
+    );
+  });
+
+  it("sends deploy-refreshed candidates to AI strategy review", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    let capturedCandidate: Candidate | null = null;
+    const userConfig = buildUserConfig({
+      ai: {
+        mode: "advisory",
+        strategyReviewEnabled: true,
+        strategyReviewMode: "guarded_auto",
+        allowAiStrategyForDeploy: true,
+        minAiStrategyConfidence: 0.7,
+      },
+      deploy: {
+        defaultAmountSol: 0.25,
+        minAmountSol: 0.1,
+        autoDeployFromShortlist: true,
+        maxAutoDeploysPerCycle: 1,
+        strategy: "bid_ask",
+        binsBelow: 69,
+        binsAbove: 0,
+        slippageBps: 300,
+        requireTokenIntelForDeploy: false,
+      },
+      runtime: {
+        dryRun: true,
+        logLevel: "info",
+        operatorStdinEnabled: true,
+      },
+    });
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig,
+      stores,
+      gateways: {
+        aiStrategyReviewer: {
+          async reviewCandidateStrategy() {
+            throw new Error("single strategy review should not be used");
+          },
+          async reviewCandidateStrategies(input: AiStrategyBatchReviewInput) {
+            capturedCandidate = input.candidates[0] ?? null;
+            return input.candidates.map((candidate) => ({
+              poolAddress: candidate.poolAddress,
+              decision: "watch",
+              recommendedStrategy: "spot",
+              confidence: 0.72,
+              riskLevel: "medium",
+              binsBelow: 20,
+              binsAbove: 20,
+              slippageBps: 150,
+              maxPositionAgeMinutes: 240,
+              stopLossPct: 5,
+              takeProfitPct: 10,
+              trailingStopPct: 2,
+              reasons: ["refreshed candidate reviewed"],
+              rejectIf: [],
+            }));
+          },
+        },
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [buildWatchOnlyCandidate()],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "fail",
+            error: new Error("dry-run should not deploy"),
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_001",
+              txIds: ["tx_close"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_claim"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_001",
+              remainingPercentage: 50,
+              txIds: ["tx_partial"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_001",
+              pairLabel: "ABC-SOL",
+              binStep: 80,
+              activeBin: 1000,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    expect(capturedCandidate).not.toBeNull();
+    const reviewedCandidate = capturedCandidate as unknown as Candidate;
+
+    expect(reviewedCandidate).toMatchObject({
+      symbolPair: "ABC-SOL",
+      dlmmMicrostructureSnapshot: expect.objectContaining({
+        activeBin: 1000,
+        activeBinSource: "dlmm_gateway",
+      }),
+      dataFreshnessSnapshot: expect.objectContaining({
+        isFreshEnoughForDeploy: true,
+      }),
+    });
+    expect(reviewedCandidate.strategySuitability.strategyRiskFlags).not.toContain(
+      "missing_active_bin",
     );
   });
 

@@ -55,6 +55,8 @@ const DefaultMaxActiveBinDrift = 3;
 const PositionsCacheTtlMs = 5_000;
 const GatewayEntryCacheTtlMs = 60 * 60 * 1000;
 const WideRangeBinThreshold = 69;
+const WideRangeSimulationDeferredReason =
+  "wide_range_add_liquidity_simulation_deferred_until_live_preflight";
 const FullCloseBps = 10_000;
 const RpcSubmitRetryDelaysMs = [250, 750];
 
@@ -550,27 +552,45 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
         );
       }
 
-      const addTxs = await pool.addLiquidityByStrategyChunkable({
-        positionPubKey: positionKeypair.publicKey,
-        user: this.wallet.publicKey,
-        totalXAmount: tokenXLamports,
-        totalYAmount: tokenYLamports,
-        strategy: {
-          minBinId: lowerBin,
-          maxBinId: upperBin,
-          strategyType,
-        },
-        slippage: slippageBps,
-      });
-      const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
-      for (const tx of addTxArray) {
-        txIds.push(
-          await this.sendTransactionWithPreflight(tx, [this.wallet], {
-            operation: "DEPLOY",
-            positionId,
-            txIds,
-          }),
-        );
+      try {
+        const addTxs = await pool.addLiquidityByStrategyChunkable({
+          positionPubKey: positionKeypair.publicKey,
+          user: this.wallet.publicKey,
+          totalXAmount: tokenXLamports,
+          totalYAmount: tokenYLamports,
+          strategy: {
+            minBinId: lowerBin,
+            maxBinId: upperBin,
+            strategyType,
+          },
+          slippage: slippageBps,
+        });
+        const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
+        for (const tx of addTxArray) {
+          txIds.push(
+            await this.sendTransactionWithPreflight(tx, [this.wallet], {
+              operation: "DEPLOY",
+              positionId,
+              txIds,
+            }),
+          );
+        }
+      } catch (error) {
+        if (txIds.length > 0) {
+          throw new AmbiguousSubmissionError(
+            `DEPLOY wide-range add-liquidity failed after position creation; reconciliation required: ${errorMessage(
+              error,
+              "deploy add-liquidity failed",
+            )}`,
+            {
+              operation: "DEPLOY",
+              positionId,
+              txIds,
+            },
+            { cause: error },
+          );
+        }
+        throw error;
       }
     } else {
       const tx = await pool.initializePositionAndAddLiquidityByStrategy({
@@ -670,7 +690,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
           await this.simulateOrThrow(tx, signers);
         }
 
-        const addTxs = await pool.addLiquidityByStrategyChunkable({
+        // The add-liquidity tx depends on the position created above. Solana
+        // simulation does not persist state across separate transactions, so
+        // live deploy preflight is the first valid place to simulate it.
+        await pool.addLiquidityByStrategyChunkable({
           positionPubKey: positionKeypair.publicKey,
           user: this.wallet.publicKey,
           totalXAmount: tokenXLamports,
@@ -682,10 +705,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
           },
           slippage: slippageBps,
         });
-        const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
-        for (const tx of addTxArray) {
-          await this.simulateOrThrow(tx, [this.wallet]);
-        }
+        return DlmmSimulationResultSchema.parse({
+          ok: true,
+          reason: WideRangeSimulationDeferredReason,
+        });
       } else {
         const tx = await pool.initializePositionAndAddLiquidityByStrategy({
           positionPubKey: positionKeypair.publicKey,

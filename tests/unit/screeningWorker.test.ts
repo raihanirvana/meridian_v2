@@ -698,6 +698,99 @@ describe("screening worker", () => {
     expect(result.enrichmentSummary.skippedDetail).toBe(1);
   });
 
+  it("caps detail enrichment to the shortlist limit used for AI review", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+    const requestedPools: string[] = [];
+    const candidates = Array.from({ length: 5 }, (_, index) => {
+      const suffix = String(index + 1).padStart(3, "0");
+      return buildGatewayCandidate({
+        candidateId: `cand_${suffix}`,
+        poolAddress: `pool_${suffix}`,
+        symbolPair: `ABC${suffix}-SOL`,
+        tokenXMint: `mint_${suffix}`,
+        baseMint: `mint_${suffix}`,
+        tokenRiskSnapshot: {
+          deployerAddress: "deployer_ok",
+          topHolderPct: 18,
+          botHolderPct: 4,
+          bundleRiskPct: 6,
+          washTradingRiskPct: 5,
+          auditScore: 88,
+          tokenXMint: `mint_${suffix}`,
+          tokenYMint: "mint_sol",
+        },
+      });
+    });
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: {
+        async listCandidates() {
+          return candidates;
+        },
+        async getCandidateDetails(poolAddress) {
+          requestedPools.push(poolAddress);
+          return {
+            poolAddress,
+            pairLabel: poolAddress,
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+          };
+        },
+      },
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy({ shortlistLimit: 3 });
+        },
+      },
+      aiMode: "disabled",
+      detailEnrichmentTopN: 10,
+      maxDetailRequestsPerCycle: 10,
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    expect(requestedPools).toHaveLength(3);
+    expect(result.shortlist).toHaveLength(3);
+    expect(result.enrichmentSummary.selectedForDetail).toBe(3);
+    expect(result.enrichmentSummary.skippedDetail).toBe(2);
+  });
+
   it("keeps snapshot-only candidates in the shortlist but marks them deploy-blocked", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({

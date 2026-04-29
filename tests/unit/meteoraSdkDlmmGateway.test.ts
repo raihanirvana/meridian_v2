@@ -541,6 +541,88 @@ describe("MeteoraSdkDlmmGateway", () => {
     expect(sendAndConfirmTransactionMock).not.toHaveBeenCalled();
   });
 
+  it("defers wide-range add-liquidity simulation until live preflight", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    const gateway = createGateway();
+
+    const result = await gateway.simulateDeployLiquidity({
+      wallet: "wallet_001",
+      poolAddress: "pool_001",
+      tokenXMint: "mint_x",
+      tokenYMint: "mint_y",
+      baseMint: "mint_x",
+      quoteMint: "mint_y",
+      amountBase: 1,
+      amountQuote: 0,
+      strategy: "bid_ask",
+      rangeLowerBin: 0,
+      rangeUpperBin: 80,
+      initialActiveBin: 15,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      reason: "wide_range_add_liquidity_simulation_deferred_until_live_preflight",
+    });
+    expect(pool.createExtendedEmptyPosition).toHaveBeenCalled();
+    expect(pool.addLiquidityByStrategyChunkable).toHaveBeenCalled();
+    expect(
+      pool.initializePositionAndAddLiquidityByStrategy,
+    ).not.toHaveBeenCalled();
+    expect(simulateTransactionMock).toHaveBeenCalledTimes(1);
+    expect(sendAndConfirmTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("routes wide-range deploy to reconciliation when add-liquidity preflight fails after position creation", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    simulateTransactionMock
+      .mockResolvedValueOnce({
+        value: {
+          err: null,
+          logs: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        value: {
+          err: { instructionError: [0, "Custom"] },
+          logs: ["add liquidity failed"],
+        },
+      });
+    sendAndConfirmTransactionMock.mockResolvedValue("tx_create");
+    const gateway = createGateway();
+
+    let caughtError: unknown;
+    try {
+      await gateway.deployLiquidity({
+        wallet: "wallet_001",
+        poolAddress: "pool_001",
+        tokenXMint: "mint_x",
+        tokenYMint: "mint_y",
+        baseMint: "mint_x",
+        quoteMint: "mint_y",
+        amountBase: 1,
+        amountQuote: 0,
+        strategy: "bid_ask",
+        rangeLowerBin: 0,
+        rangeUpperBin: 80,
+        initialActiveBin: 15,
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(AmbiguousSubmissionError);
+    expect((caughtError as AmbiguousSubmissionError).positionId).toBe(
+      "generated_position",
+    );
+    expect((caughtError as AmbiguousSubmissionError).txIds).toEqual([
+      "tx_create",
+    ]);
+    expect(sendAndConfirmTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
   it("marks claimed base amount source as unavailable instead of silently pretending 0 is accurate", async () => {
     const pool = createPool();
     poolCreateMock.mockResolvedValue(pool);

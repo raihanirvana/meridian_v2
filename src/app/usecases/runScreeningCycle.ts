@@ -389,14 +389,22 @@ export async function runScreeningCycle(
     createdAt: now,
     now,
   });
-  const detailTopN =
+  const requestedDetailTopN =
     input.detailEnrichmentTopN ??
     screeningPolicy.detailEnrichmentTopN ??
     Math.min(5, screeningPolicy.shortlistLimit);
-  const maxDetailRequestsPerCycle =
+  const detailTopN = Math.min(
+    requestedDetailTopN,
+    screeningPolicy.shortlistLimit,
+  );
+  const requestedMaxDetailRequestsPerCycle =
     input.maxDetailRequestsPerCycle ??
     screeningPolicy.maxDetailRequestsPerCycle ??
     detailTopN;
+  const maxDetailRequestsPerCycle = Math.min(
+    requestedMaxDetailRequestsPerCycle,
+    detailTopN,
+  );
   const endpointCooldownUntil =
     (await input.detailRateLimiter?.getCooldownUntil()) ?? null;
   const enrichmentPlan = buildEnrichmentPlan({
