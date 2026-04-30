@@ -37,6 +37,7 @@ export const PostCloseSwapInputSchema = z.object({
   wallet: z.string().min(1),
   reason: z.string().min(1),
   position: PositionSchema,
+  closeResult: CloseActionResultPayloadSchema,
 });
 
 export type PostCloseSwapInput = z.infer<typeof PostCloseSwapInputSchema>;
@@ -110,9 +111,15 @@ function closeProceedsFromResult(
     ...(closeResult.releasedAmountBase === undefined
       ? {}
       : { releasedAmountBase: closeResult.releasedAmountBase }),
+    ...(closeResult.releasedAmountBaseRaw === undefined
+      ? {}
+      : { releasedAmountBaseRaw: closeResult.releasedAmountBaseRaw }),
     ...(closeResult.releasedAmountQuote === undefined
       ? {}
       : { releasedAmountQuote: closeResult.releasedAmountQuote }),
+    ...(closeResult.releasedAmountQuoteRaw === undefined
+      ? {}
+      : { releasedAmountQuoteRaw: closeResult.releasedAmountQuoteRaw }),
     ...(closeResult.estimatedReleasedValueUsd === undefined
       ? {}
       : { estimatedReleasedValueUsd: closeResult.estimatedReleasedValueUsd }),
@@ -198,7 +205,7 @@ export async function runLessonHookIdempotent(input: {
       txIds: [],
       resultStatus: "FAILED",
       error: failureMessage,
-    // Journal failure must never propagate — learning failure cannot alter a finalized close.
+      // Journal failure must never propagate — learning failure cannot alter a finalized close.
     }).catch((journalError) => {
       logger.warn(
         { err: journalError, actionId: input.closedAction.actionId },
@@ -328,6 +335,28 @@ function buildSyntheticCloseConfirmedPosition(input: {
   });
 }
 
+function hasPositiveRawAmount(value: string | undefined): boolean {
+  return value !== undefined && /^\d+$/.test(value) && BigInt(value) > 0n;
+}
+
+function closeResultHasPostTxSettlement(
+  closeResult: z.infer<typeof CloseActionResultPayloadSchema>,
+): boolean {
+  if (
+    closeResult.submissionStatus !== "submitted" ||
+    closeResult.releasedAmountSource !== "post_tx"
+  ) {
+    return false;
+  }
+
+  return (
+    (closeResult.releasedAmountBase ?? 0) > 0 ||
+    (closeResult.releasedAmountQuote ?? 0) > 0 ||
+    hasPositiveRawAmount(closeResult.releasedAmountBaseRaw) ||
+    hasPositiveRawAmount(closeResult.releasedAmountQuoteRaw)
+  );
+}
+
 function buildReconcilingPosition(
   confirmedPosition: Position,
   actionId: string,
@@ -342,8 +371,74 @@ function buildReconcilingPosition(
   });
 }
 
+function preferNonZeroNumber(preferred: number, fallback: number): number {
+  return preferred !== 0 ? preferred : fallback;
+}
+
+function buildPerformanceSnapshotPosition(input: {
+  closeConfirmedPosition: Position;
+  closingPosition: Position;
+}): Position {
+  const closeConfirmedPosition = input.closeConfirmedPosition;
+  const closingPosition = input.closingPosition;
+
+  return PositionSchema.parse({
+    ...closeConfirmedPosition,
+    currentValueBase: preferNonZeroNumber(
+      closeConfirmedPosition.currentValueBase,
+      closingPosition.currentValueBase,
+    ),
+    ...(closeConfirmedPosition.currentValueQuote === undefined &&
+    closingPosition.currentValueQuote === undefined
+      ? {}
+      : {
+          currentValueQuote: preferNonZeroNumber(
+            closeConfirmedPosition.currentValueQuote ?? 0,
+            closingPosition.currentValueQuote ?? 0,
+          ),
+        }),
+    currentValueUsd: preferNonZeroNumber(
+      closeConfirmedPosition.currentValueUsd,
+      closingPosition.currentValueUsd,
+    ),
+    feesClaimedBase: preferNonZeroNumber(
+      closeConfirmedPosition.feesClaimedBase,
+      closingPosition.feesClaimedBase,
+    ),
+    feesClaimedUsd: preferNonZeroNumber(
+      closeConfirmedPosition.feesClaimedUsd,
+      closingPosition.feesClaimedUsd,
+    ),
+    unrealizedPnlBase: preferNonZeroNumber(
+      closeConfirmedPosition.unrealizedPnlBase,
+      closingPosition.unrealizedPnlBase,
+    ),
+    unrealizedPnlUsd: preferNonZeroNumber(
+      closeConfirmedPosition.unrealizedPnlUsd,
+      closingPosition.unrealizedPnlUsd,
+    ),
+    ...(closeConfirmedPosition.entryMetadata === undefined &&
+    closingPosition.entryMetadata !== undefined
+      ? { entryMetadata: closingPosition.entryMetadata }
+      : {}),
+  });
+}
+
+function deriveClosedRealizedPnlBase(position: Position): number {
+  return position.realizedPnlBase !== 0
+    ? position.realizedPnlBase
+    : position.unrealizedPnlBase;
+}
+
+function deriveClosedRealizedPnlUsd(position: Position): number {
+  return position.realizedPnlUsd !== 0
+    ? position.realizedPnlUsd
+    : position.unrealizedPnlUsd;
+}
+
 function buildClosedPosition(input: {
   reconcilingPosition: Position;
+  performanceSnapshotPosition: Position;
   actionId: string;
   now: string;
 }): Position {
@@ -357,6 +452,14 @@ function buildClosedPosition(input: {
     currentValueBase: 0,
     currentValueQuote: 0,
     currentValueUsd: 0,
+    feesClaimedBase: input.performanceSnapshotPosition.feesClaimedBase,
+    feesClaimedUsd: input.performanceSnapshotPosition.feesClaimedUsd,
+    realizedPnlBase: deriveClosedRealizedPnlBase(
+      input.performanceSnapshotPosition,
+    ),
+    realizedPnlUsd: deriveClosedRealizedPnlUsd(
+      input.performanceSnapshotPosition,
+    ),
     unrealizedPnlBase: 0,
     unrealizedPnlUsd: 0,
     lastSyncedAt: input.now,
@@ -441,7 +544,9 @@ export async function finalizeClose(
       swapPhase.success &&
       swapPhase.data.phase === "POST_CLOSE_SWAP_IN_PROGRESS"
     ) {
-      const existingPosition = await input.stateRepository.get(action.positionId);
+      const existingPosition = await input.stateRepository.get(
+        action.positionId,
+      );
       if (existingPosition === null) {
         throw new Error(
           `Close reconciliation position missing during swap recovery: ${action.positionId}`,
@@ -596,13 +701,29 @@ export async function finalizeClose(
               now,
             })
           : null;
-      const closeConfirmedPositionLike = inferCloseConfirmedPosition(
-        closingPosition,
-        confirmedPositionForAction,
-        input.dlmmGateway.reconciliationReadModel === "open_only",
-        latestAction.actionId,
-        now,
-      ) ?? syntheticCloseConfirmedPosition;
+      const settledCloseConfirmedPosition =
+        syntheticCloseConfirmedPosition === null &&
+        confirmationIdentityError === null &&
+        confirmedPositionForAction === null &&
+        closingPosition !== null &&
+        closingPosition.status === "CLOSING" &&
+        closeResultHasPostTxSettlement(closeResult)
+          ? buildSyntheticCloseConfirmedPosition({
+              closingPosition,
+              actionId: latestAction.actionId,
+              now,
+            })
+          : null;
+      const closeConfirmedPositionLike =
+        inferCloseConfirmedPosition(
+          closingPosition,
+          confirmedPositionForAction,
+          input.dlmmGateway.reconciliationReadModel === "open_only",
+          latestAction.actionId,
+          now,
+        ) ??
+        syntheticCloseConfirmedPosition ??
+        settledCloseConfirmedPosition;
 
       if (closingPosition !== null && closingPosition.status === "CLOSED") {
         const accounting = buildCloseAccountingSummary(
@@ -692,7 +813,7 @@ export async function finalizeClose(
                 latestAction.actionId,
                 now,
               )
-          : null;
+            : null;
 
       if (
         closingPosition === null ||
@@ -725,9 +846,9 @@ export async function finalizeClose(
                 ? `Close finalization requires reconciliation because local position status is ${closingPosition.status} for ${latestAction.positionId}`
                 : confirmationIdentityError !== null
                   ? confirmationIdentityError
-                : closeConfirmedPositionLike === null
-                  ? `Close confirmation not found for position ${latestAction.positionId}`
-                  : `Close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
+                  : closeConfirmedPositionLike === null
+                    ? `Close confirmation not found for position ${latestAction.positionId}`
+                    : `Close confirmation returned unsupported status ${confirmedPosition?.status ?? "unknown"} for ${latestAction.positionId}`,
           completedAt: now,
         } satisfies Action;
 
@@ -781,14 +902,10 @@ export async function finalizeClose(
           latestAction.actionId,
           now,
         );
-      const performanceSnapshotPosition =
-        closeConfirmedPosition.entryMetadata === undefined &&
-        closingPosition.entryMetadata !== undefined
-          ? PositionSchema.parse({
-              ...closeConfirmedPosition,
-              entryMetadata: closingPosition.entryMetadata,
-            })
-          : closeConfirmedPosition;
+      const performanceSnapshotPosition = buildPerformanceSnapshotPosition({
+        closeConfirmedPosition,
+        closingPosition,
+      });
       const reconcilingAction = {
         ...latestAction,
         status: transitionActionStatus(latestAction.status, "RECONCILING"),
@@ -813,11 +930,13 @@ export async function finalizeClose(
               wallet: reconcilingAction.wallet,
               reason: payload.reason,
               position: reconcilingPosition,
+              closeResult,
             }),
           )) ?? null;
 
         const closedPosition = buildClosedPosition({
           reconcilingPosition,
+          performanceSnapshotPosition,
           actionId: latestAction.actionId,
           now,
         });

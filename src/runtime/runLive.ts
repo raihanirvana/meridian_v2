@@ -130,7 +130,9 @@ function parseRuntimeBootstrapEnv(env: NodeJS.ProcessEnv) {
   });
 }
 
-function createConservativeSignalProvider(): (input: {
+function createConservativeSignalProvider(input: {
+  dlmmGateway: Pick<DlmmGateway, "getPosition">;
+}): (input: {
   position: Position;
   portfolio: unknown;
   now: string;
@@ -152,15 +154,20 @@ function createConservativeSignalProvider(): (input: {
         rangeWidth <
         0.1;
 
+    const livePosition = await input.dlmmGateway
+      .getPosition(position.positionId)
+      .catch(() => null);
+    const claimableFeesUsd =
+      livePosition === null
+        ? 0
+        : Math.max(0, livePosition.feesClaimedUsd - position.feesClaimedUsd);
+
     return {
       forcedManualClose: false,
       severeTokenRisk: false,
       liquidityCollapse: false,
       severeNegativeYield: false,
-      // feesClaimedUsd is cumulative already-claimed value, not pending fees.
-      // Keep auto-claim disabled until the live gateway exposes a reliable
-      // unclaimed-fee snapshot for management signals.
-      claimableFeesUsd: 0,
+      claimableFeesUsd,
       expectedRebalanceImprovement: outOfRange || nearEdge,
       dataIncomplete: false,
     };
@@ -744,7 +751,7 @@ async function main() {
           }
         : {}),
     },
-    signalProvider: createConservativeSignalProvider(),
+    signalProvider: createConservativeSignalProvider({ dlmmGateway }),
     rebalancePlanner: createLiveAiRebalancePlanner({
       dlmmGateway,
       defaultSlippageBps:

@@ -479,7 +479,9 @@ describe("MeteoraSdkDlmmGateway", () => {
     });
 
     expect(result.releasedAmountBase).toBeCloseTo(1.23);
+    expect(result.releasedAmountBaseRaw).toBe("123");
     expect(result.releasedAmountQuote).toBeCloseTo(0.45);
+    expect(result.releasedAmountQuoteRaw).toBe("45");
     expect(result.releasedAmountSource).toBe("post_tx");
   });
 
@@ -633,7 +635,8 @@ describe("MeteoraSdkDlmmGateway", () => {
 
     expect(result).toEqual({
       ok: true,
-      reason: "wide_range_add_liquidity_simulation_deferred_until_live_preflight",
+      reason:
+        "wide_range_add_liquidity_simulation_deferred_until_live_preflight",
     });
     expect(pool.createExtendedEmptyPosition).toHaveBeenCalled();
     expect(pool.addLiquidityByStrategyChunkable).toHaveBeenCalled();

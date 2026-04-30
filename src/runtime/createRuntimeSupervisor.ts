@@ -57,7 +57,10 @@ import {
 import type { LessonPromptService } from "../app/services/LessonPromptService.js";
 import { DefaultPolicyProvider } from "../app/services/PolicyProvider.js";
 import { DefaultSignalWeightsProvider } from "../app/services/SignalWeightsProvider.js";
-import { createPostClaimSwapHook } from "../app/usecases/executePostClaimSwap.js";
+import {
+  createPostClaimSwapHook,
+  createPostCloseSwapHook,
+} from "../app/usecases/executePostClaimSwap.js";
 import { reviewStrategyWithAi } from "../app/usecases/reviewStrategyWithAi.js";
 import { createPerformanceLessonHook } from "../app/services/createPerformanceLessonHook.js";
 import { FileMeteoraDetailRateLimiter } from "../app/services/MeteoraDetailRateLimiter.js";
@@ -491,6 +494,10 @@ export function createRuntimeSupervisor(
     input.gateways.swapGateway === undefined
       ? undefined
       : createPostClaimSwapHook(input.gateways.swapGateway);
+  const postCloseSwapHook =
+    input.gateways.swapGateway === undefined
+      ? undefined
+      : createPostCloseSwapHook(input.gateways.swapGateway);
 
   function journalError(
     error: string | null | undefined,
@@ -812,24 +819,23 @@ export function createRuntimeSupervisor(
           }));
       poolInfoByCandidateId.set(candidate.candidateId, poolInfo);
 
-      const deployReadiness =
-        input.config.deploy.refreshDeploySnapshotBeforeQueue
-          ? refreshCandidateDeployReadiness({
-              candidate,
-              poolInfo,
-              now: timestamp,
-              maxStrategySnapshotAgeMs:
-                input.config.screening.maxStrategySnapshotAgeMs,
-              requireTokenIntelForDeploy:
-                input.config.deploy.requireTokenIntelForDeploy,
-            })
-          : {
-              candidate,
-              deployReady:
-                candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy,
-              reasonCodes: [],
-              riskFlags: [],
-            };
+      const deployReadiness = input.config.deploy
+        .refreshDeploySnapshotBeforeQueue
+        ? refreshCandidateDeployReadiness({
+            candidate,
+            poolInfo,
+            now: timestamp,
+            maxStrategySnapshotAgeMs:
+              input.config.screening.maxStrategySnapshotAgeMs,
+            requireTokenIntelForDeploy:
+              input.config.deploy.requireTokenIntelForDeploy,
+          })
+        : {
+            candidate,
+            deployReady: candidate.dataFreshnessSnapshot.isFreshEnoughForDeploy,
+            reasonCodes: [],
+            riskFlags: [],
+          };
       deployReadinessByCandidateId.set(candidate.candidateId, deployReadiness);
 
       const deployCandidate = deployReadiness.candidate;
@@ -958,10 +964,7 @@ export function createRuntimeSupervisor(
       ]),
     );
     const candidateById = new Map(
-      aiReviewCandidates.map((candidate) => [
-        candidate.candidateId,
-        candidate,
-      ]),
+      aiReviewCandidates.map((candidate) => [candidate.candidateId, candidate]),
     );
     const aiOrderedCandidates =
       strategyReviews === null
@@ -1090,30 +1093,32 @@ export function createRuntimeSupervisor(
               "DETAIL_NOT_FRESH_OR_MISSING",
             )
           ) {
-            input.stores.journalRepository.append({
-              timestamp,
-              eventType: "CANDIDATE_DETAIL_MISSING_DEPLOY_BLOCKED",
-              actor: "system",
-              wallet: input.wallet,
-              positionId: null,
-              actionId: null,
-              before: null,
-              after: {
-                poolAddress: deployCandidate.poolAddress,
-                candidateId: deployCandidate.candidateId,
-                reasonCode: "DETAIL_NOT_FRESH_OR_MISSING",
-                requireDetailForDeploy:
-                  input.config.screening.requireDetailForDeploy,
-              },
-              txIds: [],
-              resultStatus: "BLOCKED",
-              error: "DETAIL_NOT_FRESH_OR_MISSING",
-            }).catch((err: unknown) => {
-              logger.warn(
-                { err, candidateId: candidate.candidateId },
-                "candidate detail missing blocked journal append failed",
-              );
-            });
+            input.stores.journalRepository
+              .append({
+                timestamp,
+                eventType: "CANDIDATE_DETAIL_MISSING_DEPLOY_BLOCKED",
+                actor: "system",
+                wallet: input.wallet,
+                positionId: null,
+                actionId: null,
+                before: null,
+                after: {
+                  poolAddress: deployCandidate.poolAddress,
+                  candidateId: deployCandidate.candidateId,
+                  reasonCode: "DETAIL_NOT_FRESH_OR_MISSING",
+                  requireDetailForDeploy:
+                    input.config.screening.requireDetailForDeploy,
+                },
+                txIds: [],
+                resultStatus: "BLOCKED",
+                error: "DETAIL_NOT_FRESH_OR_MISSING",
+              })
+              .catch((err: unknown) => {
+                logger.warn(
+                  { err, candidateId: candidate.candidateId },
+                  "candidate detail missing blocked journal append failed",
+                );
+              });
           }
           await appendAutoDeployJournal({
             timestamp,
@@ -1148,30 +1153,32 @@ export function createRuntimeSupervisor(
           solPriceUsd: solPrice.priceUsd,
         });
         if (!riskResult.allowed) {
-          input.stores.journalRepository.append({
-            timestamp,
-            eventType: "DEPLOY_REQUEST_BLOCKED_BY_RISK",
-            actor: "system",
-            wallet: input.wallet,
-            positionId: null,
-            actionId: null,
-            before: null,
-            after: {
-              requestPayload: payload,
-              riskDecision: riskResult.decision,
-              blockingRules: riskResult.blockingRules,
-              projectedExposureByPool: riskResult.projectedExposureByPool,
-              projectedExposureByToken: riskResult.projectedExposureByToken,
-            },
-            txIds: [],
-            resultStatus: "BLOCKED",
-            error: riskResult.reason,
-          }).catch((err: unknown) => {
-            logger.warn(
-              { err, candidateId: candidate.candidateId },
-              "auto-deploy risk-block journal append failed",
-            );
-          });
+          input.stores.journalRepository
+            .append({
+              timestamp,
+              eventType: "DEPLOY_REQUEST_BLOCKED_BY_RISK",
+              actor: "system",
+              wallet: input.wallet,
+              positionId: null,
+              actionId: null,
+              before: null,
+              after: {
+                requestPayload: payload,
+                riskDecision: riskResult.decision,
+                blockingRules: riskResult.blockingRules,
+                projectedExposureByPool: riskResult.projectedExposureByPool,
+                projectedExposureByToken: riskResult.projectedExposureByToken,
+              },
+              txIds: [],
+              resultStatus: "BLOCKED",
+              error: riskResult.reason,
+            })
+            .catch((err: unknown) => {
+              logger.warn(
+                { err, candidateId: candidate.candidateId },
+                "auto-deploy risk-block journal append failed",
+              );
+            });
           await appendStrategyDecisionJournal({
             timestamp,
             candidate: deployCandidate,
@@ -1269,18 +1276,13 @@ export function createRuntimeSupervisor(
     }
   }
 
-  async function evaluateScreeningCapacitySkip(
-    timestamp: string,
-  ): Promise<
-    | {
-        reason: "maxConcurrentPositions" | "maxNewDeploysPerHour";
-        detail: string;
-        activePositionCount: number;
-        pendingDeployCount: number;
-        recentDeployCount: number;
-      }
-    | null
-  > {
+  async function evaluateScreeningCapacitySkip(timestamp: string): Promise<{
+    reason: "maxConcurrentPositions" | "maxNewDeploysPerHour";
+    detail: string;
+    activePositionCount: number;
+    pendingDeployCount: number;
+    recentDeployCount: number;
+  } | null> {
     if (!input.config.deploy.autoDeployFromShortlist) {
       return null;
     }
@@ -1338,7 +1340,9 @@ export function createRuntimeSupervisor(
     timestamp: string;
     triggerSource: "cron" | "manual" | "startup";
     intervalSec?: number;
-    skip: NonNullable<Awaited<ReturnType<typeof evaluateScreeningCapacitySkip>>>;
+    skip: NonNullable<
+      Awaited<ReturnType<typeof evaluateScreeningCapacitySkip>>
+    >;
   }): Promise<void> {
     const scheduled = await input.stores.schedulerMetadataStore.tryStartRun({
       worker: "screening",
@@ -1580,6 +1584,7 @@ export function createRuntimeSupervisor(
         wallets: [input.wallet],
         dryRun: input.config.runtime.dryRun,
         ...(postClaimSwapHook === undefined ? {} : { postClaimSwapHook }),
+        ...(postCloseSwapHook === undefined ? {} : { postCloseSwapHook }),
         lessonHook,
         claimCompoundRiskGuardProvider: buildCompoundDeployRiskGuard,
         ...(input.now === undefined ? {} : { now: input.now }),

@@ -852,6 +852,8 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       });
     const releasedAmountBase = releasedBaseSettlement?.amount ?? null;
     const releasedAmountQuote = releasedQuoteSettlement?.amount ?? null;
+    const releasedAmountBaseRaw = releasedBaseSettlement?.rawAmount ?? null;
+    const releasedAmountQuoteRaw = releasedQuoteSettlement?.rawAmount ?? null;
 
     this.recentDeploys.delete(parsed.positionId);
     this.claimedBaseByPositionId.delete(parsed.positionId);
@@ -865,7 +867,9 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       preCloseFeesClaimed,
       preCloseFeesClaimError,
       ...(releasedAmountBase === null ? {} : { releasedAmountBase }),
+      ...(releasedAmountBaseRaw === null ? {} : { releasedAmountBaseRaw }),
       ...(releasedAmountQuote === null ? {} : { releasedAmountQuote }),
+      ...(releasedAmountQuoteRaw === null ? {} : { releasedAmountQuoteRaw }),
       ...(positionBeforeClose?.currentValueUsd === undefined ||
       positionBeforeClose.currentValueUsd <= 0
         ? {}
@@ -1997,14 +2001,10 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
     return result;
   }
 
-  private readTokenAmount(
-    uiTokenAmount: Record<string, unknown>,
-  ):
-    | {
-        uiAmount: number;
-        rawAmount: bigint;
-      }
-    | null {
+  private readTokenAmount(uiTokenAmount: Record<string, unknown>): {
+    uiAmount: number;
+    rawAmount: bigint;
+  } | null {
     const directAmount =
       asNumber(uiTokenAmount.uiAmount) ??
       asNumber(uiTokenAmount.uiAmountString);

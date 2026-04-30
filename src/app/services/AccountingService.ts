@@ -22,7 +22,9 @@ export const CloseAccountingSummarySchema = z
     currentValueQuote: z.number().nonnegative().optional(),
     currentValueUsd: z.number().nonnegative(),
     releasedAmountBase: z.number().nonnegative().nullable(),
+    releasedAmountBaseRaw: z.string().regex(/^\d+$/).nullable(),
     releasedAmountQuote: z.number().nonnegative().nullable(),
+    releasedAmountQuoteRaw: z.string().regex(/^\d+$/).nullable(),
     estimatedReleasedValueUsd: z.number().nonnegative().nullable(),
     releasedAmountSource: z
       .enum(["post_tx", "position_snapshot", "unavailable"])
@@ -61,7 +63,9 @@ export function buildCloseAccountingSummary(
   postCloseSwap: Record<string, unknown> | null,
   closeProceeds?: {
     releasedAmountBase?: number;
+    releasedAmountBaseRaw?: string;
     releasedAmountQuote?: number;
+    releasedAmountQuoteRaw?: string;
     estimatedReleasedValueUsd?: number;
     releasedAmountSource?: "post_tx" | "position_snapshot" | "unavailable";
     preCloseFeesClaimed?: boolean;
@@ -84,7 +88,9 @@ export function buildCloseAccountingSummary(
       : { currentValueQuote: position.currentValueQuote }),
     currentValueUsd: position.currentValueUsd,
     releasedAmountBase: closeProceeds?.releasedAmountBase ?? null,
+    releasedAmountBaseRaw: closeProceeds?.releasedAmountBaseRaw ?? null,
     releasedAmountQuote: closeProceeds?.releasedAmountQuote ?? null,
+    releasedAmountQuoteRaw: closeProceeds?.releasedAmountQuoteRaw ?? null,
     estimatedReleasedValueUsd: closeProceeds?.estimatedReleasedValueUsd ?? null,
     releasedAmountSource,
     preCloseFeesClaimed: closeProceeds?.preCloseFeesClaimed ?? null,

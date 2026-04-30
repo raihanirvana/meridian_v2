@@ -117,7 +117,9 @@ export const ClosePositionResultSchema = z.object({
   preCloseFeesClaimed: z.boolean().optional(),
   preCloseFeesClaimError: z.string().min(1).nullable().optional(),
   releasedAmountBase: z.number().nonnegative().optional(),
+  releasedAmountBaseRaw: z.string().regex(/^\d+$/).optional(),
   releasedAmountQuote: z.number().nonnegative().optional(),
+  releasedAmountQuoteRaw: z.string().regex(/^\d+$/).optional(),
   estimatedReleasedValueUsd: z.number().nonnegative().optional(),
   releasedAmountSource: z
     .enum(["post_tx", "position_snapshot", "unavailable"])
@@ -200,7 +202,9 @@ export type DeployLiquidityResultInput = z.input<
 >;
 export type ClosePositionRequest = z.infer<typeof ClosePositionRequestSchema>;
 export type ClosePositionResult = z.infer<typeof ClosePositionResultSchema>;
-export type ClosePositionResultInput = z.input<typeof ClosePositionResultSchema>;
+export type ClosePositionResultInput = z.input<
+  typeof ClosePositionResultSchema
+>;
 export type ClaimFeesRequest = z.infer<typeof ClaimFeesRequestSchema>;
 export type ClaimFeesResult = z.infer<typeof ClaimFeesResultSchema>;
 export type ClaimFeesResultInput = z.input<typeof ClaimFeesResultSchema>;

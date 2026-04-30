@@ -372,6 +372,7 @@ describe("close flow", () => {
       actionRepository,
     });
     let capturedSwapIntentId: string | null = null;
+    let capturedReleasedBaseRaw: string | null = null;
 
     await stateRepository.upsert(buildOpenPosition("pos_proceeds"));
     const action = await requestClose({
@@ -395,7 +396,9 @@ describe("close flow", () => {
               txIds: ["tx_close_proceeds"],
               preCloseFeesClaimed: true,
               releasedAmountBase: 1.25,
+              releasedAmountBaseRaw: "1250000",
               releasedAmountQuote: 0.75,
+              releasedAmountQuoteRaw: "750000",
               estimatedReleasedValueUsd: 128,
               releasedAmountSource: "post_tx",
             },
@@ -418,6 +421,8 @@ describe("close flow", () => {
       }),
       postCloseSwapHook: async (input) => {
         capturedSwapIntentId = input.swapIntentId;
+        capturedReleasedBaseRaw =
+          input.closeResult.releasedAmountBaseRaw ?? null;
         return {
           swapIntentId: input.swapIntentId,
           status: "SKIPPED",
@@ -429,7 +434,9 @@ describe("close flow", () => {
     const persistedAction = await actionRepository.get(action.actionId);
     const accounting = persistedAction?.resultPayload?.accounting as {
       releasedAmountBase?: number;
+      releasedAmountBaseRaw?: string;
       releasedAmountQuote?: number;
+      releasedAmountQuoteRaw?: string;
       estimatedReleasedValueUsd?: number;
       releasedAmountSource?: string;
       preCloseFeesClaimed?: boolean;
@@ -438,8 +445,11 @@ describe("close flow", () => {
     };
 
     expect(capturedSwapIntentId).toBe(`${action.actionId}:POST_CLOSE_SWAP`);
+    expect(capturedReleasedBaseRaw).toBe("1250000");
     expect(accounting.releasedAmountBase).toBe(1.25);
+    expect(accounting.releasedAmountBaseRaw).toBe("1250000");
     expect(accounting.releasedAmountQuote).toBe(0.75);
+    expect(accounting.releasedAmountQuoteRaw).toBe("750000");
     expect(accounting.estimatedReleasedValueUsd).toBe(128);
     expect(accounting.releasedAmountSource).toBe("post_tx");
     expect(accounting.sourceConfidence).toBe("post_tx");
@@ -447,6 +457,119 @@ describe("close flow", () => {
     expect(accounting.postCloseSwap?.swapIntentId).toBe(
       `${action.actionId}:POST_CLOSE_SWAP`,
     );
+  });
+
+  it("preserves close accounting from the pre-close snapshot when close confirmation is zeroed", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const lessonRepository = new FileLessonRepository({
+      filePath: path.join(directory, "lessons.json"),
+    });
+    const performanceRepository = new FilePerformanceRepository({
+      filePath: path.join(directory, "performance.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+
+    await stateRepository.upsert(
+      buildOpenPosition("pos_zero_confirmation", {
+        currentValueUsd: 142,
+        feesClaimedBase: 0.17,
+        feesClaimedUsd: 17,
+        unrealizedPnlBase: 0.42,
+        unrealizedPnlUsd: 42,
+      }),
+    );
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_zero_confirmation",
+      payload: { reason: "zero close snapshot" },
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_zero_confirmation",
+              txIds: ["tx_close_zero_confirmation"],
+              releasedAmountSource: "post_tx",
+              releasedAmountBase: 1.4,
+              releasedAmountBaseRaw: "1400000",
+              estimatedReleasedValueUsd: 142,
+            },
+          },
+        }),
+        stateRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const zeroedConfirmation = buildCloseConfirmedPosition(
+      "pos_zero_confirmation",
+    );
+    await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: {
+          type: "success",
+          value: {
+            ...zeroedConfirmation,
+            currentValueBase: 0,
+            currentValueUsd: 0,
+            feesClaimedBase: 0,
+            feesClaimedUsd: 0,
+            realizedPnlBase: 0,
+            realizedPnlUsd: 0,
+            unrealizedPnlBase: 0,
+            unrealizedPnlUsd: 0,
+          },
+        },
+      }),
+      lessonHook: createRecordPositionPerformanceLessonHook({
+        lessonRepository,
+        performanceRepository,
+      }),
+      now: () => "2026-04-20T00:05:00.000Z",
+    });
+
+    const persistedAction = await actionRepository.get(action.actionId);
+    const persistedPosition = await stateRepository.get(
+      "pos_zero_confirmation",
+    );
+    const accounting = persistedAction?.resultPayload?.accounting as {
+      realizedPnlBase?: number;
+      realizedPnlUsd?: number;
+      feesClaimedBase?: number;
+      feesClaimedUsd?: number;
+    };
+
+    expect(persistedPosition?.status).toBe("CLOSED");
+    expect(persistedPosition?.realizedPnlBase).toBe(0.42);
+    expect(persistedPosition?.realizedPnlUsd).toBe(42);
+    expect(persistedPosition?.feesClaimedBase).toBe(0.17);
+    expect(persistedPosition?.feesClaimedUsd).toBe(17);
+    expect(accounting.realizedPnlBase).toBe(0.42);
+    expect(accounting.realizedPnlUsd).toBe(42);
+    expect(accounting.feesClaimedBase).toBe(0.17);
+    expect(accounting.feesClaimedUsd).toBe(17);
+    const performance = await performanceRepository.list();
+    expect(performance[0]?.pnlUsd).toBe(42);
+    expect(performance[0]?.pnlPct).toBeCloseTo(35.8974, 4);
   });
 
   it("routes ambiguous close submission to WAITING_CONFIRMATION + reconciliation instead of FAILED", async () => {
@@ -1127,6 +1250,67 @@ describe("close flow", () => {
     expect(finalized.position?.needsReconciliation).toBe(true);
   });
 
+  it("finalizes close from post-tx settlement when the position snapshot disappears", async () => {
+    const directory = await makeTempDir();
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionQueue = new ActionQueue({
+      actionRepository,
+    });
+    await stateRepository.upsert(buildOpenPosition("pos_settled_no_snapshot"));
+
+    const action = await requestClose({
+      actionQueue,
+      stateRepository,
+      wallet: "wallet_001",
+      positionId: "pos_settled_no_snapshot",
+      payload: {
+        reason: "settled but no snapshot",
+      },
+      requestedBy: "system",
+    });
+
+    await actionQueue.processNext((queuedAction) =>
+      processCloseAction({
+        action: queuedAction,
+        dlmmGateway: buildGateway({
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_settled_no_snapshot",
+              txIds: ["tx_close_settled"],
+              releasedAmountBase: 1.2,
+              releasedAmountBaseRaw: "1200000",
+              releasedAmountSource: "post_tx",
+            },
+          },
+        }),
+        stateRepository,
+        now: () => "2026-04-20T00:02:00.000Z",
+      }),
+    );
+
+    const finalized = await finalizeClose({
+      actionId: action.actionId,
+      actionRepository,
+      stateRepository,
+      dlmmGateway: buildGateway({
+        getPosition: { type: "success", value: null },
+      }),
+      now: () => "2026-04-20T00:10:00.000Z",
+    });
+
+    expect(finalized.outcome).toBe("FINALIZED");
+    expect(finalized.action.status).toBe("DONE");
+    expect(finalized.position?.status).toBe("CLOSED");
+    expect(finalized.position?.needsReconciliation).toBe(false);
+  });
+
   it("rejects mismatched close confirmation position identity", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
@@ -1558,7 +1742,8 @@ describe("close flow", () => {
     const flakyStateRepository = {
       get: (positionId: string) => stateRepository.get(positionId),
       list: () => stateRepository.list(),
-      replaceAll: (positions: Position[]) => stateRepository.replaceAll(positions),
+      replaceAll: (positions: Position[]) =>
+        stateRepository.replaceAll(positions),
       upsert: async (position: Position) => {
         if (
           failClosedWrite &&
@@ -1643,7 +1828,9 @@ describe("close flow", () => {
     });
     const actionQueue = new ActionQueue({ actionRepository });
 
-    await stateRepository.upsert(buildOpenPosition("pos_submitting_journal_fail"));
+    await stateRepository.upsert(
+      buildOpenPosition("pos_submitting_journal_fail"),
+    );
 
     const action = await requestClose({
       actionQueue,
@@ -1698,7 +1885,9 @@ describe("close flow", () => {
     });
     const actionQueue = new ActionQueue({ actionRepository });
 
-    await stateRepository.upsert(buildOpenPosition("pos_submitted_journal_fail"));
+    await stateRepository.upsert(
+      buildOpenPosition("pos_submitted_journal_fail"),
+    );
 
     const action = await requestClose({
       actionQueue,
@@ -1756,7 +1945,9 @@ describe("close flow", () => {
       journalRepository: realJournalRepository,
     });
 
-    await stateRepository.upsert(buildOpenPosition("pos_finalized_journal_fail"));
+    await stateRepository.upsert(
+      buildOpenPosition("pos_finalized_journal_fail"),
+    );
 
     const action = await requestClose({
       actionQueue,

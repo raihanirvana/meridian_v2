@@ -634,7 +634,10 @@ export {
   type PostCloseSwapHook,
   type PostCloseSwapInput,
 } from "./app/usecases/finalizeClose.js";
-export { createPostClaimSwapHook } from "./app/usecases/executePostClaimSwap.js";
+export {
+  createPostClaimSwapHook,
+  createPostCloseSwapHook,
+} from "./app/usecases/executePostClaimSwap.js";
 export {
   finalizeClaimFees,
   PostClaimSwapInputSchema,

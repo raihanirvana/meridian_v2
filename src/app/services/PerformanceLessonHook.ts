@@ -78,6 +78,39 @@ function resolveEntryMetadata(position: Position): PositionEntryMetadata {
   return position.entryMetadata ?? {};
 }
 
+function resolveClosePerformanceValues(input: {
+  position: Position;
+  snapshotPosition: Position;
+}): {
+  finalValueUsd: number;
+  pnlUsd: number;
+  pnlPct: number;
+} {
+  const pnlUsd =
+    input.snapshotPosition.realizedPnlUsd !== 0
+      ? input.snapshotPosition.realizedPnlUsd
+      : input.position.realizedPnlUsd !== 0
+        ? input.position.realizedPnlUsd
+        : input.snapshotPosition.unrealizedPnlUsd;
+  const snapshotUsesUnrealizedPnl =
+    input.snapshotPosition.realizedPnlUsd === 0 &&
+    pnlUsd !== 0 &&
+    input.snapshotPosition.unrealizedPnlUsd !== 0;
+  const finalValueUsd = Math.max(
+    input.snapshotPosition.currentValueUsd +
+      input.snapshotPosition.feesClaimedUsd +
+      (snapshotUsesUnrealizedPnl ? 0 : pnlUsd),
+    0,
+  );
+  const initialValueUsd = Math.max(finalValueUsd - pnlUsd, 0);
+
+  return {
+    finalValueUsd,
+    pnlUsd,
+    pnlPct: initialValueUsd <= 0 ? 0 : (pnlUsd / initialValueUsd) * 100,
+  };
+}
+
 export function buildPerformanceRecordFromClose(input: {
   position: Position;
   performanceSnapshotPosition?: Position;
@@ -99,16 +132,10 @@ export function buildPerformanceRecordFromClose(input: {
     input.position.closedAt ?? input.now,
   );
   const minutesInRange = Math.max(minutesHeld - minutesOutOfRange, 0);
-  const recoveredFinalValueUsd = Math.max(
-    snapshotPosition.currentValueUsd +
-      snapshotPosition.realizedPnlUsd +
-      snapshotPosition.feesClaimedUsd,
-    0,
-  );
-  const recoveredInitialValueUsd = Math.max(
-    recoveredFinalValueUsd - snapshotPosition.realizedPnlUsd,
-    0,
-  );
+  const performanceValues = resolveClosePerformanceValues({
+    position: input.position,
+    snapshotPosition,
+  });
 
   const result = buildPerformanceRecordFromClosedPosition({
     position: {
@@ -117,7 +144,7 @@ export function buildPerformanceRecordFromClose(input: {
       openedAt: snapshotPosition.openedAt ?? input.position.openedAt,
       currentValueUsd: snapshotPosition.currentValueUsd,
       feesClaimedUsd: snapshotPosition.feesClaimedUsd,
-      realizedPnlUsd: snapshotPosition.realizedPnlUsd,
+      realizedPnlUsd: performanceValues.pnlUsd,
       outOfRangeSince: snapshotPosition.outOfRangeSince,
     },
     closedAction:
@@ -139,13 +166,10 @@ export function buildPerformanceRecordFromClose(input: {
         requestedBy: "system",
       } satisfies Action),
     closeReason: mapCloseReason(input.reason),
-    finalValueUsd: recoveredFinalValueUsd,
+    finalValueUsd: performanceValues.finalValueUsd,
     feesEarnedUsd: snapshotPosition.feesClaimedUsd,
-    pnlUsd: snapshotPosition.realizedPnlUsd,
-    pnlPct:
-      recoveredInitialValueUsd <= 0
-        ? 0
-        : (snapshotPosition.realizedPnlUsd / recoveredInitialValueUsd) * 100,
+    pnlUsd: performanceValues.pnlUsd,
+    pnlPct: performanceValues.pnlPct,
     minutesHeld,
     minutesInRange,
     recordedAt: input.now,
@@ -172,24 +196,22 @@ export function createRecordPositionPerformanceLessonHook(
   }): Promise<PerformanceRecord | void> => {
     const snapshotPosition =
       hookInput.performanceSnapshotPosition ?? hookInput.position;
+    const performanceValues = resolveClosePerformanceValues({
+      position: hookInput.position,
+      snapshotPosition,
+    });
     const buildResult = buildPerformanceRecordFromClosedPosition({
-      position: snapshotPosition,
+      position: {
+        ...snapshotPosition,
+        closedAt: hookInput.position.closedAt,
+        realizedPnlUsd: performanceValues.pnlUsd,
+      },
       closedAction: hookInput.closedAction,
       closeReason: mapCloseReason(hookInput.reason),
-      finalValueUsd: Math.max(
-        snapshotPosition.currentValueUsd +
-          snapshotPosition.realizedPnlUsd +
-          snapshotPosition.feesClaimedUsd,
-        0,
-      ),
+      finalValueUsd: performanceValues.finalValueUsd,
       feesEarnedUsd: snapshotPosition.feesClaimedUsd,
-      pnlUsd: snapshotPosition.realizedPnlUsd,
-      pnlPct:
-        snapshotPosition.currentValueUsd <= 0
-          ? 0
-          : (snapshotPosition.realizedPnlUsd /
-              snapshotPosition.currentValueUsd) *
-            100,
+      pnlUsd: performanceValues.pnlUsd,
+      pnlPct: performanceValues.pnlPct,
       minutesHeld: diffMinutes(
         snapshotPosition.openedAt,
         hookInput.position.closedAt ?? hookInput.now,
