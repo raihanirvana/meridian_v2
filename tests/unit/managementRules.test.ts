@@ -84,6 +84,9 @@ function buildInput(overrides?: {
     trailingTriggerPct: number;
     trailingDropPct: number;
     claimFeesThresholdUsd: number;
+    closeZeroFeePositionsEnabled: boolean;
+    zeroFeeCloseMinAgeMinutes: number;
+    zeroFeeCloseMaxClaimableFeesUsd: number;
     partialCloseEnabled: boolean;
     partialCloseProfitTargetUsd: number;
     rebalanceEnabled: boolean;
@@ -112,6 +115,9 @@ function buildInput(overrides?: {
       trailingTriggerPct: 3,
       trailingDropPct: 1.5,
       claimFeesThresholdUsd: 10,
+      closeZeroFeePositionsEnabled: false,
+      zeroFeeCloseMinAgeMinutes: 240,
+      zeroFeeCloseMaxClaimableFeesUsd: 0.01,
       partialCloseEnabled: true,
       partialCloseProfitTargetUsd: 25,
       rebalanceEnabled: true,
@@ -228,6 +234,79 @@ describe("management rules", () => {
 
     expect(result.action).toBe("REBALANCE");
     expect(result.priority).toBe("MAINTENANCE_REBALANCE");
+  });
+
+  it("returns CLOSE when an old position still has effectively zero claimable fees", () => {
+    const result = evaluateManagementAction(
+      buildInput({
+        now: "2026-04-20T05:00:00.000Z",
+        position: {
+          openedAt: "2026-04-20T00:00:00.000Z",
+        },
+        signals: {
+          claimableFeesUsd: 0,
+        },
+        policy: {
+          closeZeroFeePositionsEnabled: true,
+          zeroFeeCloseMinAgeMinutes: 240,
+          zeroFeeCloseMaxClaimableFeesUsd: 0.01,
+          claimFeesThresholdUsd: 999,
+          partialCloseEnabled: false,
+        },
+      }),
+    );
+
+    expect(result.action).toBe("CLOSE");
+    expect(result.priority).toBe("HARD_EXIT");
+    expect(result.reason).toMatch(/zero-fee/i);
+    expect(result.triggerReasons.join(" ")).toMatch(/held 300 minutes/i);
+  });
+
+  it("keeps holding a zero-fee position before the configured minimum age", () => {
+    const result = evaluateManagementAction(
+      buildInput({
+        now: "2026-04-20T03:59:00.000Z",
+        position: {
+          openedAt: "2026-04-20T00:00:00.000Z",
+        },
+        signals: {
+          claimableFeesUsd: 0,
+        },
+        policy: {
+          closeZeroFeePositionsEnabled: true,
+          zeroFeeCloseMinAgeMinutes: 240,
+          zeroFeeCloseMaxClaimableFeesUsd: 0.01,
+          claimFeesThresholdUsd: 999,
+          partialCloseEnabled: false,
+        },
+      }),
+    );
+
+    expect(result.action).toBe("HOLD");
+  });
+
+  it("lets reconcile-only outrank a zero-fee stale-position exit", () => {
+    const result = evaluateManagementAction(
+      buildInput({
+        now: "2026-04-20T05:00:00.000Z",
+        position: {
+          openedAt: "2026-04-20T00:00:00.000Z",
+        },
+        signals: {
+          claimableFeesUsd: 0,
+          dataIncomplete: true,
+        },
+        policy: {
+          closeZeroFeePositionsEnabled: true,
+          zeroFeeCloseMinAgeMinutes: 240,
+          zeroFeeCloseMaxClaimableFeesUsd: 0.01,
+          claimFeesThresholdUsd: 999,
+          partialCloseEnabled: false,
+        },
+      }),
+    );
+
+    expect(result.action).toBe("RECONCILE_ONLY");
   });
 
   it("does not return REBALANCE when outOfRangeSince is stale but activeBin is back inside range", () => {

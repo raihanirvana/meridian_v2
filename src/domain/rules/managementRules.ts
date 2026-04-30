@@ -32,6 +32,9 @@ export const BaseManagementPolicySchema = z
     trailingTriggerPct: z.number().nonnegative().optional(),
     trailingDropPct: z.number().nonnegative().optional(),
     claimFeesThresholdUsd: z.number().nonnegative(),
+    closeZeroFeePositionsEnabled: z.boolean().optional(),
+    zeroFeeCloseMinAgeMinutes: z.number().int().nonnegative().optional(),
+    zeroFeeCloseMaxClaimableFeesUsd: z.number().nonnegative().optional(),
     partialCloseEnabled: z.boolean(),
     partialCloseProfitTargetUsd: z.number().nonnegative(),
     rebalanceEnabled: z.boolean(),
@@ -336,6 +339,27 @@ export function evaluateManagementAction(
       triggerReasons: input.position.needsReconciliation
         ? ["position.needsReconciliation is true"]
         : ["management snapshot is incomplete"],
+    });
+  }
+
+  const zeroFeeCloseMinAgeMinutes =
+    input.policy.zeroFeeCloseMinAgeMinutes ?? 240;
+  const zeroFeeCloseMaxClaimableFeesUsd =
+    input.policy.zeroFeeCloseMaxClaimableFeesUsd ?? 0;
+  if (
+    input.policy.closeZeroFeePositionsEnabled === true &&
+    heldMinutes !== null &&
+    heldMinutes >= zeroFeeCloseMinAgeMinutes &&
+    input.signals.claimableFeesUsd <= zeroFeeCloseMaxClaimableFeesUsd
+  ) {
+    return buildResult({
+      action: "CLOSE",
+      priority: "HARD_EXIT",
+      reason: "Zero-fee position exit triggered",
+      triggerReasons: [
+        `position held ${heldMinutes} minutes`,
+        `claimable fees ${input.signals.claimableFeesUsd.toFixed(2)} USD <= ${zeroFeeCloseMaxClaimableFeesUsd.toFixed(2)} USD`,
+      ],
     });
   }
 

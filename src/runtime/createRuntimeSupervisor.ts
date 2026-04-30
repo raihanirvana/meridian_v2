@@ -61,7 +61,10 @@ import {
   createPostClaimSwapHook,
   createPostCloseSwapHook,
 } from "../app/usecases/executePostClaimSwap.js";
-import { reviewStrategyWithAi } from "../app/usecases/reviewStrategyWithAi.js";
+import {
+  reviewStrategyWithAi,
+  type StrategyReviewWithAiItem,
+} from "../app/usecases/reviewStrategyWithAi.js";
 import { createPerformanceLessonHook } from "../app/services/createPerformanceLessonHook.js";
 import { FileMeteoraDetailRateLimiter } from "../app/services/MeteoraDetailRateLimiter.js";
 import { createUlid } from "../infra/id/createUlid.js";
@@ -387,6 +390,26 @@ function buildAutoDeployPayload(input: {
   };
 }
 
+function isSolPairedCandidate(candidate: Candidate): boolean {
+  const tokenXMint = asOptionalStringFromRecord(
+    candidate.tokenRiskSnapshot,
+    "tokenXMint",
+  );
+  const tokenYMint = asOptionalStringFromRecord(
+    candidate.tokenRiskSnapshot,
+    "tokenYMint",
+  );
+  const baseMint = candidate.baseMint ?? tokenXMint;
+  const quoteMint = candidate.quoteMint ?? tokenYMint;
+
+  return (
+    baseMint === SOL_MINT ||
+    quoteMint === SOL_MINT ||
+    tokenXMint === SOL_MINT ||
+    tokenYMint === SOL_MINT
+  );
+}
+
 function countRecentDeployActions(input: {
   actions: Action[];
   wallet: string;
@@ -405,6 +428,64 @@ function countRecentDeployActions(input: {
       requestedAtMs >= oneHourAgo
     );
   }).length;
+}
+
+function aiStrategyDecisionPriority(
+  review: StrategyReviewWithAiItem | undefined,
+): number {
+  if (review === undefined) {
+    return 3;
+  }
+
+  if (review.review.decision === "deploy") {
+    return 0;
+  }
+
+  if (review.review.decision === "watch") {
+    return 1;
+  }
+
+  return 2;
+}
+
+function orderCandidatesByAiStrategyConfidence(input: {
+  candidates: Candidate[];
+  reviews: StrategyReviewWithAiItem[];
+}): Candidate[] {
+  const originalIndexByCandidateId = new Map(
+    input.candidates.map((candidate, index) => [candidate.candidateId, index]),
+  );
+  const reviewByCandidateId = new Map(
+    input.reviews.map((review) => [review.candidateId, review] as const),
+  );
+
+  return [...input.candidates].sort((left, right) => {
+    const leftReview = reviewByCandidateId.get(left.candidateId);
+    const rightReview = reviewByCandidateId.get(right.candidateId);
+    const decisionOrder =
+      aiStrategyDecisionPriority(leftReview) -
+      aiStrategyDecisionPriority(rightReview);
+    if (decisionOrder !== 0) {
+      return decisionOrder;
+    }
+
+    const confidenceOrder =
+      (rightReview?.review.confidence ?? -1) -
+      (leftReview?.review.confidence ?? -1);
+    if (confidenceOrder !== 0) {
+      return confidenceOrder;
+    }
+
+    const scoreOrder = right.score - left.score;
+    if (scoreOrder !== 0) {
+      return scoreOrder;
+    }
+
+    return (
+      (originalIndexByCandidateId.get(left.candidateId) ?? 0) -
+      (originalIndexByCandidateId.get(right.candidateId) ?? 0)
+    );
+  });
 }
 
 export function createRuntimeSupervisor(
@@ -907,8 +988,22 @@ export function createRuntimeSupervisor(
       return { poolInfo, deployReadiness };
     };
 
+    const autoDeployShortlist =
+      screening.shortlist.filter(isSolPairedCandidate);
+    if (autoDeployShortlist.length === 0) {
+      await appendAutoDeployJournal({
+        timestamp,
+        candidate: screening.shortlist[0] ?? null,
+        actionId: null,
+        resultStatus: "SKIPPED",
+        detail:
+          "auto deploy skipped because shortlist has no SOL-paired candidates",
+      });
+      return;
+    }
+
     const aiReviewCandidates: Candidate[] = [];
-    for (const candidate of screening.shortlist) {
+    for (const candidate of autoDeployShortlist) {
       try {
         const { deployReadiness } = await refreshDeployReadiness(candidate);
         aiReviewCandidates.push(deployReadiness.candidate);
@@ -969,16 +1064,61 @@ export function createRuntimeSupervisor(
     const aiOrderedCandidates =
       strategyReviews === null
         ? aiReviewCandidates
-        : [
-            ...strategyReviews.reviews.flatMap((review) => {
-              const candidate = candidateById.get(review.candidateId);
-              return candidate === undefined ? [] : [candidate];
+        : orderCandidatesByAiStrategyConfidence({
+            candidates: [
+              ...strategyReviews.reviews.flatMap((review) => {
+                const candidate = candidateById.get(review.candidateId);
+                return candidate === undefined ? [] : [candidate];
+              }),
+              ...aiReviewCandidates.filter(
+                (candidate) =>
+                  !strategyReviewByCandidateId.has(candidate.candidateId),
+              ),
+            ],
+            reviews: strategyReviews.reviews,
+          });
+    if (strategyReviews !== null) {
+      await input.stores.journalRepository
+        .append({
+          timestamp,
+          eventType: "AI_STRATEGY_SHORTLIST_ORDERED",
+          actor: "ai",
+          wallet: input.wallet,
+          positionId: null,
+          actionId: null,
+          before: null,
+          after: {
+            source: "AI_STRATEGY_REVIEW",
+            orderedCandidates: aiOrderedCandidates.map((candidate, index) => {
+              const review = strategyReviewByCandidateId.get(
+                candidate.candidateId,
+              );
+              return {
+                rank: index + 1,
+                candidateId: candidate.candidateId,
+                poolAddress: candidate.poolAddress,
+                symbolPair: candidate.symbolPair,
+                candidateScore: candidate.score,
+                aiDecision: review?.review.decision ?? null,
+                aiConfidence: review?.review.confidence ?? null,
+                aiRecommendedStrategy:
+                  review?.review.recommendedStrategy ?? null,
+                aiSource: review?.source ?? null,
+                aiError: review?.aiError ?? null,
+              };
             }),
-            ...aiReviewCandidates.filter(
-              (candidate) =>
-                !strategyReviewByCandidateId.has(candidate.candidateId),
-            ),
-          ];
+          },
+          txIds: [],
+          resultStatus: "ORDERED",
+          error: null,
+        })
+        .catch((err: unknown) => {
+          logger.warn(
+            { err },
+            "AI strategy shortlist ordering journal append failed",
+          );
+        });
+    }
     let deployedThisCycle = 0;
     for (const candidate of aiOrderedCandidates) {
       if (deployedThisCycle >= input.config.deploy.maxAutoDeploysPerCycle) {

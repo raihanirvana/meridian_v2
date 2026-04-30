@@ -280,6 +280,44 @@ function buildCandidate(): Candidate {
   });
 }
 
+function buildCandidateVariant(input: {
+  candidateId: string;
+  poolAddress: string;
+  symbolPair: string;
+  baseMint: string;
+  quoteMint?: string;
+  organicScore?: number;
+}): Candidate {
+  const base = buildCandidate();
+  const organicScore =
+    input.organicScore ?? base.screeningSnapshot.organicScore;
+  const quoteMint = input.quoteMint ?? base.quoteMint;
+
+  return CandidateSchema.parse({
+    ...base,
+    candidateId: input.candidateId,
+    poolAddress: input.poolAddress,
+    symbolPair: input.symbolPair,
+    tokenXMint: input.baseMint,
+    tokenYMint: quoteMint,
+    baseMint: input.baseMint,
+    quoteMint,
+    screeningSnapshot: {
+      ...base.screeningSnapshot,
+      organicScore,
+    },
+    marketFeatureSnapshot: {
+      ...base.marketFeatureSnapshot,
+      organicVolumeScore: organicScore,
+    },
+    tokenRiskSnapshot: {
+      ...base.tokenRiskSnapshot,
+      tokenXMint: input.baseMint,
+      tokenYMint: quoteMint,
+    },
+  });
+}
+
 function buildOpenPosition(positionId: string) {
   return PositionSchema.parse({
     positionId,
@@ -1557,9 +1595,9 @@ describe("runtime supervisor", () => {
         isFreshEnoughForDeploy: true,
       }),
     });
-    expect(reviewedCandidate.strategySuitability.strategyRiskFlags).not.toContain(
-      "missing_active_bin",
-    );
+    expect(
+      reviewedCandidate.strategySuitability.strategyRiskFlags,
+    ).not.toContain("missing_active_bin");
   });
 
   it("does not enqueue auto deploy when DLMM deploy-readiness refresh fails", async () => {
@@ -2381,6 +2419,239 @@ describe("runtime supervisor", () => {
       },
     });
   });
+
+  it("tries AI deploy recommendations by confidence order before deterministic score order", async () => {
+    const directory = await makeTempDir();
+    const stores = createRuntimeStores({
+      dataDir: directory,
+      baseScreeningPolicy: buildScreeningPolicy(),
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+    const lowConfidenceCandidate = buildCandidateVariant({
+      candidateId: "cand_low_confidence",
+      poolAddress: "pool_low_confidence",
+      symbolPair: "LOW-SOL",
+      baseMint: "mint_low",
+      organicScore: 90,
+    });
+    const highConfidenceCandidate = buildCandidateVariant({
+      candidateId: "cand_high_confidence",
+      poolAddress: "pool_high_confidence",
+      symbolPair: "HIGH-SOL",
+      baseMint: "mint_high",
+      organicScore: 70,
+    });
+    const nonSolCandidate = buildCandidateVariant({
+      candidateId: "cand_non_sol",
+      poolAddress: "pool_non_sol",
+      symbolPair: "NON-USDC",
+      baseMint: "mint_non_sol",
+      quoteMint: "mint_usdc",
+      organicScore: 95,
+    });
+    let reviewedPoolAddresses: string[] = [];
+
+    const supervisor = createRuntimeSupervisorFromUserConfig({
+      wallet: "wallet_001",
+      userConfig: buildUserConfig({
+        ai: {
+          mode: "advisory",
+          strategyReviewEnabled: true,
+          strategyReviewMode: "dry_run_payload",
+          allowAiStrategyForDeploy: false,
+          minAiStrategyConfidence: 0.7,
+        },
+        screening: {
+          requireDetailForDeploy: false,
+        },
+        deploy: {
+          autoDeployFromShortlist: true,
+          maxAutoDeploysPerCycle: 1,
+        },
+      }),
+      stores,
+      gateways: {
+        aiStrategyReviewer: {
+          async reviewCandidateStrategy() {
+            throw new Error("single strategy review should not be used");
+          },
+          async reviewCandidateStrategies(input: AiStrategyBatchReviewInput) {
+            reviewedPoolAddresses = input.candidates.map(
+              (candidate) => candidate.poolAddress,
+            );
+            return input.candidates.map((candidate) => ({
+              poolAddress: candidate.poolAddress,
+              decision: "deploy",
+              recommendedStrategy: "curve",
+              confidence:
+                candidate.poolAddress === "pool_high_confidence" ? 0.93 : 0.72,
+              riskLevel: "medium",
+              binsBelow: 60,
+              binsAbove: 20,
+              slippageBps: 300,
+              maxPositionAgeMinutes: 720,
+              stopLossPct: 5,
+              takeProfitPct: 10,
+              trailingStopPct: 2,
+              reasons: [
+                candidate.poolAddress === "pool_high_confidence"
+                  ? "higher confidence deploy"
+                  : "lower confidence deploy",
+              ],
+              rejectIf: [],
+            }));
+          },
+        },
+        screeningGateway: new MockScreeningGateway({
+          listCandidates: {
+            type: "success",
+            value: [
+              nonSolCandidate,
+              lowConfidenceCandidate,
+              highConfidenceCandidate,
+            ],
+          },
+          getCandidateDetails: {
+            type: "success",
+            value: {
+              poolAddress: "pool_low_confidence",
+              pairLabel: "LOW-SOL",
+              feeToTvlRatio: 0.12,
+              feePerTvl24h: 0.03,
+              volumeTrendPct: 10,
+              organicScore: 80,
+              holderCount: 1_200,
+            },
+          },
+        }),
+        dlmmGateway: new MockDlmmGateway({
+          getPosition: { type: "success", value: null },
+          deployLiquidity: {
+            type: "fail",
+            error: new Error("dry run must not queue deploy"),
+          },
+          simulateDeployLiquidity: {
+            type: "success",
+            value: { ok: true, reason: null },
+          },
+          closePosition: {
+            type: "success",
+            value: {
+              actionType: "CLOSE",
+              closedPositionId: "pos_unused",
+              txIds: ["tx_unused"],
+            },
+          },
+          claimFees: {
+            type: "success",
+            value: {
+              actionType: "CLAIM_FEES",
+              claimedBaseAmount: 0,
+              txIds: ["tx_unused"],
+            },
+          },
+          partialClosePosition: {
+            type: "success",
+            value: {
+              actionType: "PARTIAL_CLOSE",
+              closedPositionId: "pos_unused",
+              remainingPercentage: 50,
+              txIds: ["tx_unused"],
+            },
+          },
+          listPositionsForWallet: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              positions: [],
+            },
+          },
+          getPoolInfo: {
+            type: "success",
+            value: {
+              poolAddress: "pool_any",
+              pairLabel: "ANY-SOL",
+              binStep: 80,
+              activeBin: 1000,
+            },
+          },
+        }),
+        walletGateway: new MockWalletGateway({
+          getWalletBalance: {
+            type: "success",
+            value: {
+              wallet: "wallet_001",
+              balanceSol: 10,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+        priceGateway: new MockPriceGateway({
+          getSolPriceUsd: {
+            type: "success",
+            value: {
+              symbol: "SOL",
+              priceUsd: 100,
+              asOf: "2026-04-22T10:00:00.000Z",
+            },
+          },
+        }),
+      },
+      signalProvider: () => ({
+        claimableFeesUsd: 0,
+        expectedRebalanceImprovement: false,
+        severeNegativeYield: false,
+        severeTokenRisk: false,
+        liquidityCollapse: false,
+        forcedManualClose: false,
+        dataIncomplete: false,
+        circuitBreakerState: "OFF",
+      }),
+      lessonPromptService: {
+        async buildLessonsPrompt() {
+          return null;
+        },
+      },
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    await supervisor.runScreeningTick("manual");
+
+    const journal = await stores.journalRepository.list();
+    const ordered = journal.find(
+      (event) => event.eventType === "AI_STRATEGY_SHORTLIST_ORDERED",
+    );
+    const autoDeploy = journal.find(
+      (event) =>
+        event.eventType === "AUTO_DEPLOY_FROM_SHORTLIST" &&
+        event.resultStatus === "DRY_RUN",
+    );
+
+    expect(ordered?.after).toMatchObject({
+      orderedCandidates: [
+        {
+          poolAddress: "pool_high_confidence",
+          aiConfidence: 0.93,
+          rank: 1,
+        },
+        {
+          poolAddress: "pool_low_confidence",
+          aiConfidence: 0.72,
+          rank: 2,
+        },
+      ],
+    });
+    expect(reviewedPoolAddresses).toEqual([
+      "pool_low_confidence",
+      "pool_high_confidence",
+    ]);
+    expect(autoDeploy?.after).toMatchObject({
+      poolAddress: "pool_high_confidence",
+      requestPayload: {
+        poolAddress: "pool_high_confidence",
+      },
+    });
+  }, 10_000);
 
   it("blocks dry_run_payload mode from queueing live deploys when runtime dryRun is false", async () => {
     const directory = await makeTempDir();
