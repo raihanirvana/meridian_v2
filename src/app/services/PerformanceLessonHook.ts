@@ -56,11 +56,29 @@ function mapCloseReason(reason: string): PerformanceRecord["closeReason"] {
     return "timeout";
   }
 
+  if (normalized.includes("rebalance")) {
+    return "rebalance";
+  }
+
   if (normalized.includes("operator")) {
     return "operator";
   }
 
   return "manual";
+}
+
+function normalizeCloseReasonDetail(reason: string): string | undefined {
+  const normalized = reason.trim().replace(/\s+/g, " ");
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  const mapped = mapCloseReason(reason).replaceAll("_", " ");
+  if (normalized.toLowerCase() === mapped) {
+    return undefined;
+  }
+
+  return normalized.slice(0, 300);
 }
 
 export interface CreateRecordPositionPerformanceLessonHookInput {
@@ -136,6 +154,7 @@ export function buildPerformanceRecordFromClose(input: {
     position: input.position,
     snapshotPosition,
   });
+  const closeReasonDetail = normalizeCloseReasonDetail(input.reason);
 
   const result = buildPerformanceRecordFromClosedPosition({
     position: {
@@ -166,6 +185,7 @@ export function buildPerformanceRecordFromClose(input: {
         requestedBy: "system",
       } satisfies Action),
     closeReason: mapCloseReason(input.reason),
+    ...(closeReasonDetail === undefined ? {} : { closeReasonDetail }),
     finalValueUsd: performanceValues.finalValueUsd,
     feesEarnedUsd: snapshotPosition.feesClaimedUsd,
     pnlUsd: performanceValues.pnlUsd,
@@ -200,6 +220,7 @@ export function createRecordPositionPerformanceLessonHook(
       position: hookInput.position,
       snapshotPosition,
     });
+    const closeReasonDetail = normalizeCloseReasonDetail(hookInput.reason);
     const buildResult = buildPerformanceRecordFromClosedPosition({
       position: {
         ...snapshotPosition,
@@ -208,6 +229,7 @@ export function createRecordPositionPerformanceLessonHook(
       },
       closedAction: hookInput.closedAction,
       closeReason: mapCloseReason(hookInput.reason),
+      ...(closeReasonDetail === undefined ? {} : { closeReasonDetail }),
       finalValueUsd: performanceValues.finalValueUsd,
       feesEarnedUsd: snapshotPosition.feesClaimedUsd,
       pnlUsd: performanceValues.pnlUsd,

@@ -949,12 +949,14 @@ describe("real adapters", () => {
 
   it("maps Meteora Pool Discovery details for enrichment", async () => {
     let filterBy: string | null = null;
+    let requestedTimeframe: string | null = null;
     const screening = new MeteoraPoolDiscoveryScreeningGateway({
       baseUrl: "https://pool-discovery-api.datapi.meteora.ag",
       now: () => "2026-04-24T00:00:00.000Z",
       fetchFn: async (url) => {
         const parsedUrl = new URL(String(url));
         filterBy = parsedUrl.searchParams.get("filter_by");
+        requestedTimeframe = parsedUrl.searchParams.get("timeframe");
         return new Response(
           JSON.stringify([
             {
@@ -962,6 +964,7 @@ describe("real adapters", () => {
               name: "MEME-SOL",
               active_tvl: 25_000,
               volume: 80_000,
+              fee: 250,
               fee_active_tvl_ratio: 1.2,
               fee_per_tvl_24h: 1.4,
               volume_change_pct: 18,
@@ -986,7 +989,7 @@ describe("real adapters", () => {
     });
 
     await expect(
-      screening.getCandidateDetails("pool_001"),
+      screening.getCandidateDetails("pool_001", { timeframe: "1h" }),
     ).resolves.toMatchObject({
       poolAddress: "pool_001",
       pairLabel: "MEME-SOL",
@@ -996,8 +999,15 @@ describe("real adapters", () => {
       organicScore: 74,
       holderCount: 1_500,
       tokenAgeHours: 48,
+      marketFeatureSnapshot: {
+        volume1hUsd: 80_000,
+        fees1hUsd: 250,
+        volume24hUsd: 0,
+        fees24hUsd: 0,
+      },
     });
     expect(filterBy).toBe("pool_address=pool_001");
+    expect(requestedTimeframe).toBe("1h");
   });
 
   it("does not enrich Meteora details from the first pool when the filtered pool is absent", async () => {

@@ -337,6 +337,10 @@ function buildAutoDeployPayload(input: {
     input.candidate.screeningSnapshot,
     "organicScore",
   );
+  const screeningVolumeUsd = asOptionalNumberFromRecord(
+    input.candidate.screeningSnapshot,
+    "volumeUsd",
+  );
 
   return {
     poolAddress: input.candidate.poolAddress,
@@ -361,8 +365,11 @@ function buildAutoDeployPayload(input: {
       volume15mUsd: input.candidate.marketFeatureSnapshot.volume15mUsd,
       volume1hUsd: input.candidate.marketFeatureSnapshot.volume1hUsd,
       volume24hUsd: input.candidate.marketFeatureSnapshot.volume24hUsd,
+      fees5mUsd: input.candidate.marketFeatureSnapshot.fees5mUsd,
       fees15mUsd: input.candidate.marketFeatureSnapshot.fees15mUsd,
       fees1hUsd: input.candidate.marketFeatureSnapshot.fees1hUsd,
+      fees24hUsd: input.candidate.marketFeatureSnapshot.fees24hUsd,
+      feeTvlRatio1h: input.candidate.marketFeatureSnapshot.feeTvlRatio1h,
       feeTvlRatio24h: input.candidate.marketFeatureSnapshot.feeTvlRatio24h,
       priceChange5mPct: input.candidate.marketFeatureSnapshot.priceChange5mPct,
       priceChange15mPct:
@@ -383,8 +390,16 @@ function buildAutoDeployPayload(input: {
       meanReversionSignal: classifyMeanReversionSignal(
         input.candidate.marketFeatureSnapshot.meanReversionScore,
       ),
+      candidateScore: input.candidate.score,
+      ...(screeningVolumeUsd === undefined ? {} : { screeningVolumeUsd }),
       ...(feeTvlRatio === undefined ? {} : { feeTvlRatio }),
+      ...(feeTvlRatio === undefined
+        ? {}
+        : { screeningFeeTvlRatio: feeTvlRatio }),
       ...(organicScore === undefined ? {} : { organicScore }),
+      ...(organicScore === undefined
+        ? {}
+        : { screeningOrganicScore: organicScore }),
       amountSol: input.deployConfig.defaultAmountSol,
     },
   };

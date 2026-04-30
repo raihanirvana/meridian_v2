@@ -37,8 +37,11 @@ export const PositionEntryMetadataSchema = z
     volume15mUsd: z.number().nonnegative().optional(),
     volume1hUsd: z.number().nonnegative().optional(),
     volume24hUsd: z.number().nonnegative().optional(),
+    fees5mUsd: z.number().nonnegative().optional(),
     fees15mUsd: z.number().nonnegative().optional(),
     fees1hUsd: z.number().nonnegative().optional(),
+    fees24hUsd: z.number().nonnegative().optional(),
+    feeTvlRatio1h: z.number().nonnegative().optional(),
     feeTvlRatio24h: z.number().nonnegative().optional(),
     priceChange5mPct: z.number().optional(),
     priceChange15mPct: z.number().optional(),
@@ -55,6 +58,10 @@ export const PositionEntryMetadataSchema = z
     volatility: z.number().nonnegative().optional(),
     feeTvlRatio: z.number().nonnegative().optional(),
     organicScore: z.number().nonnegative().optional(),
+    candidateScore: z.number().nonnegative().optional(),
+    screeningVolumeUsd: z.number().nonnegative().optional(),
+    screeningFeeTvlRatio: z.number().nonnegative().optional(),
+    screeningOrganicScore: z.number().nonnegative().optional(),
     amountSol: z.number().nonnegative().optional(),
   })
   .strict();

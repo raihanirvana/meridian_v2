@@ -957,7 +957,7 @@ describe("rebalance flow", () => {
     expect(resultPayload?.redeployRequest?.estimatedValueUsd).toBe(120);
   });
 
-  it("aborts redeploy when a requested token side is missing from post-close settlement", async () => {
+  it("redeploys with base-only post-close settlement instead of requiring the stale quote request side", async () => {
     const directory = await makeTempDir();
     const actionRepository = new ActionRepository({
       filePath: path.join(directory, "actions.json"),
@@ -988,7 +988,7 @@ describe("rebalance flow", () => {
       positionId: "pos_missing_quote",
       payload: rebalancePayload,
       requestedBy: "system",
-        allowRiskGuardBypass: true,
+      allowRiskGuardBypass: true,
     });
 
     await actionQueue.processNext((queuedAction) =>
@@ -1012,11 +1012,14 @@ describe("rebalance flow", () => {
       now: () => "2026-04-20T00:05:00.000Z",
     });
 
-    expect(finalized.outcome).toBe("REBALANCE_ABORTED");
-    expect(finalized.action.error).toMatch(
-      /quote token settlement amount is missing/i,
-    );
-    expect(gateway.deployRequests).toHaveLength(0);
+    expect(finalized.outcome).toBe("REDEPLOY_SUBMITTED");
+    expect(finalized.action.error).toBeNull();
+    expect(gateway.deployRequests).toHaveLength(1);
+    expect(gateway.deployRequests[0]?.amountBase).toBe(1.37);
+    expect(gateway.deployRequests[0]?.amountQuote).toBe(0);
+    expect(finalized.newPosition?.deployAmountBase).toBe(1.37);
+    expect(finalized.newPosition?.deployAmountQuote).toBe(0);
+    expect(finalized.newPosition?.currentValueUsd).toBe(120);
   });
 
   it("aborts redeploy when post-close token settlement amounts are unavailable", async () => {

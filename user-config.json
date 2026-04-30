@@ -139,7 +139,7 @@
     "enabled": false
   },
   "runtime": {
-    "dryRun": true,
+    "dryRun": false,
     "logLevel": "info",
     "operatorStdinEnabled": true
   }

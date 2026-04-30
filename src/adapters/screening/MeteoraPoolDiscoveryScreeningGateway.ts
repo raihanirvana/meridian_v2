@@ -15,8 +15,10 @@ import { AdapterHttpStatusError } from "../http/HttpJsonClient.js";
 
 import {
   CandidateDetailsSchema,
+  GetCandidateDetailsOptionsSchema,
   ListCandidatesRequestSchema,
   type CandidateDetails,
+  type GetCandidateDetailsOptions,
   type ListCandidatesRequest,
   type ScreeningGateway,
 } from "./ScreeningGateway.js";
@@ -316,8 +318,10 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
 
   public async getCandidateDetails(
     poolAddress: string,
+    options: GetCandidateDetailsOptions = {},
   ): Promise<CandidateDetails> {
     const parsedPoolAddress = z.string().min(1).parse(poolAddress);
+    const parsedOptions = GetCandidateDetailsOptionsSchema.parse(options);
     let response: z.infer<typeof PoolDiscoveryResponseSchema>;
     try {
       response = await this.client.request({
@@ -326,6 +330,9 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
         query: {
           page_size: 1,
           category: this.category,
+          ...(parsedOptions.timeframe === undefined
+            ? {}
+            : { timeframe: parsedOptions.timeframe }),
           filter_by: `pool_address=${parsedPoolAddress}`,
         },
         responseSchema: PoolDiscoveryResponseSchema,
@@ -354,7 +361,9 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       });
     }
 
-    return CandidateDetailsSchema.parse(this.toCandidateDetails(pool, true));
+    return CandidateDetailsSchema.parse(
+      this.toCandidateDetails(pool, true, parsedOptions.timeframe),
+    );
   }
 
   private toCandidate(
@@ -715,8 +724,9 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
   private toCandidateDetails(
     pool: Record<string, unknown>,
     detailFetched: boolean,
+    timeframe?: "5m" | "1h" | "24h",
   ): CandidateDetails {
-    const candidate = this.toCandidate(pool, detailFetched);
+    const candidate = this.toCandidate(pool, detailFetched, timeframe);
     if (candidate === null) {
       const poolAddress = extractPoolAddress(pool) ?? "unknown_pool";
       return CandidateDetailsSchema.parse({

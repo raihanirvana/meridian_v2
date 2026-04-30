@@ -28,6 +28,7 @@ export const PerformanceRecordSchema = z
     minutesHeld: z.number().int().nonnegative(),
     minutesInRange: z.number().int().nonnegative(),
     closeReason: CloseReasonSchema,
+    closeReasonDetail: z.string().min(1).max(300).optional(),
     deployedAt: TimestampSchema,
     closedAt: TimestampSchema,
     recordedAt: TimestampSchema,

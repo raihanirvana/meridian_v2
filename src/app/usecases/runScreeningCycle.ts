@@ -256,6 +256,45 @@ function toScreeningInput(
   });
 }
 
+function marketWindowSignal(
+  snapshot: Candidate["marketFeatureSnapshot"],
+): number {
+  return (
+    snapshot.volume5mUsd +
+    snapshot.volume15mUsd +
+    snapshot.volume1hUsd +
+    snapshot.volume24hUsd +
+    snapshot.fees5mUsd +
+    snapshot.fees15mUsd +
+    snapshot.fees1hUsd +
+    snapshot.fees24hUsd +
+    Math.abs(snapshot.priceChange5mPct) +
+    Math.abs(snapshot.priceChange15mPct) +
+    Math.abs(snapshot.priceChange1hPct) +
+    Math.abs(snapshot.priceChange24hPct) +
+    snapshot.volatility5mPct +
+    snapshot.volatility15mPct +
+    snapshot.volatility1hPct
+  );
+}
+
+function preferInformativeMarketSnapshot(input: {
+  coarse: Candidate["marketFeatureSnapshot"];
+  detail: Candidate["marketFeatureSnapshot"] | undefined;
+}): Candidate["marketFeatureSnapshot"] | undefined {
+  if (input.detail === undefined) {
+    return undefined;
+  }
+
+  const detailSignal = marketWindowSignal(input.detail);
+  const coarseSignal = marketWindowSignal(input.coarse);
+  if (detailSignal === 0 && coarseSignal > 0) {
+    return input.coarse;
+  }
+
+  return input.detail;
+}
+
 function mergeCandidateContext(
   candidate: Candidate,
   enriched: ScreeningCandidateInput,
@@ -544,7 +583,9 @@ export async function runScreeningCycle(
                 return null;
               });
       const [details, narrative] = await Promise.all([
-        input.screeningGateway.getCandidateDetails(candidate.poolAddress),
+        input.screeningGateway.getCandidateDetails(candidate.poolAddress, {
+          timeframe: screeningPolicy.timeframe,
+        }),
         narrativePromise,
       ]);
       await input.detailRateLimiter?.recordSuccess(detailRequestNow);
@@ -571,6 +612,10 @@ export async function runScreeningCycle(
             details.dlmmMicrostructureSnapshot?.activeBinSource !== "unavailable",
         });
       })();
+      const marketFeatureSnapshot = preferInformativeMarketSnapshot({
+        coarse: candidate.marketFeatureSnapshot,
+        detail: details?.marketFeatureSnapshot,
+      });
       detailByCandidateId.set(candidate.candidateId, {
         ...(details?.feePerTvl24h === undefined
           ? {}
@@ -584,9 +629,9 @@ export async function runScreeningCycle(
         ...(details?.volumeTrendPct === undefined
           ? {}
           : { volumeTrendPct: details.volumeTrendPct }),
-        ...(details?.marketFeatureSnapshot === undefined
+        ...(marketFeatureSnapshot === undefined
           ? {}
-          : { marketFeatureSnapshot: details.marketFeatureSnapshot }),
+          : { marketFeatureSnapshot }),
         ...(details?.dlmmMicrostructureSnapshot === undefined
           ? {}
           : { dlmmMicrostructureSnapshot: details.dlmmMicrostructureSnapshot }),

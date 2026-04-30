@@ -698,6 +698,95 @@ describe("screening worker", () => {
     expect(result.enrichmentSummary.skippedDetail).toBe(1);
   });
 
+  it("passes the screening timeframe to detail enrichment and keeps informative coarse market windows", async () => {
+    const directory = await makeTempDir();
+    const stateRepository = new StateRepository({
+      filePath: path.join(directory, "positions.json"),
+    });
+    const actionRepository = new ActionRepository({
+      filePath: path.join(directory, "actions.json"),
+    });
+    const journalRepository = new JournalRepository({
+      filePath: path.join(directory, "journal.jsonl"),
+    });
+
+    const requestedOptions: unknown[] = [];
+    const coarseCandidate = buildGatewayCandidate({
+      marketFeatureSnapshot: buildMarketFeatureSnapshot({
+        volume1hUsd: 25_000,
+        fees1hUsd: 15,
+        tvlUsd: 50_000,
+        organicVolumeScore: 80,
+        washTradingRiskScore: 5,
+      }),
+    });
+
+    const result = await runScreeningCycle({
+      wallet: "wallet_001",
+      screeningGateway: {
+        async listCandidates() {
+          return [coarseCandidate];
+        },
+        async getCandidateDetails(_poolAddress, options) {
+          requestedOptions.push(options);
+          return {
+            poolAddress: "pool_001",
+            pairLabel: "ABC-SOL",
+            feeToTvlRatio: 0.12,
+            feePerTvl24h: 0.03,
+            volumeTrendPct: 10,
+            organicScore: 80,
+            holderCount: 1_200,
+            marketFeatureSnapshot: buildMarketFeatureSnapshot({
+              tvlUsd: 50_000,
+              organicVolumeScore: 80,
+              washTradingRiskScore: 5,
+            }),
+          };
+        },
+      },
+      stateRepository,
+      actionRepository,
+      journalRepository,
+      walletGateway: new MockWalletGateway({
+        getWalletBalance: {
+          type: "success",
+          value: {
+            wallet: "wallet_001",
+            balanceSol: 5,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      priceGateway: new MockPriceGateway({
+        getSolPriceUsd: {
+          type: "success",
+          value: {
+            symbol: "SOL",
+            priceUsd: 150,
+            asOf: "2026-04-22T10:00:00.000Z",
+          },
+        },
+      }),
+      riskPolicy: buildRiskPolicy(),
+      policyProvider: {
+        async resolveScreeningPolicy() {
+          return buildPolicy({ timeframe: "1h" });
+        },
+      },
+      aiMode: "disabled",
+      detailEnrichmentTopN: 1,
+      maxDetailRequestsPerCycle: 1,
+      now: () => "2026-04-22T10:00:00.000Z",
+    });
+
+    expect(requestedOptions).toEqual([{ timeframe: "1h" }]);
+    expect(result.candidates[0]?.marketFeatureSnapshot.volume1hUsd).toBe(
+      25_000,
+    );
+    expect(result.candidates[0]?.marketFeatureSnapshot.fees1hUsd).toBe(15);
+  });
+
   it("caps detail enrichment to the shortlist limit used for AI review", async () => {
     const directory = await makeTempDir();
     const stateRepository = new StateRepository({

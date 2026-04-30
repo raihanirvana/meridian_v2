@@ -137,6 +137,7 @@ describe("lesson rules", () => {
     "out_of_range",
     "timeout",
     "operator",
+    "rebalance",
   ] as const)("derives a failed lesson for poor %s exits", (closeReason) => {
     const lesson = deriveLesson(
       buildPerformance({
@@ -152,6 +153,24 @@ describe("lesson rules", () => {
     expect(lesson?.outcome).toBe("poor");
     expect(lesson?.rule).toContain("FAILED:");
     expect(lesson?.rule).toContain(closeReason);
+  });
+
+  it("includes descriptive close reason detail in failed lessons", () => {
+    const lesson = deriveLesson(
+      buildPerformance({
+        pnlPct: -8,
+        pnlUsd: -8,
+        closeReason: "rebalance",
+        closeReasonDetail: "AI rebalance planner selected same-pool redeploy",
+        rangeEfficiencyPct: 100,
+      }),
+      "2026-04-22T02:00:00.000Z",
+      () => "01ARZ3NDEKTSV4RRFFQ69G5FB5",
+    );
+
+    expect(lesson?.rule).toContain(
+      "Reason: rebalance (AI rebalance planner selected same-pool redeploy).",
+    );
   });
 
   it("infers role tags from efficiency, outcome, strategy, and volatility", () => {

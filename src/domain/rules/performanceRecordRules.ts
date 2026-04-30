@@ -67,6 +67,7 @@ export function buildPerformanceRecordFromClosedPosition(input: {
   position: Position;
   closedAction: Action;
   closeReason: CloseReason;
+  closeReasonDetail?: string;
   finalValueUsd: number;
   feesEarnedUsd: number;
   pnlUsd: number;
@@ -152,6 +153,9 @@ export function buildPerformanceRecordFromClosedPosition(input: {
     minutesHeld,
     minutesInRange,
     closeReason,
+    ...(input.closeReasonDetail === undefined
+      ? {}
+      : { closeReasonDetail: input.closeReasonDetail }),
     deployedAt,
     closedAt,
     recordedAt: input.recordedAt,

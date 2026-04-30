@@ -167,9 +167,15 @@ function closeProceedsFromResult(
     ...(closeResult.releasedAmountBase === undefined
       ? {}
       : { releasedAmountBase: closeResult.releasedAmountBase }),
+    ...(closeResult.releasedAmountBaseRaw === undefined
+      ? {}
+      : { releasedAmountBaseRaw: closeResult.releasedAmountBaseRaw }),
     ...(closeResult.releasedAmountQuote === undefined
       ? {}
       : { releasedAmountQuote: closeResult.releasedAmountQuote }),
+    ...(closeResult.releasedAmountQuoteRaw === undefined
+      ? {}
+      : { releasedAmountQuoteRaw: closeResult.releasedAmountQuoteRaw }),
     ...(closeResult.estimatedReleasedValueUsd === undefined
       ? {}
       : { estimatedReleasedValueUsd: closeResult.estimatedReleasedValueUsd }),
@@ -664,7 +670,6 @@ function validateRedeployTarget(input: {
 
 function validatePostCloseRedeploySettlement(
   closeResult: z.infer<typeof CloseActionResultPayloadSchema>,
-  requestedRedeploy: DeployActionRequestPayload,
 ): string | null {
   if (closeResult.releasedAmountSource !== "post_tx") {
     return "Rebalance redeploy validation failed because post-close token settlement amounts are unavailable";
@@ -682,20 +687,6 @@ function validatePostCloseRedeploySettlement(
     (closeResult.releasedAmountQuote ?? 0) <= 0
   ) {
     return "Rebalance redeploy validation failed because closed position released no usable token amounts";
-  }
-
-  if (
-    requestedRedeploy.amountBase > 0 &&
-    closeResult.releasedAmountBase === undefined
-  ) {
-    return "Rebalance redeploy validation failed because post-close base token settlement amount is missing";
-  }
-
-  if (
-    requestedRedeploy.amountQuote > 0 &&
-    closeResult.releasedAmountQuote === undefined
-  ) {
-    return "Rebalance redeploy validation failed because post-close quote token settlement amount is missing";
   }
 
   return null;
@@ -1192,7 +1183,6 @@ export async function finalizeRebalance(
 
         const settlementValidationError = validatePostCloseRedeploySettlement(
           closeFinalizedPayload.closeResult,
-          requestPayload.redeploy,
         );
         let postCloseRedeployPayload: DeployActionRequestPayload | null = null;
         let validationError = settlementValidationError;

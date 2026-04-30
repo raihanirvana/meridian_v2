@@ -12,8 +12,10 @@ import {
 
 import {
   CandidateDetailsSchema,
+  GetCandidateDetailsOptionsSchema,
   ListCandidatesRequestSchema,
   type CandidateDetails,
+  type GetCandidateDetailsOptions,
   type ListCandidatesRequest,
   type ScreeningGateway,
 } from "./ScreeningGateway.js";
@@ -58,11 +60,18 @@ export class HttpScreeningGateway implements ScreeningGateway {
 
   public async getCandidateDetails(
     poolAddress: string,
+    options: GetCandidateDetailsOptions = {},
   ): Promise<CandidateDetails> {
     const parsedPoolAddress = z.string().min(1).parse(poolAddress);
+    const parsedOptions = GetCandidateDetailsOptionsSchema.parse(options);
     const details = await this.client.request({
       method: "GET",
       path: `/candidates/${encodeURIComponent(parsedPoolAddress)}`,
+      query: {
+        ...(parsedOptions.timeframe === undefined
+          ? {}
+          : { timeframe: parsedOptions.timeframe }),
+      },
       responseSchema: CandidateDetailsSchema,
     });
 

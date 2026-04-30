@@ -12,6 +12,7 @@ export const CloseReasonSchema = z.enum([
   "volume_collapse",
   "timeout",
   "operator",
+  "rebalance",
 ]);
 
 export const LessonOutcomeSchema = z.enum([

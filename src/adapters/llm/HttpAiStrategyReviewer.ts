@@ -135,7 +135,7 @@ function buildSystemContent(systemPrompt: string | null): string {
     "Use screeningSnapshot for aggregate volume, fee-to-TVL, organic score, and age. marketFeatureSnapshot windowed fields can legitimately be 0 because the upstream omits granular windows.",
     "Do NOT claim zero-volume when screeningSnapshot proves activity. Describe missing granular windows as 'lacks granular confirmation', not 'no activity'.",
     "Treat zero/null pool age, token age, and smart money as WEAK signals (informational), not blockers, unless other fields show concrete risk.",
-    "If botContext.requireTokenIntelForDeploy is false, missing tokenIntelFetchedAt is informational ONLY and must not drive watch/reject by itself.",
+    "If botContext.requireTokenIntelForDeploy is false, missing token intelligence is informational only; missing tokenIntelFetchedAt must not drive watch/reject by itself.",
     "",
     "RANGE & SLIPPAGE SIZING",
     "Pick binsBelow and binsAbove based on volatility:",

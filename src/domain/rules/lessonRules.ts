@@ -46,6 +46,19 @@ export function buildContextString(perf: PerformanceRecord): string {
   ].join(", ");
 }
 
+function formatCloseReason(perf: PerformanceRecord): string {
+  const detail = perf.closeReasonDetail?.trim();
+  if (detail === undefined || detail.length === 0) {
+    return perf.closeReason;
+  }
+
+  if (detail.toLowerCase() === perf.closeReason.replaceAll("_", " ")) {
+    return perf.closeReason;
+  }
+
+  return `${perf.closeReason} (${detail})`;
+}
+
 export function inferRoleTags(perf: PerformanceRecord): string[] {
   const tags = new Set<string>();
 
@@ -103,7 +116,7 @@ export function pickRuleTemplate(perf: PerformanceRecord): string | null {
     return `WORKED: ${context} -> PnL +${perf.pnlPct}%, range efficiency ${perf.rangeEfficiencyPct}%.`;
   }
 
-  return `FAILED: ${context} -> PnL ${perf.pnlPct}%, range efficiency ${perf.rangeEfficiencyPct}%. Reason: ${perf.closeReason}.`;
+  return `FAILED: ${context} -> PnL ${perf.pnlPct}%, range efficiency ${perf.rangeEfficiencyPct}%. Reason: ${formatCloseReason(perf)}.`;
 }
 
 export function deriveLesson(
