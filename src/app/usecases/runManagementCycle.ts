@@ -114,6 +114,7 @@ function buildRebalanceReviewInput(input: {
   evaluation: ManagementEvaluationResult;
   riskPolicy: PortfolioRiskPolicy;
   managementPolicy: ManagementPolicy;
+  walletRiskMode?: UserConfig["ai"]["walletRiskMode"];
   poolInfo?: PoolInfo;
   now: string;
 }): RebalanceReviewInput {
@@ -131,6 +132,12 @@ function buildRebalanceReviewInput(input: {
     input.position.lastRebalanceAt == null
       ? null
       : diffMinutes(input.position.lastRebalanceAt, input.now);
+  const minAiRebalanceConfidence =
+    input.managementPolicy.minAiRebalanceConfidence;
+  const maxRebalanceSlippageBps =
+    input.managementPolicy.maxRebalanceSlippageBps;
+  const minPositionAgeMinutesBeforeRebalance =
+    input.managementPolicy.minPositionAgeMinutesBeforeRebalance;
 
   return {
     position: {
@@ -182,6 +189,21 @@ function buildRebalanceReviewInput(input: {
       maxOpenPositions: input.riskPolicy.maxConcurrentPositions,
       maxRebalancesPerPosition: input.managementPolicy.maxRebalancesPerPosition,
       maxPositionSol: input.position.entryMetadata?.amountSol ?? null,
+    },
+    botContext: {
+      ...(input.walletRiskMode === undefined
+        ? {}
+        : { walletRiskMode: input.walletRiskMode }),
+      ...(minAiRebalanceConfidence === undefined
+        ? {}
+        : { minAiRebalanceConfidence }),
+      ...(maxRebalanceSlippageBps === undefined
+        ? {}
+        : { maxRebalanceSlippageBps }),
+      ...(minPositionAgeMinutesBeforeRebalance === undefined
+        ? {}
+        : { minPositionAgeMinutesBeforeRebalance }),
+      maxRebalancesPerPosition: input.managementPolicy.maxRebalancesPerPosition,
     },
     triggerReasons: input.evaluation.triggerReasons,
   };
@@ -308,6 +330,7 @@ export interface RunManagementCycleInput {
   riskPolicy: PortfolioRiskPolicy;
   managementPolicy: ManagementPolicy;
   aiMode?: UserConfig["ai"]["mode"];
+  walletRiskMode?: UserConfig["ai"]["walletRiskMode"];
   dlmmGateway?: DlmmGateway;
   llmGateway?: LlmGateway;
   lessonPromptService?: LessonPromptService;
@@ -463,7 +486,10 @@ export async function runManagementCycle(
       priceGateway: input.priceGateway,
       previousPortfolioState,
       ...(input.previousCircuitBreakerSnapshot !== undefined
-        ? { previousCircuitBreakerSnapshot: input.previousCircuitBreakerSnapshot }
+        ? {
+            previousCircuitBreakerSnapshot:
+              input.previousCircuitBreakerSnapshot,
+          }
         : {}),
       now,
     });
@@ -521,7 +547,10 @@ export async function runManagementCycle(
             pnlUsd: managedPosition.unrealizedPnlUsd,
             inRange: isPositionInRange(managedPosition),
             unclaimedFeesUsd: signals.claimableFeesUsd,
-            minutesOutOfRange: diffMinutes(managedPosition.outOfRangeSince, now),
+            minutesOutOfRange: diffMinutes(
+              managedPosition.outOfRangeSince,
+              now,
+            ),
             ageMinutes: diffMinutes(managedPosition.openedAt, now),
           },
         });
@@ -911,6 +940,9 @@ export async function runManagementCycle(
         evaluation,
         riskPolicy: input.riskPolicy,
         managementPolicy: input.managementPolicy,
+        ...(input.walletRiskMode === undefined
+          ? {}
+          : { walletRiskMode: input.walletRiskMode }),
         ...(rebalancePoolInfo === undefined
           ? {}
           : { poolInfo: rebalancePoolInfo }),

@@ -1752,6 +1752,7 @@ export function createRuntimeSupervisor(
         managementPolicy: input.config.managementPolicy,
         claimConfig: input.config.claim,
         aiMode: input.config.ai.mode,
+        walletRiskMode: input.config.ai.walletRiskMode,
         ...(input.gateways.llmGateway === undefined
           ? {}
           : { llmGateway: input.gateways.llmGateway }),

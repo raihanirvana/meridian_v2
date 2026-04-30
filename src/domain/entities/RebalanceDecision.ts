@@ -115,11 +115,26 @@ export const RebalanceWalletRiskSnapshotSchema = z
   })
   .strict();
 
+export const RebalanceBotContextSchema = z
+  .object({
+    walletRiskMode: z.string().min(1).optional(),
+    minAiRebalanceConfidence: z.number().min(0).max(1).optional(),
+    maxRebalanceSlippageBps: z.number().int().positive().optional(),
+    minPositionAgeMinutesBeforeRebalance: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional(),
+    maxRebalancesPerPosition: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
 export const RebalanceReviewInputSchema = z
   .object({
     position: RebalancePositionSnapshotSchema,
     pool: RebalancePoolSnapshotSchema,
     walletRisk: RebalanceWalletRiskSnapshotSchema,
+    botContext: RebalanceBotContextSchema.optional(),
     triggerReasons: z.array(z.string().min(1)),
     lessonContext: z.string().min(1).optional(),
   })
@@ -137,4 +152,5 @@ export type RebalancePoolSnapshot = z.infer<typeof RebalancePoolSnapshotSchema>;
 export type RebalanceWalletRiskSnapshot = z.infer<
   typeof RebalanceWalletRiskSnapshotSchema
 >;
+export type RebalanceBotContext = z.infer<typeof RebalanceBotContextSchema>;
 export type RebalanceReviewInput = z.infer<typeof RebalanceReviewInputSchema>;
