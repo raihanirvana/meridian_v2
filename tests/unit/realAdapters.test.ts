@@ -427,6 +427,84 @@ describe("real adapters", () => {
     ]);
   });
 
+  it("marks token intel as not required in AI strategy payload when optional", async () => {
+    let requestBody: unknown = null;
+    const strategyReviewer = new HttpAiStrategyReviewer({
+      baseUrl: "https://llm.example.com/v1/",
+      model: "gpt-test",
+      fetchFn: async (_url, init) => {
+        requestBody = JSON.parse(String(init?.body ?? "{}"));
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    poolAddress: "pool_001",
+                    decision: "watch",
+                    recommendedStrategy: "curve",
+                    confidence: 0.72,
+                    riskLevel: "medium",
+                    binsBelow: 60,
+                    binsAbove: 20,
+                    slippageBps: 250,
+                    maxPositionAgeMinutes: 720,
+                    stopLossPct: 5,
+                    takeProfitPct: 10,
+                    trailingStopPct: 2,
+                    reasons: ["wait for stronger volume"],
+                    rejectIf: ["active bin drifts"],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    await strategyReviewer.reviewCandidateStrategy({
+      candidate: CandidateSchema.parse({
+        candidateId: "cand_001",
+        poolAddress: "pool_001",
+        symbolPair: "SOL-USDC",
+        screeningSnapshot: {},
+        tokenRiskSnapshot: {},
+        smartMoneySnapshot: {},
+        hardFilterPassed: true,
+        score: 90,
+        scoreBreakdown: { quality: 90 },
+        decision: "SHORTLISTED",
+        decisionReason: "Passed deterministic shortlist",
+        createdAt: "2026-04-21T12:00:00.000Z",
+      }),
+      botContext: {
+        requireTokenIntelForDeploy: false,
+      },
+      systemPrompt: "review strategy",
+    });
+
+    const body = requestBody as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const userPayload = JSON.parse(body.messages[1]?.content ?? "{}") as {
+      candidate: {
+        dataFreshnessSnapshot: Record<string, unknown>;
+      };
+    };
+
+    expect(body.messages[0]?.content).toContain(
+      "missing token intelligence is informational only",
+    );
+    expect(
+      userPayload.candidate.dataFreshnessSnapshot.tokenIntelFetchedAt,
+    ).toBe("not_required");
+    expect(
+      userPayload.candidate.dataFreshnessSnapshot.tokenIntelRequiredForDeploy,
+    ).toBe(false);
+  });
+
   it("maps transport failures into AdapterTransportError", async () => {
     const dlmm = new HttpDlmmGateway({
       baseUrl: "https://dlmm.example.com/v1/",

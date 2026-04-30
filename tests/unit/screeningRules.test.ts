@@ -199,6 +199,36 @@ describe("screening rules", () => {
     );
   });
 
+  it("normalizes duplicate exposure rejections when building candidate entities", () => {
+    const result = screenAndScoreCandidates({
+      candidates: [
+        buildCandidate({
+          candidateId: "cand_conflict",
+          poolAddress: "pool_conflict",
+          tokenXMint: "mint_conflict",
+        }),
+      ],
+      portfolio: buildPortfolio({
+        exposureByPool: {
+          pool_conflict: 10,
+        },
+        exposureByToken: {
+          mint_conflict: 20,
+        },
+      }),
+      screeningPolicy,
+      scoringPolicy,
+      createdAt: now,
+    });
+
+    expect(result.candidates[0]?.hardFilterPassed).toBe(false);
+    expect(result.candidates[0]?.decision).toBe("REJECTED_HARD_FILTER");
+    expect(result.candidates[0]?.decisionReason).toMatch(
+      /duplicate pool exposure/i,
+    );
+    expect(result.shortlist).toHaveLength(0);
+  });
+
   it("builds a deterministic shortlist ordered by score", () => {
     const result = screenAndScoreCandidates({
       candidates: [

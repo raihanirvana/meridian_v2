@@ -1,10 +1,10 @@
 {
   "risk": {
-    "maxConcurrentPositions": 1,
-    "maxCapitalUsagePct": 25,
-    "minReserveUsd": 10,
-    "maxTokenExposurePct": 20,
-    "maxPoolExposurePct": 25,
+    "maxConcurrentPositions": 2,
+    "maxCapitalUsagePct": 45,
+    "minReserveUsd": 8,
+    "maxTokenExposurePct": 45,
+    "maxPoolExposurePct": 45,
     "maxRebalancesPerPosition": 1,
     "dailyLossLimitPct": 10,
     "circuitBreakerCooldownMin": 120,
@@ -44,7 +44,7 @@
       {
         "start": "08:00",
         "end": "14:00",
-        "intervalSec": 600
+        "intervalSec": 900
       },
       {
         "start": "20:00",
@@ -54,7 +54,7 @@
     ]
   },
   "schedule": {
-    "screeningIntervalSec": 300,
+    "screeningIntervalSec": 900,
     "managementIntervalSec": 300,
     "reconciliationIntervalSec": 180,
     "reportingIntervalSec": 1800
@@ -87,19 +87,19 @@
   },
   "ai": {
     "mode": "advisory",
-    "generalModel": "openrouter/free",
-    "managementModel": "openrouter/free",
-    "screeningModel": "openai/gpt-oss-20b:free",
-    "timeoutMs": 30000,
+    "generalModel": "deepseek/deepseek-v4-flash",
+    "managementModel": "deepseek/deepseek-v3.2",
+    "screeningModel": "deepseek/deepseek-v3.2",
+    "timeoutMs": 90000,
     "strategyReviewEnabled": true,
     "strategyReviewMode": "guarded_auto",
     "allowAiStrategyForDeploy": true,
-    "minAiStrategyConfidence": 0.7,
+    "minAiStrategyConfidence": 0.65,
     "walletRiskMode": "small"
   },
   "deploy": {
-    "defaultAmountSol": 0.1,
-    "minAmountSol": 0.1,
+    "defaultAmountSol": 0.2,
+    "minAmountSol": 0.2,
     "autoDeployFromShortlist": true,
     "maxAutoDeploysPerCycle": 1,
     "strategy": "bid_ask",
@@ -136,7 +136,7 @@
     "enabled": false
   },
   "runtime": {
-    "dryRun": true,
+    "dryRun": false,
     "logLevel": "info",
     "operatorStdinEnabled": true
   }

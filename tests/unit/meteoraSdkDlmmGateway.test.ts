@@ -411,6 +411,76 @@ describe("MeteoraSdkDlmmGateway", () => {
         shouldClaimAndClose: false,
       }),
     );
+    expect(pool.closePosition).toHaveBeenCalledWith({
+      owner: expect.anything(),
+      position: { publicKey: expect.anything() },
+    });
+  });
+
+  it("normalizes post-close token settlements to numeric released amounts", async () => {
+    const pool = createPool();
+    poolCreateMock.mockResolvedValue(pool);
+    sendAndConfirmTransactionMock
+      .mockResolvedValueOnce("tx_claim")
+      .mockResolvedValueOnce("tx_remove")
+      .mockResolvedValueOnce("tx_close");
+    getParsedTransactionMock.mockImplementation(async (txId: unknown) => {
+      if (txId !== "tx_close") {
+        return { meta: { preTokenBalances: [], postTokenBalances: [] } };
+      }
+
+      return {
+        meta: {
+          preTokenBalances: [
+            {
+              accountIndex: 1,
+              owner: "wallet_001",
+              mint: "mint_x",
+              uiTokenAmount: { amount: "100", decimals: 2 },
+            },
+            {
+              accountIndex: 2,
+              owner: "wallet_001",
+              mint: "mint_y",
+              uiTokenAmount: { amount: "200", decimals: 2 },
+            },
+          ],
+          postTokenBalances: [
+            {
+              accountIndex: 1,
+              owner: "wallet_001",
+              mint: "mint_x",
+              uiTokenAmount: { amount: "223", decimals: 2 },
+            },
+            {
+              accountIndex: 2,
+              owner: "wallet_001",
+              mint: "mint_y",
+              uiTokenAmount: { amount: "245", decimals: 2 },
+            },
+          ],
+        },
+      };
+    });
+    const gateway = createGateway();
+    (
+      gateway as unknown as {
+        poolByPositionId: Map<string, { value: string; cachedAtMs: number }>;
+      }
+    ).poolByPositionId.set("pos_001", {
+      value: "pool_001",
+      cachedAtMs: Date.now(),
+    });
+
+    const result = await gateway.closePosition({
+      wallet: "wallet_001",
+      positionId: "pos_001",
+      reason: "manual",
+    });
+
+    expect(result.releasedAmountBase).toBeCloseTo(1.23);
+    expect(result.releasedAmountQuote).toBeCloseTo(0.45);
+    expect(result.releasedAmountSource).toBe("post_tx");
   });
 
   it("caches token decimals and simulates transactions before submit", async () => {

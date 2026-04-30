@@ -802,6 +802,23 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
           }),
         );
       }
+      if (preCloseFeesClaimed) {
+        const closeEmptyPositionTx = await pool.closePosition({
+          owner: this.wallet.publicKey,
+          position: { publicKey: positionPubkey },
+        });
+        closeTxIds.push(
+          await this.sendTransactionWithPreflight(
+            closeEmptyPositionTx,
+            [this.wallet],
+            {
+              operation: "CLOSE",
+              positionId: parsed.positionId,
+              txIds: [...claimTxIds, ...closeTxIds],
+            },
+          ),
+        );
+      }
     } else {
       const closeTx = await pool.closePosition({
         owner: this.wallet.publicKey,
@@ -821,18 +838,20 @@ export class MeteoraSdkDlmmGateway implements DlmmGateway {
       positionBeforeClose?.baseMint ?? pool.lbPair.tokenXMint.toBase58();
     const quoteMint =
       positionBeforeClose?.quoteMint ?? pool.lbPair.tokenYMint.toBase58();
-    const releasedAmountBase =
+    const releasedBaseSettlement =
       await this.resolveWalletTokenAmountIncreaseFromTransactions({
         txIds,
         wallet: parsed.wallet,
         mint: baseMint,
       });
-    const releasedAmountQuote =
+    const releasedQuoteSettlement =
       await this.resolveWalletTokenAmountIncreaseFromTransactions({
         txIds,
         wallet: parsed.wallet,
         mint: quoteMint,
       });
+    const releasedAmountBase = releasedBaseSettlement?.amount ?? null;
+    const releasedAmountQuote = releasedQuoteSettlement?.amount ?? null;
 
     this.recentDeploys.delete(parsed.positionId);
     this.claimedBaseByPositionId.delete(parsed.positionId);

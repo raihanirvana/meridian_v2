@@ -451,6 +451,11 @@ function buildCandidateEntity(input: {
       "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
     ],
   });
+  const decision =
+    !input.hardFilter.hardFilterPassed &&
+    input.hardFilter.decision === "REJECTED_EXPOSURE"
+      ? "REJECTED_HARD_FILTER"
+      : (input.decision ?? input.hardFilter.decision);
 
   return CandidateSchema.parse({
     candidateId: input.candidate.candidateId,
@@ -502,7 +507,7 @@ function buildCandidateEntity(input: {
     hardFilterPassed: input.hardFilter.hardFilterPassed,
     score: input.score ?? 0,
     scoreBreakdown: input.scoreBreakdown ?? {},
-    decision: input.decision ?? input.hardFilter.decision,
+    decision,
     decisionReason: input.decisionReason ?? input.hardFilter.decisionReason,
     createdAt: input.createdAt,
   });

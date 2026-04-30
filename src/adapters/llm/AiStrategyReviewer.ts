@@ -12,6 +12,7 @@ export const AiStrategyBotContextSchema = z
     maxOpenPositions: z.number().int().positive().optional(),
     dailyLossRemainingSol: z.number().nonnegative().optional(),
     currentlyOpenPositions: z.number().int().nonnegative().optional(),
+    requireTokenIntelForDeploy: z.boolean().optional(),
     allowedStrategies: z.array(z.enum(["curve", "spot", "bid_ask"])).optional(),
   })
   .strict();

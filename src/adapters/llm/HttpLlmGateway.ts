@@ -256,6 +256,7 @@ export class HttpLlmGateway implements LlmGateway {
         parsedInput.systemPrompt,
         jsonInstruction("CandidateRankingResult"),
         CANDIDATE_RANKING_RESULT_CONTRACT,
+        "Rank for deployability. Prefer candidates with fresh required data, clear pool identity, organic volume, strong fee/liquidity quality, safer holder distribution, and enough depth for the configured position size.",
       ]
         .filter((part): part is string => part !== null)
         .join("\n\n"),
@@ -298,6 +299,7 @@ export class HttpLlmGateway implements LlmGateway {
         parsedInput.systemPrompt,
         jsonInstruction("ManagementExplanationResult"),
         MANAGEMENT_EXPLANATION_RESULT_CONTRACT,
+        "Explain risk-first. Capital preservation, clean reconciliation, and avoiding stuck positions matter more than fee chasing.",
       ]
         .filter((part): part is string => part !== null)
         .join("\n\n"),
@@ -335,8 +337,12 @@ export class HttpLlmGateway implements LlmGateway {
       systemPrompt: [
         "You are a Meteora DLMM rebalance risk analyst.",
         "Prioritize capital preservation over fee chasing.",
+        "Be decisive but bounded: recommend rebalance or exit when the evidence is strong, and hold or claim_only when changing liquidity has no clear edge.",
         "Allowed actions: hold, claim_only, rebalance_same_pool, exit.",
         "Do not recommend rebalance if pool risk is high; recommend exit instead.",
+        "Do not recommend rebalance when active bin freshness, TVL/depth, token risk, or simulation readiness is questionable.",
+        "Prefer claim_only or hold when the position is manageable and the edge of moving liquidity is unclear.",
+        "Prefer exit over rebalance if risk is rising, liquidity quality deteriorates, or out-of-range exposure is unlikely to recover.",
         "Do not recommend bid_ask unless volume is strong, depth is sufficient, and volatility is mean-reverting.",
         "Use curve only when volatility is low and price is likely to remain near active bin.",
         "Use spot for moderate volatility or uncertain but still healthy conditions.",

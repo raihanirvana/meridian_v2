@@ -110,6 +110,17 @@ function buildSystemContent(systemPrompt: string | null): string {
   return [
     systemPrompt,
     "Return JSON only. No markdown fences. Capital preservation is more important than yield.",
+    "You are choosing the best deploy strategy for a live Meteora DLMM bot after deterministic filters have already selected deploy-eligible candidates.",
+    "Do not be conservative by default: choose deploy when the candidate has fresh required snapshots, adequate depth for the configured position size, a valid strategy fit, and no concrete blocker.",
+    "Use watch only when a specific deploy-critical signal is missing, contradictory, or below threshold. Use reject only for concrete non-deployable risk.",
+    "If you recommend curve, spot, or bid_ask with confidence at or above the configured minimum and riskLevel is not high, the decision should normally be deploy.",
+    "Never deploy on stale required snapshots, suspicious holders, weak organic volume, shallow liquidity, or unclear pool identity.",
+    "If botContext.requireTokenIntelForDeploy is false, missing token intelligence is informational only and must not be used by itself as a reason to watch or reject.",
+    "If pool age, token age, or smart money fields are zero or absent, treat them as weak or unavailable signals unless other fields prove concrete risk.",
+    "Use screeningSnapshot as the primary discovery context for volume, fee-to-TVL, organic score, and token/pool age. Some marketFeatureSnapshot window fields may be zero because the upstream detail endpoint omitted granular windows.",
+    "Do not claim zero volume or zero fees when screeningSnapshot shows positive aggregate volume, fee-to-TVL, or organic activity; describe it as missing granular confirmation instead.",
+    "For deploy decisions, provide complete executable parameters: positive binsBelow, positive binsAbove, positive slippageBps, positive maxPositionAgeMinutes, positive stopLossPct, and positive takeProfitPct.",
+    "Choose curve for low-volatility sideways pools, spot for moderate-volatility balanced pools, and bid_ask only for high-volume mean-reverting volatility with enough depth.",
   ]
     .filter((part): part is string => part !== null)
     .join("\n\n");
@@ -134,9 +145,24 @@ const STRATEGY_REVIEW_RESULT_CONTRACT = [
   "If decision is deploy, recommendedStrategy must not be none.",
   "If decision is reject, recommendedStrategy must be none.",
   "Do not add extra keys such as strategy, reason, notes, markdown, or commentary.",
-  "Valid item example:",
-  '{"poolAddress":"POOL_ADDRESS","decision":"watch","recommendedStrategy":"spot","confidence":0.72,"riskLevel":"medium","binsBelow":60,"binsAbove":20,"slippageBps":300,"maxPositionAgeMinutes":720,"stopLossPct":5,"takeProfitPct":10,"trailingStopPct":2,"reasons":["fresh active bin","moderate volatility"],"rejectIf":["active bin drifts more than allowed"]}',
+  "Valid deploy example:",
+  '{"poolAddress":"POOL_ADDRESS","decision":"deploy","recommendedStrategy":"curve","confidence":0.72,"riskLevel":"medium","binsBelow":60,"binsAbove":20,"slippageBps":300,"maxPositionAgeMinutes":720,"stopLossPct":5,"takeProfitPct":10,"trailingStopPct":2,"reasons":["fresh active bin","adequate depth","curve strategy fit"],"rejectIf":["active bin drifts more than allowed"]}',
+  "Valid watch example:",
+  '{"poolAddress":"POOL_ADDRESS","decision":"watch","recommendedStrategy":"spot","confidence":0.62,"riskLevel":"medium","binsBelow":60,"binsAbove":20,"slippageBps":300,"maxPositionAgeMinutes":720,"stopLossPct":5,"takeProfitPct":10,"trailingStopPct":2,"reasons":["needs stronger recent fee confirmation"],"rejectIf":["volume remains weak"]}',
 ].join("\n");
+
+function buildDataFreshnessPayload(input: AiStrategyReviewInput) {
+  const freshness = input.candidate.dataFreshnessSnapshot;
+  if (input.botContext?.requireTokenIntelForDeploy !== false) {
+    return freshness;
+  }
+
+  return {
+    ...freshness,
+    tokenIntelFetchedAt: "not_required",
+    tokenIntelRequiredForDeploy: false,
+  };
+}
 
 function buildCandidatePayload(input: AiStrategyReviewInput) {
   return {
@@ -144,11 +170,12 @@ function buildCandidatePayload(input: AiStrategyReviewInput) {
     symbolPair: input.candidate.symbolPair,
     score: input.candidate.score,
     scoreBreakdown: input.candidate.scoreBreakdown,
+    screeningSnapshot: input.candidate.screeningSnapshot,
     marketFeatureSnapshot: input.candidate.marketFeatureSnapshot,
     dlmmMicrostructureSnapshot: input.candidate.dlmmMicrostructureSnapshot,
     tokenRiskSnapshot: input.candidate.tokenRiskSnapshot,
     smartMoneySnapshot: input.candidate.smartMoneySnapshot,
-    dataFreshnessSnapshot: input.candidate.dataFreshnessSnapshot,
+    dataFreshnessSnapshot: buildDataFreshnessPayload(input),
     strategySuitability: input.candidate.strategySuitability,
   };
 }

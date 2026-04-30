@@ -941,6 +941,8 @@ export function createRuntimeSupervisor(
             maxActiveBinDrift: input.config.deploy.maxActiveBinDrift,
             maxOpenPositions: input.config.risk.maxConcurrentPositions,
             currentlyOpenPositions: portfolio.openPositions,
+            requireTokenIntelForDeploy:
+              input.config.deploy.requireTokenIntelForDeploy,
             allowedStrategies: ["curve", "spot", "bid_ask"],
             ...(dailyLossRemainingSol === undefined
               ? {}

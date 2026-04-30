@@ -228,12 +228,19 @@ function validateBatchReviewSet(input: {
 function buildSystemPrompt(lessonsPrompt: string | null): string {
   const lines = [
     "You are an AI strategy reviewer for Meteora DLMM candidates.",
-    "Capital preservation is more important than APY.",
+    "Your job is to pick the best deploy strategy when the data supports a trade, while respecting the validator guardrails.",
+    "Capital preservation matters, but do not default to watch or reject when the candidate has a clear edge.",
     "Hard rejects must never be ignored.",
+    "A deploy decision requires fresh required DLMM data, adequate TVL/depth, organic volume, and no severe holder/bot/bundle/wash risk.",
+    "Use screeningSnapshot as the primary discovery context for aggregate volume, fee-to-TVL, organic score, and age; marketFeatureSnapshot window fields can be zero when the upstream detail endpoint omitted granular windows.",
+    "Do not treat zero granular marketFeatureSnapshot volume/fees as definitive zero activity when screeningSnapshot shows positive aggregate volume, fee-to-TVL, or organic activity.",
+    "When token intelligence is optional or unavailable, do not reject solely because tokenIntelFetchedAt is null; judge token risk only from the fields actually present.",
+    "If pool age, token age, smart money, or analytics fields are zero or absent, treat them as weak signals unless other fields show concrete risk.",
     "Use curve only for low-volatility sideways or stable-ish pools.",
     "Use spot for moderate-volatility non-directional pools.",
     "Use bid_ask only for volatile mean-reverting pools.",
-    "If confidence is low, return watch or reject, not deploy.",
+    "If the pool passes hard filters, data is fresh, simulation is viable, depth is adequate, and the strategy score is strong, choose deploy rather than watch.",
+    "Use watch only for a named missing, weak, or contradictory deploy-critical signal; do not use watch as a generic cautious default.",
     "You may recommend one strategy only: curve, spot, bid_ask, or none.",
     "Use curve for low-volatility sideways pools.",
     "Use spot for moderate-volatility pools with stable volume and no strong directional trend.",
@@ -241,6 +248,9 @@ function buildSystemPrompt(lessonsPrompt: string | null): string {
     "Reject suspicious token risk, shallow liquidity, stale data, excessive price movement, or unrealistic fee/TVL.",
     "If confidence is below the requested minimum, decision must be watch or reject.",
     "If riskLevel is high, decision must be reject.",
+    "For deploy decisions, include executable non-zero parameters for binsBelow, binsAbove, slippageBps, maxPositionAgeMinutes, stopLossPct, and takeProfitPct.",
+    "If you would otherwise output watch with confidence at or above the configured minimum and a concrete recommendedStrategy, switch to deploy unless a concrete blocker is present.",
+    "Do not optimize only for fees; avoid pools where expected fees do not compensate for impermanent loss, slippage, or exit risk.",
     "You do not have write permission. You only produce recommendation JSON.",
     "",
     "### LESSONS LEARNED",
@@ -500,22 +510,60 @@ export async function reviewStrategyWithAi(
     } catch (error) {
       logger.warn(
         { err: error },
-        "AI batch strategy review fallback to deterministic result",
+        "AI batch strategy review failed; retrying candidates individually",
       );
       for (const candidate of aiEligibleCandidates) {
-        await appendItem(
-          StrategyReviewWithAiItemSchema.parse({
-            candidateId: candidate.candidateId,
-            poolAddress: candidate.poolAddress,
-            source: "FALLBACK",
-            review: deterministicReview(candidate, input),
-            aiError: errorMessage(error),
-          }),
-        );
+        try {
+          const aiReview = StrategyReviewResultSchema.parse(
+            await withTimeout(
+              input.reviewer.reviewCandidateStrategy(
+                AiStrategyReviewInputSchema.parse({
+                  candidate,
+                  systemPrompt: buildSystemPrompt(lessonsPrompt),
+                  ...(input.botContext === undefined
+                    ? {}
+                    : { botContext: input.botContext }),
+                }),
+              ),
+              timeoutMs,
+            ),
+          );
+          if (aiReview.poolAddress !== candidate.poolAddress) {
+            throw new Error(
+              "AI strategy review returned a different poolAddress",
+            );
+          }
+
+          await appendItem(
+            StrategyReviewWithAiItemSchema.parse({
+              candidateId: candidate.candidateId,
+              poolAddress: candidate.poolAddress,
+              source: "AI",
+              review: enforceStrategyReviewSafety({
+                review: aiReview,
+                minConfidence,
+              }),
+              aiError: null,
+            }),
+          );
+        } catch (candidateError) {
+          logger.warn(
+            { err: candidateError, candidateId: candidate.candidateId },
+            "AI individual strategy review fallback to deterministic result",
+          );
+          await appendItem(
+            StrategyReviewWithAiItemSchema.parse({
+              candidateId: candidate.candidateId,
+              poolAddress: candidate.poolAddress,
+              source: "FALLBACK",
+              review: deterministicReview(candidate, input),
+              aiError: `${errorMessage(error)}; ${errorMessage(candidateError)}`,
+            }),
+          );
+        }
       }
 
       return StrategyReviewWithAiResultSchema.parse({
-        reviewedAt,
         reviews: candidates
           .map((candidate) =>
             reviews.find(
@@ -526,6 +574,7 @@ export async function reviewStrategyWithAi(
             (review): review is StrategyReviewWithAiItem =>
               review !== undefined,
           ),
+        reviewedAt,
       });
     }
   }
@@ -592,12 +641,6 @@ export async function reviewStrategyWithAi(
 
   return StrategyReviewWithAiResultSchema.parse({
     reviewedAt,
-    reviews: candidates
-      .map((candidate) =>
-        reviews.find((review) => review.candidateId === candidate.candidateId),
-      )
-      .filter(
-        (review): review is StrategyReviewWithAiItem => review !== undefined,
-      ),
+    reviews,
   });
 }
