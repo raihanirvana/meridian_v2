@@ -17,6 +17,7 @@ import {
 } from "../../src/domain/scoring/candidateScore.js";
 
 const now = "2026-04-21T00:00:00.000Z";
+const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 function buildPortfolio(
   overrides: Partial<PortfolioState> = {},
@@ -197,6 +198,25 @@ describe("screening rules", () => {
         "duplicate pool exposure",
       ]),
     );
+  });
+
+  it("does not treat shared SOL quote exposure as a duplicate token conflict", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        symbolPair: "NEW-SOL",
+        tokenXMint: "mint_new",
+        tokenYMint: SOL_MINT,
+      }),
+      portfolio: buildPortfolio({
+        exposureByToken: {
+          [SOL_MINT]: 35,
+        },
+      }),
+      policy: screeningPolicy,
+    });
+
+    expect(result.hardFilterPassed).toBe(true);
+    expect(result.rejectionReasons).not.toContain("duplicate token exposure");
   });
 
   it("normalizes duplicate exposure rejections when building candidate entities", () => {

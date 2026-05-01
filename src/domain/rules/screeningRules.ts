@@ -25,6 +25,8 @@ import {
 } from "../scoring/candidateScore.js";
 import { scoreStrategySuitability } from "../scoring/strategySuitabilityScore.js";
 
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+
 export const ScreeningPolicySchema = z
   .object({
     timeframe: z.enum(["5m", "1h", "24h"]),
@@ -352,8 +354,9 @@ export function evaluateScreeningHardFilters(input: {
     (portfolio.exposureByPool[candidate.poolAddress] ?? 0) > 0;
   const duplicateTokenExposure =
     policy.rejectDuplicateTokenExposure &&
-    ((portfolio.exposureByToken[candidate.tokenXMint] ?? 0) > 0 ||
-      (portfolio.exposureByToken[candidate.tokenYMint] ?? 0) > 0);
+    [candidate.tokenXMint, candidate.tokenYMint]
+      .filter((mint) => mint !== SOL_MINT)
+      .some((mint) => (portfolio.exposureByToken[mint] ?? 0) > 0);
 
   if (duplicatePoolExposure) {
     return HardFilterEvaluationSchema.parse({
