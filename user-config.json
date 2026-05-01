@@ -8,7 +8,7 @@
     "maxRebalancesPerPosition": 3,
     "dailyLossLimitPct": 12,
     "circuitBreakerCooldownMin": 60,
-    "maxNewDeploysPerHour": 1
+    "maxNewDeploysPerHour": 4
   },
   "screening": {
     "timeframe": "1h",

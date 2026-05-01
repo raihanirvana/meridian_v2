@@ -12,8 +12,15 @@ import {
   type PostCloseSwapHook,
 } from "./finalizeClose.js";
 
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const DEFAULT_MIN_POST_CLOSE_SOL_OUTPUT_RATIO = 0.75;
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown swap error";
+}
+
+function solUiToRawLamports(amountSol: number): bigint {
+  return BigInt(Math.floor(amountSol * 1_000_000_000));
 }
 
 export function createPostClaimSwapHook(
@@ -58,6 +65,33 @@ export function createPostCloseSwapHook(
     }
 
     try {
+      if (
+        parsed.position.quoteMint === SOL_MINT &&
+        parsed.position.deployAmountQuote > 0
+      ) {
+        const quote = await swapGateway.quoteSwap({
+          inputMint: parsed.position.baseMint,
+          outputMint: parsed.position.quoteMint,
+          amountRaw,
+        });
+        const minimumOutputRaw = solUiToRawLamports(
+          parsed.position.deployAmountQuote *
+            DEFAULT_MIN_POST_CLOSE_SOL_OUTPUT_RATIO,
+        );
+        const quotedOutputRaw = BigInt(quote.expectedOutputAmountRaw);
+
+        if (quotedOutputRaw < minimumOutputRaw) {
+          return {
+            swapIntentId: parsed.swapIntentId,
+            status: "SKIPPED",
+            reason: "post-close swap quote below minimum SOL recovery guard",
+            quotedOutputRaw: quote.expectedOutputAmountRaw,
+            minimumOutputRaw: minimumOutputRaw.toString(),
+            priceImpactPct: quote.priceImpactPct,
+          };
+        }
+      }
+
       const result = await swapGateway.executeSwap({
         wallet: parsed.wallet,
         inputMint: parsed.position.baseMint,
