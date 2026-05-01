@@ -8,7 +8,7 @@
     "maxRebalancesPerPosition": 3,
     "dailyLossLimitPct": 12,
     "circuitBreakerCooldownMin": 60,
-    "maxNewDeploysPerHour": 4
+    "maxNewDeploysPerHour": 1
   },
   "screening": {
     "timeframe": "1h",
@@ -101,7 +101,7 @@
     "walletRiskMode": "aggressive_memecoin"
   },
   "deploy": {
-    "defaultAmountSol": 0.3,
+    "defaultAmountSol": 0.25,
     "minAmountSol": 0.2,
     "autoDeployFromShortlist": true,
     "maxAutoDeploysPerCycle": 2,
