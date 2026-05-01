@@ -36,6 +36,8 @@ export const ScreeningPolicySchema = z
     minVolumeUsd: z.number().positive(),
     minVolumeTrendPct: z.number().optional(),
     minVolatility1hPct: z.number().nonnegative().optional(),
+    minPriceChange5mPct: z.number().optional(),
+    minPriceChange1hPct: z.number().optional(),
     minFeeActiveTvlRatio: z.number().positive(),
     minFeePerTvl24h: z.number().nonnegative(),
     minOrganic: z.number().min(0).max(100),
@@ -249,6 +251,18 @@ export function evaluateScreeningHardFilters(input: {
     marketFeatureSnapshot.volatility1hPct < policy.minVolatility1hPct
   ) {
     rejectionReasons.push("1h volatility below minimum");
+  }
+  if (
+    policy.minPriceChange5mPct !== undefined &&
+    marketFeatureSnapshot.priceChange5mPct < policy.minPriceChange5mPct
+  ) {
+    rejectionReasons.push("5m price change below minimum");
+  }
+  if (
+    policy.minPriceChange1hPct !== undefined &&
+    marketFeatureSnapshot.priceChange1hPct < policy.minPriceChange1hPct
+  ) {
+    rejectionReasons.push("1h price change below minimum");
   }
   if (candidate.feeToTvlRatio < policy.minFeeActiveTvlRatio) {
     rejectionReasons.push("fee-to-tvl ratio below minimum");

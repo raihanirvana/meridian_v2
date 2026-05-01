@@ -1,6 +1,6 @@
 {
   "risk": {
-    "maxConcurrentPositions": 4,
+    "maxConcurrentPositions": 2,
     "maxCapitalUsagePct": 100,
     "minReserveUsd": 5,
     "maxTokenExposurePct": 100,
@@ -8,7 +8,7 @@
     "maxRebalancesPerPosition": 3,
     "dailyLossLimitPct": 12,
     "circuitBreakerCooldownMin": 60,
-    "maxNewDeploysPerHour": 4
+    "maxNewDeploysPerHour": 2
   },
   "screening": {
     "timeframe": "1h",
@@ -17,7 +17,9 @@
     "minTvlUsd": 5000,
     "minVolumeUsd": 2000,
     "minVolumeTrendPct": -30,
-    "minVolatility1hPct": 1.5,
+    "minVolatility1hPct": 2,
+    "minPriceChange5mPct": 0,
+    "minPriceChange1hPct": 0,
     "minFeeActiveTvlRatio": 0.05,
     "minFeePerTvl24h": 0.0005,
     "minOrganic": 20,

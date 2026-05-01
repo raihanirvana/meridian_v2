@@ -71,6 +71,8 @@ function buildCandidate(
       volume24hUsd: 25_000,
       fees24hUsd: 15,
       tvlUsd: 50_000,
+      priceChange5mPct: 1,
+      priceChange1hPct: 4,
       volatility1hPct: 5,
       trendStrength1h: 20,
       meanReversionScore: 70,
@@ -107,6 +109,8 @@ const screeningPolicy = {
   minTvlUsd: 10_000,
   minVolumeUsd: 5_000,
   minVolatility1hPct: 1,
+  minPriceChange5mPct: 0,
+  minPriceChange1hPct: 0,
   minFeeActiveTvlRatio: 0.05,
   minFeePerTvl24h: 0.01,
   minOrganic: 60,
@@ -360,6 +364,36 @@ describe("screening rules", () => {
 
     expect(result.hardFilterPassed).toBe(false);
     expect(result.rejectionReasons).toContain("1h volatility below minimum");
+  });
+
+  it("rejects candidates with red 5m or 1h price action", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        marketFeatureSnapshot: buildMarketFeatureSnapshot({
+          volume24hUsd: 25_000,
+          fees24hUsd: 15,
+          tvlUsd: 50_000,
+          priceChange5mPct: 0.4,
+          priceChange1hPct: -8,
+          volatility1hPct: 8,
+          trendStrength1h: 55,
+          meanReversionScore: 70,
+          organicVolumeScore: 80,
+          washTradingRiskScore: 5,
+        }),
+      }),
+      portfolio: buildPortfolio(),
+      policy: {
+        ...screeningPolicy,
+        minPriceChange5mPct: 0,
+        minPriceChange1hPct: 0,
+      },
+    });
+
+    expect(result.hardFilterPassed).toBe(false);
+    expect(result.rejectionReasons).toContain(
+      "1h price change below minimum",
+    );
   });
 
   it("rejects candidates with stale or missing active-bin strategy snapshots", () => {

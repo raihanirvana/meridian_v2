@@ -296,6 +296,12 @@ function toRuntimeScreeningPolicy(
   if (userScreening.minVolatility1hPct !== undefined) {
     policy.minVolatility1hPct = userScreening.minVolatility1hPct;
   }
+  if (userScreening.minPriceChange5mPct !== undefined) {
+    policy.minPriceChange5mPct = userScreening.minPriceChange5mPct;
+  }
+  if (userScreening.minPriceChange1hPct !== undefined) {
+    policy.minPriceChange1hPct = userScreening.minPriceChange1hPct;
+  }
   if (userScreening.minTokenAgeHours !== undefined) {
     policy.minTokenAgeHours = userScreening.minTokenAgeHours;
   }
