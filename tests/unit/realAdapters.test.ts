@@ -765,6 +765,8 @@ describe("real adapters", () => {
                 volume: 80_000,
                 fee: 250,
                 fee_active_tvl_ratio: 1,
+                pool_price_change_pct: 1.8,
+                volatility: 0.7,
                 volume_change_pct: 12,
                 base_token_holders: 1_200,
                 dlmm_params: { bin_step: 100 },
@@ -802,6 +804,8 @@ describe("real adapters", () => {
     expect(candidates[0]?.screeningSnapshot.binStep).toBe(100);
     expect(candidates[0]?.screeningSnapshot.feePerTvl24h).toBeUndefined();
     expect(candidates[0]?.dataFreshnessSnapshot.tokenIntelFetchedAt).toBeNull();
+    expect(candidates[0]?.marketFeatureSnapshot.priceChange5mPct).toBe(1.8);
+    expect(candidates[0]?.marketFeatureSnapshot.volatility5mPct).toBe(0.7);
     expect(candidates[0]?.smartMoneySnapshot.tokenAgeHours).toBe(24);
     expect(candidates[0]?.baseMint).toBe("mint_meme");
     expect(candidates[0]?.quoteMint).toBe(
@@ -967,6 +971,8 @@ describe("real adapters", () => {
               fee: 250,
               fee_active_tvl_ratio: 1.2,
               fee_per_tvl_24h: 1.4,
+              pool_price_change_pct: 2.5,
+              volatility: 1.2,
               volume_change_pct: 18,
               base_token_holders: 1_500,
               dlmm_params: { bin_step: 100 },
@@ -1000,8 +1006,14 @@ describe("real adapters", () => {
       holderCount: 1_500,
       tokenAgeHours: 48,
       marketFeatureSnapshot: {
+        volume5mUsd: 0,
+        volume15mUsd: 0,
         volume1hUsd: 80_000,
         fees1hUsd: 250,
+        fees5mUsd: 0,
+        fees15mUsd: 0,
+        priceChange1hPct: 2.5,
+        volatility1hPct: 1.2,
         volume24hUsd: 0,
         fees24hUsd: 0,
       },
@@ -1204,7 +1216,7 @@ describe("real adapters", () => {
     ).rejects.toThrow();
   });
 
-  it("requires an explicit execution bridge for Jupiter executeSwap", async () => {
+  it("requires an execution bridge or direct signer for Jupiter executeSwap", async () => {
     const jupiter = new JupiterApiSwapGateway();
 
     await expect(
@@ -1214,6 +1226,6 @@ describe("real adapters", () => {
         outputMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         amountRaw: "100000000",
       }),
-    ).rejects.toThrow(/executeBaseUrl is required/i);
+    ).rejects.toThrow(/executeBaseUrl or direct signing options/i);
   });
 });

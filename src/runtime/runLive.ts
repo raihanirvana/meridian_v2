@@ -562,6 +562,10 @@ async function main() {
       liveBridges: {
         walletBalance: "rpc",
         solPrice: "jupiter-quote",
+        postCloseSwap:
+          runtimeEnv.JUPITER_EXECUTE_BASE_URL === undefined
+            ? "jupiter-direct-signed"
+            : "jupiter-execute-bridge",
       },
     },
     "runtime bootstrap configuration loaded",
@@ -635,18 +639,21 @@ async function main() {
             ? {}
             : { apiKey: config.secrets.ANALYTICS_API_KEY }),
         });
-  const swapGateway =
-    runtimeEnv.JUPITER_EXECUTE_BASE_URL === undefined
-      ? undefined
-      : new JupiterApiSwapGateway({
-          ...(config.secrets.JUPITER_API_KEY === undefined
-            ? {}
-            : { apiKey: config.secrets.JUPITER_API_KEY }),
-          ...(runtimeEnv.JUPITER_QUOTE_BASE_URL === undefined
-            ? {}
-            : { quoteBaseUrl: runtimeEnv.JUPITER_QUOTE_BASE_URL }),
-          executeBaseUrl: runtimeEnv.JUPITER_EXECUTE_BASE_URL,
-        });
+  const swapGateway = new JupiterApiSwapGateway({
+    ...(config.secrets.JUPITER_API_KEY === undefined
+      ? {}
+      : { apiKey: config.secrets.JUPITER_API_KEY }),
+    ...(runtimeEnv.JUPITER_QUOTE_BASE_URL === undefined
+      ? {}
+      : { quoteBaseUrl: runtimeEnv.JUPITER_QUOTE_BASE_URL }),
+    ...(runtimeEnv.JUPITER_EXECUTE_BASE_URL === undefined
+      ? {}
+      : { executeBaseUrl: runtimeEnv.JUPITER_EXECUTE_BASE_URL }),
+    rpcUrl: config.secrets.RPC_URL,
+    walletPrivateKey: config.secrets.WALLET_PRIVATE_KEY,
+    wallet: runtimeEnv.PUBLIC_WALLET_ADDRESS,
+    slippageBps: config.user.deploy.maxSlippageBps,
+  });
   const liveLlmGateway =
     config.user.ai.mode !== "disabled" &&
     config.secrets.LLM_BASE_URL !== undefined &&

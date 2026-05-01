@@ -289,6 +289,10 @@ function classifyMeanReversionSignal(
   return "weak";
 }
 
+function optionalNonZero(value: number): number | undefined {
+  return value === 0 ? undefined : value;
+}
+
 function buildAutoDeployPayload(input: {
   candidate: Candidate;
   poolInfo: Awaited<ReturnType<DlmmGateway["getPoolInfo"]>>;
@@ -341,6 +345,7 @@ function buildAutoDeployPayload(input: {
     input.candidate.screeningSnapshot,
     "volumeUsd",
   );
+  const market = input.candidate.marketFeatureSnapshot;
 
   return {
     poolAddress: input.candidate.poolAddress,
@@ -360,35 +365,65 @@ function buildAutoDeployPayload(input: {
       poolName: input.candidate.symbolPair,
       binStep: input.poolInfo.binStep,
       activeBinAtEntry: activeBin,
-      poolTvlUsd: input.candidate.marketFeatureSnapshot.tvlUsd,
-      volume5mUsd: input.candidate.marketFeatureSnapshot.volume5mUsd,
-      volume15mUsd: input.candidate.marketFeatureSnapshot.volume15mUsd,
-      volume1hUsd: input.candidate.marketFeatureSnapshot.volume1hUsd,
-      volume24hUsd: input.candidate.marketFeatureSnapshot.volume24hUsd,
-      fees5mUsd: input.candidate.marketFeatureSnapshot.fees5mUsd,
-      fees15mUsd: input.candidate.marketFeatureSnapshot.fees15mUsd,
-      fees1hUsd: input.candidate.marketFeatureSnapshot.fees1hUsd,
-      fees24hUsd: input.candidate.marketFeatureSnapshot.fees24hUsd,
-      feeTvlRatio1h: input.candidate.marketFeatureSnapshot.feeTvlRatio1h,
-      feeTvlRatio24h: input.candidate.marketFeatureSnapshot.feeTvlRatio24h,
-      priceChange5mPct: input.candidate.marketFeatureSnapshot.priceChange5mPct,
-      priceChange15mPct:
-        input.candidate.marketFeatureSnapshot.priceChange15mPct,
-      priceChange1hPct: input.candidate.marketFeatureSnapshot.priceChange1hPct,
-      volatility15mPct: input.candidate.marketFeatureSnapshot.volatility15mPct,
+      poolTvlUsd: market.tvlUsd,
+      ...(optionalNonZero(market.volume5mUsd) === undefined
+        ? {}
+        : { volume5mUsd: market.volume5mUsd }),
+      ...(optionalNonZero(market.volume15mUsd) === undefined
+        ? {}
+        : { volume15mUsd: market.volume15mUsd }),
+      ...(optionalNonZero(market.volume1hUsd) === undefined
+        ? {}
+        : { volume1hUsd: market.volume1hUsd }),
+      ...(optionalNonZero(market.volume24hUsd) === undefined
+        ? {}
+        : { volume24hUsd: market.volume24hUsd }),
+      ...(optionalNonZero(market.fees5mUsd) === undefined
+        ? {}
+        : { fees5mUsd: market.fees5mUsd }),
+      ...(optionalNonZero(market.fees15mUsd) === undefined
+        ? {}
+        : { fees15mUsd: market.fees15mUsd }),
+      ...(optionalNonZero(market.fees1hUsd) === undefined
+        ? {}
+        : { fees1hUsd: market.fees1hUsd }),
+      ...(optionalNonZero(market.fees24hUsd) === undefined
+        ? {}
+        : { fees24hUsd: market.fees24hUsd }),
+      ...(optionalNonZero(market.feeTvlRatio1h) === undefined
+        ? {}
+        : { feeTvlRatio1h: market.feeTvlRatio1h }),
+      ...(optionalNonZero(market.feeTvlRatio24h) === undefined
+        ? {}
+        : { feeTvlRatio24h: market.feeTvlRatio24h }),
+      ...(optionalNonZero(market.priceChange5mPct) === undefined
+        ? {}
+        : { priceChange5mPct: market.priceChange5mPct }),
+      ...(optionalNonZero(market.priceChange15mPct) === undefined
+        ? {}
+        : { priceChange15mPct: market.priceChange15mPct }),
+      ...(optionalNonZero(market.priceChange1hPct) === undefined
+        ? {}
+        : { priceChange1hPct: market.priceChange1hPct }),
+      ...(optionalNonZero(market.volatility15mPct) === undefined
+        ? {}
+        : { volatility15mPct: market.volatility15mPct }),
+      ...(optionalNonZero(market.volatility1hPct) === undefined
+        ? {}
+        : { volatility1hPct: market.volatility1hPct }),
       liquidityDepthNearActive: classifyLiquidityDepth({
         depthNearActiveUsd:
           input.candidate.dlmmMicrostructureSnapshot.depthNearActiveUsd,
-        tvlUsd: input.candidate.marketFeatureSnapshot.tvlUsd,
+        tvlUsd: market.tvlUsd,
       }),
       trendDirection: classifyTrendDirection(
-        input.candidate.marketFeatureSnapshot.priceChange15mPct,
+        market.priceChange15mPct || market.priceChange1hPct,
       ),
       trendStrength: classifyTrendStrength(
-        input.candidate.marketFeatureSnapshot.trendStrength15m,
+        market.trendStrength15m || market.trendStrength1h,
       ),
       meanReversionSignal: classifyMeanReversionSignal(
-        input.candidate.marketFeatureSnapshot.meanReversionScore,
+        market.meanReversionScore,
       ),
       candidateScore: input.candidate.score,
       ...(screeningVolumeUsd === undefined ? {} : { screeningVolumeUsd }),

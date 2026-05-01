@@ -44,6 +44,21 @@ describe("pool feature rules", () => {
     expect(snapshot.feeTvlRatio24h).toBe(0);
   });
 
+  it("does not downscale long-window volume or fee into shorter windows", () => {
+    const snapshot = buildMarketFeatureSnapshot({
+      volume1hUsd: 12_000,
+      fees1hUsd: 120,
+      tvlUsd: 100_000,
+    });
+
+    expect(snapshot.volume1hUsd).toBe(12_000);
+    expect(snapshot.fees1hUsd).toBe(120);
+    expect(snapshot.volume15mUsd).toBe(0);
+    expect(snapshot.volume5mUsd).toBe(0);
+    expect(snapshot.fees15mUsd).toBe(0);
+    expect(snapshot.fees5mUsd).toBe(0);
+  });
+
   it("excludes optional token intel from required deploy freshness age", () => {
     const snapshot = buildDataFreshnessSnapshot({
       now: "2026-04-22T10:00:00.000Z",

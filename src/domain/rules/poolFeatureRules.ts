@@ -55,39 +55,15 @@ export function buildMarketFeatureSnapshot(input: {
   organicVolumeScore?: number;
 }): MarketFeatureSnapshot {
   const volume24hUsd = input.volume24hUsd ?? 0;
-  const volume1hUsd =
-    input.volume1hUsd ??
-    (input.volume24hUsd === undefined ? 0 : volume24hUsd / 24);
-  const volume15mUsd =
-    input.volume15mUsd ??
-    (input.volume1hUsd !== undefined || input.volume24hUsd !== undefined
-      ? volume1hUsd / 4
-      : 0);
-  const volume5mUsd =
-    input.volume5mUsd ??
-    (input.volume15mUsd !== undefined ||
-    input.volume1hUsd !== undefined ||
-    input.volume24hUsd !== undefined
-      ? volume15mUsd / 3
-      : 0);
+  const volume1hUsd = input.volume1hUsd ?? 0;
+  const volume15mUsd = input.volume15mUsd ?? 0;
+  const volume5mUsd = input.volume5mUsd ?? 0;
   const fees24hUsd = input.fees24hUsd ?? 0;
-  const fees1hUsd =
-    input.fees1hUsd ?? (input.fees24hUsd === undefined ? 0 : fees24hUsd / 24);
-  const fees15mUsd =
-    input.fees15mUsd ??
-    (input.fees1hUsd !== undefined || input.fees24hUsd !== undefined
-      ? fees1hUsd / 4
-      : 0);
-  const fees5mUsd =
-    input.fees5mUsd ??
-    (input.fees15mUsd !== undefined ||
-    input.fees1hUsd !== undefined ||
-    input.fees24hUsd !== undefined
-      ? fees15mUsd / 3
-      : 0);
-  const priceChange15mPct =
-    input.priceChange15mPct ?? input.priceChange5mPct ?? 0;
-  const priceChange1hPct = input.priceChange1hPct ?? priceChange15mPct;
+  const fees1hUsd = input.fees1hUsd ?? 0;
+  const fees15mUsd = input.fees15mUsd ?? 0;
+  const fees5mUsd = input.fees5mUsd ?? 0;
+  const priceChange15mPct = input.priceChange15mPct ?? 0;
+  const priceChange1hPct = input.priceChange1hPct ?? 0;
 
   return MarketFeatureSnapshotSchema.parse({
     volume5mUsd,
@@ -106,7 +82,7 @@ export function buildMarketFeatureSnapshot(input: {
     priceChange5mPct: input.priceChange5mPct ?? 0,
     priceChange15mPct,
     priceChange1hPct,
-    priceChange24hPct: input.priceChange24hPct ?? priceChange1hPct,
+    priceChange24hPct: input.priceChange24hPct ?? 0,
     volatility5mPct:
       input.volatility5mPct ?? Math.abs(input.priceChange5mPct ?? 0),
     volatility15mPct: input.volatility15mPct ?? Math.abs(priceChange15mPct),

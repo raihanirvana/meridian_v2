@@ -47,6 +47,7 @@ export const PositionEntryMetadataSchema = z
     priceChange15mPct: z.number().optional(),
     priceChange1hPct: z.number().optional(),
     volatility15mPct: z.number().nonnegative().optional(),
+    volatility1hPct: z.number().nonnegative().optional(),
     liquidityDepthNearActive: z
       .enum(["shallow", "medium", "deep", "unknown"])
       .optional(),

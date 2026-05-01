@@ -1,10 +1,10 @@
 {
   "risk": {
     "maxConcurrentPositions": 4,
-    "maxCapitalUsagePct": 75,
+    "maxCapitalUsagePct": 100,
     "minReserveUsd": 5,
-    "maxTokenExposurePct": 50,
-    "maxPoolExposurePct": 50,
+    "maxTokenExposurePct": 100,
+    "maxPoolExposurePct": 100,
     "maxRebalancesPerPosition": 3,
     "dailyLossLimitPct": 12,
     "circuitBreakerCooldownMin": 60,
@@ -75,7 +75,7 @@
     "rebalanceEnabled": true,
     "aiRebalanceEnabled": true,
     "aiRebalanceMode": "constrained_action",
-    "minAiRebalanceConfidence": 0.62,
+    "minAiRebalanceConfidence": 0.75,
     "minPositionAgeMinutesBeforeRebalance": 5,
     "rebalanceCooldownMinutes": 8,
     "minRebalancePoolTvlUsd": 5000,
@@ -97,7 +97,7 @@
     "strategyReviewEnabled": true,
     "strategyReviewMode": "guarded_auto",
     "allowAiStrategyForDeploy": true,
-    "minAiStrategyConfidence": 0.55,
+    "minAiStrategyConfidence": 0.75,
     "walletRiskMode": "aggressive_memecoin"
   },
   "deploy": {

@@ -211,13 +211,17 @@ function extractActiveBin(pool: Record<string, unknown>): number | undefined {
 }
 
 function windowedValueForTimeframe(
-  value: number,
+  value: number | undefined,
   timeframe: "5m" | "1h" | "24h" | undefined,
 ): {
   value5m?: number;
   value1h?: number;
   value24h?: number;
 } {
+  if (value === undefined) {
+    return {};
+  }
+
   switch (timeframe) {
     case "5m":
       return { value5m: value };
@@ -483,6 +487,14 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     });
     const timeframeVolume = windowedValueForTimeframe(volumeUsd, timeframe);
     const timeframeFee = windowedValueForTimeframe(feeUsd, timeframe);
+    const timeframePriceChange = windowedValueForTimeframe(
+      firstNumber(pool.pool_price_change_pct, pool.priceChangePct),
+      timeframe,
+    );
+    const timeframeVolatility = windowedValueForTimeframe(
+      firstNumber(pool.volatility, pool.volatilityPct),
+      timeframe,
+    );
     const volume5mUsd = firstNumber(pool.volume_5m, pool.volume5mUsd);
     const volume15mUsd = firstNumber(pool.volume_15m, pool.volume15mUsd);
     const volume1hUsd = firstNumber(pool.volume_1h, pool.volume1hUsd);
@@ -504,6 +516,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     const priceChange5mPct = firstNumber(
       pool.price_change_5m,
       pool.priceChange5mPct,
+      timeframePriceChange.value5m,
     );
     const priceChange15mPct = firstNumber(
       pool.price_change_15m,
@@ -512,10 +525,12 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     const priceChange1hPct = firstNumber(
       pool.price_change_1h,
       pool.priceChange1hPct,
+      timeframePriceChange.value1h,
     );
     const priceChange24hPct = firstNumber(
       pool.price_change_24h,
       pool.priceChange24hPct,
+      timeframePriceChange.value24h,
     );
     const depthNearActiveUsd =
       firstNumber(
@@ -538,6 +553,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     const volatility5mPct = firstNumber(
       pool.volatility_5m,
       pool.volatility5mPct,
+      timeframeVolatility.value5m,
     );
     const volatility15mPct = firstNumber(
       pool.volatility_15m,
@@ -546,6 +562,7 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
     const volatility1hPct = firstNumber(
       pool.volatility_1h,
       pool.volatility1hPct,
+      timeframeVolatility.value1h,
     );
     const trendStrength15m = firstNumber(
       pool.trend_strength_15m,
@@ -559,16 +576,14 @@ export class MeteoraPoolDiscoveryScreeningGateway implements ScreeningGateway {
       pool.mean_reversion_score,
       pool.meanReversionScore,
     );
-    const effectiveVolume5mUsd = volume5mUsd ?? timeframeVolume.value5m;
-    const effectiveVolume1hUsd = volume1hUsd ?? timeframeVolume.value1h;
     const marketFeatureSnapshot = buildMarketFeatureSnapshot({
-      ...(effectiveVolume5mUsd === undefined
+      ...(volume5mUsd === undefined && timeframeVolume.value5m === undefined
         ? {}
-        : { volume5mUsd: effectiveVolume5mUsd }),
+        : { volume5mUsd: volume5mUsd ?? timeframeVolume.value5m }),
       ...(volume15mUsd === undefined ? {} : { volume15mUsd }),
-      ...(effectiveVolume1hUsd === undefined
+      ...(volume1hUsd === undefined && timeframeVolume.value1h === undefined
         ? {}
-        : { volume1hUsd: effectiveVolume1hUsd }),
+        : { volume1hUsd: volume1hUsd ?? timeframeVolume.value1h }),
       ...(volume24hUsd === undefined ? {} : { volume24hUsd }),
       ...(timeframeFee.value5m === undefined
         ? {}

@@ -12,6 +12,10 @@ import {
   type PostCloseSwapHook,
 } from "./finalizeClose.js";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "unknown swap error";
+}
+
 export function createPostClaimSwapHook(
   swapGateway: SwapGateway,
 ): PostClaimSwapHook {
@@ -53,15 +57,24 @@ export function createPostCloseSwapHook(
       };
     }
 
-    const result = await swapGateway.executeSwap({
-      wallet: parsed.wallet,
-      inputMint: parsed.position.baseMint,
-      outputMint: parsed.position.quoteMint,
-      amountRaw,
-    });
-    return {
-      swapIntentId: parsed.swapIntentId,
-      ...ExecuteSwapResultSchema.parse(result),
-    };
+    try {
+      const result = await swapGateway.executeSwap({
+        wallet: parsed.wallet,
+        inputMint: parsed.position.baseMint,
+        outputMint: parsed.position.quoteMint,
+        amountRaw,
+      });
+      return {
+        swapIntentId: parsed.swapIntentId,
+        status: "DONE",
+        ...ExecuteSwapResultSchema.parse(result),
+      };
+    } catch (error) {
+      return {
+        swapIntentId: parsed.swapIntentId,
+        status: "FAILED",
+        reason: errorMessage(error),
+      };
+    }
   };
 }
