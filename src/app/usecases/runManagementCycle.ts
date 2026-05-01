@@ -216,6 +216,14 @@ function tryDeriveFreshSnapshotPnlPct(input: {
   now: string;
 }): number | null {
   const { position, now } = input;
+  if (
+    position.lastRebalanceAt != null &&
+    position.deployAmountQuote <= 0 &&
+    position.deployAmountBase > 0
+  ) {
+    return null;
+  }
+
   if (position.lastSyncedAt === null) {
     return null;
   }

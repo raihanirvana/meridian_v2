@@ -43,7 +43,16 @@ describe("lesson prompt rules", () => {
 
   it("formats lessons prompt with section headers", () => {
     const prompt = formatLessonsPrompt({
-      pinned: [buildLesson({ id: "pinned", pinned: true })],
+      pinned: [
+        buildLesson({
+          id: "pinned",
+          pinned: true,
+          pool: "SOL-USDC",
+          pnlPct: -7.26,
+          rangeEfficiencyPct: 100,
+          context: "rebalance reset basis",
+        }),
+      ],
       role: [buildLesson({ id: "role", role: "SCREENER" })],
       recent: [buildLesson({ id: "recent" })],
       roleLabel: "SCREENER",
@@ -52,5 +61,9 @@ describe("lesson prompt rules", () => {
     expect(prompt).toContain("── PINNED (1) ──");
     expect(prompt).toContain("── SCREENER (1) ──");
     expect(prompt).toContain("── RECENT (1) ──");
+    expect(prompt).toContain("pool=SOL-USDC");
+    expect(prompt).toContain("pnl=-7.26%");
+    expect(prompt).toContain("range_efficiency=100.00%");
+    expect(prompt).toContain("context=rebalance reset basis");
   });
 });

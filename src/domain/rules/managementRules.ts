@@ -210,6 +210,14 @@ function trailingTakeProfitTriggered(
     return false;
   }
 
+  if (
+    input.position.lastRebalanceAt != null &&
+    input.position.deployAmountQuote <= 0 &&
+    input.position.deployAmountBase > 0
+  ) {
+    return false;
+  }
+
   const triggerPct = input.policy.trailingTriggerPct ?? 0;
   const dropPct = input.policy.trailingDropPct ?? 0;
   if (triggerPct <= 0 || dropPct <= 0) {

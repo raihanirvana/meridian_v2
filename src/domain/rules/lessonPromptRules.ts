@@ -118,9 +118,26 @@ function formatTimestampForPrompt(iso: string): string {
   return iso.slice(0, 16).replace("T", " ");
 }
 
+function formatPercent(value: number): string {
+  return `${value.toFixed(2)}%`;
+}
+
 function formatLessonLine(lesson: Lesson): string {
   const pinnedPrefix = lesson.pinned ? "\uD83D\uDCCC " : "";
-  return `${pinnedPrefix}[${lesson.outcome.toUpperCase()}] [${formatTimestampForPrompt(lesson.createdAt)}] ${lesson.rule}`;
+  const metadata = [
+    lesson.pool === undefined ? null : `pool=${lesson.pool}`,
+    lesson.role === null ? null : `role=${lesson.role}`,
+    lesson.tags.length === 0 ? null : `tags=${lesson.tags.join(",")}`,
+    lesson.pnlPct === undefined ? null : `pnl=${formatPercent(lesson.pnlPct)}`,
+    lesson.rangeEfficiencyPct === undefined
+      ? null
+      : `range_efficiency=${formatPercent(lesson.rangeEfficiencyPct)}`,
+    lesson.context === undefined ? null : `context=${lesson.context}`,
+  ].filter((item): item is string => item !== null);
+  const metadataSuffix =
+    metadata.length === 0 ? "" : ` | ${metadata.join("; ")}`;
+
+  return `${pinnedPrefix}[${lesson.outcome.toUpperCase()}] [${formatTimestampForPrompt(lesson.createdAt)}] ${lesson.rule}${metadataSuffix}`;
 }
 
 export function formatLessonsPrompt(sections: SelectedLessonsForRole): string {

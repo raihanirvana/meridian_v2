@@ -128,9 +128,44 @@ describe("pool memory rules", () => {
 
     expect(recall).toContain("POOL MEMORY [SOL-USDC]");
     expect(recall).toContain("avg PnL");
+    expect(recall).toContain("Last deploy:");
     expect(recall).toContain("Recent trend:");
     expect(recall).toContain("Cooldown until:");
-    expect(recall).toContain("Last note:");
+    expect(recall).toContain("Last note [2026-04-22T05:05:00.000Z]:");
+  });
+
+  it("includes up to three recent notes in recall strings", () => {
+    const recall = buildPoolRecallString(
+      buildEntry({
+        notes: [
+          {
+            note: "old note",
+            addedAt: "2026-04-22T01:00:00.000Z",
+          },
+          {
+            note: "avoid after failed rebalance",
+            addedAt: "2026-04-22T02:00:00.000Z",
+          },
+          {
+            note: "treat recent profit as unreliable",
+            addedAt: "2026-04-22T03:00:00.000Z",
+          },
+          {
+            note: "cooldown until fresh volume returns",
+            addedAt: "2026-04-22T04:00:00.000Z",
+          },
+        ],
+      }),
+      {
+        now: "2026-04-22T08:00:00.000Z",
+      },
+    );
+
+    expect(recall).toContain("Recent notes:");
+    expect(recall).not.toContain("old note");
+    expect(recall).toContain("avoid after failed rebalance");
+    expect(recall).toContain("treat recent profit as unreliable");
+    expect(recall).toContain("cooldown until fresh volume returns");
   });
 
   it("omits expired cooldowns from recall strings", () => {

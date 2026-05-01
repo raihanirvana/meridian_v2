@@ -353,6 +353,31 @@ describe("management rules", () => {
     expect(result.reason).toMatch(/trailing take profit/i);
   });
 
+  it("does not trigger trailing take profit for base-only rebalance positions", () => {
+    const result = evaluateManagementAction(
+      buildInput({
+        position: {
+          deployAmountBase: 6003.248143,
+          deployAmountQuote: 0,
+          lastRebalanceAt: "2026-05-01T13:35:01.608Z",
+          currentValueUsd: 17.294080742628363,
+          unrealizedPnlUsd: 0.6530043255100324,
+          peakPnlPct: 10.944688754122462,
+          peakPnlRecordedAt: "2026-05-01T15:05:01.702Z",
+        },
+        policy: {
+          trailingTakeProfitEnabled: true,
+          trailingTriggerPct: 8,
+          trailingDropPct: 3,
+          claimFeesThresholdUsd: 999,
+          partialCloseEnabled: false,
+        },
+      }),
+    );
+
+    expect(result.action).toBe("HOLD");
+  });
+
   it("lets trailing take profit outrank reconcile-only when it is configured as hard exit", () => {
     const result = evaluateManagementAction(
       buildInput({

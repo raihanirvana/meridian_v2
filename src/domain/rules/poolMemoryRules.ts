@@ -69,6 +69,13 @@ export function buildPoolRecallString(
     lines.push(
       `POOL MEMORY [${validated.name}]: ${validated.totalDeploys} deploy(s), avg PnL ${validated.avgPnlPct.toFixed(2)}%, win rate ${validated.winRatePct.toFixed(2)}%, last outcome: ${validated.lastOutcome ?? "unknown"}`,
     );
+
+    const lastDeploy = validated.deploys[validated.deploys.length - 1];
+    if (lastDeploy !== undefined) {
+      lines.push(
+        `Last deploy: pnl ${lastDeploy.pnlPct.toFixed(2)}% ($${lastDeploy.pnlUsd.toFixed(2)}), closeReason ${lastDeploy.closeReason}, strategy ${lastDeploy.strategy}, held ${lastDeploy.minutesHeld}m, range efficiency ${lastDeploy.rangeEfficiencyPct.toFixed(2)}%`,
+      );
+    }
   }
 
   const recentSnapshots = validated.snapshots.slice(-6);
@@ -94,9 +101,19 @@ export function buildPoolRecallString(
     }
   }
 
-  const lastNote = validated.notes[validated.notes.length - 1];
-  if (lastNote !== undefined) {
-    lines.push(`Last note: ${lastNote.note}`);
+  const recentNotes = validated.notes.slice(-3);
+  if (recentNotes.length === 1) {
+    const [lastNote] = recentNotes;
+    if (lastNote !== undefined) {
+      lines.push(`Last note [${lastNote.addedAt}]: ${lastNote.note}`);
+    }
+  } else if (recentNotes.length > 1) {
+    lines.push(
+      [
+        "Recent notes:",
+        ...recentNotes.map((note) => `- [${note.addedAt}] ${note.note}`),
+      ].join("\n"),
+    );
   }
 
   return lines.length === 0 ? null : lines.join("\n");
