@@ -322,9 +322,15 @@ export function createRecordPositionPerformanceLessonHook(
           closedAt: result.performance.closedAt,
           pnlPct: result.performance.pnlPct,
           pnlUsd: result.performance.pnlUsd,
+          initialValueUsd: result.performance.initialValueUsd,
+          finalValueUsd: result.performance.finalValueUsd,
+          feesEarnedUsd: result.performance.feesEarnedUsd,
           rangeEfficiencyPct: result.performance.rangeEfficiencyPct,
           minutesHeld: result.performance.minutesHeld,
           closeReason: result.performance.closeReason,
+          ...(result.performance.closeReasonDetail === undefined
+            ? {}
+            : { closeReasonDetail: result.performance.closeReasonDetail }),
           strategy: result.performance.strategy,
           volatilityAtDeploy: result.performance.volatility,
           positionId: result.performance.positionId,

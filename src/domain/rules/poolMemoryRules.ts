@@ -49,6 +49,43 @@ export function shouldCooldown(input: {
   return closeReasonSet.includes(input.closeReason);
 }
 
+function formatUsd(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+function formatCloseReason(deploy: PoolDeploy): string {
+  const detail = deploy.closeReasonDetail?.trim();
+  if (detail === undefined || detail.length === 0) {
+    return deploy.closeReason;
+  }
+
+  if (detail.toLowerCase() === deploy.closeReason.replaceAll("_", " ")) {
+    return deploy.closeReason;
+  }
+
+  return `${deploy.closeReason} (${detail})`;
+}
+
+function formatLastDeployLine(deploy: PoolDeploy): string {
+  const valueSummary =
+    deploy.initialValueUsd === undefined || deploy.finalValueUsd === undefined
+      ? null
+      : `, value ${formatUsd(deploy.initialValueUsd)}->${formatUsd(deploy.finalValueUsd)}`;
+  const feeSummary =
+    deploy.feesEarnedUsd === undefined
+      ? null
+      : `, fees ${formatUsd(deploy.feesEarnedUsd)}`;
+
+  return [
+    `Last deploy: pnl ${deploy.pnlPct.toFixed(2)}% (${formatUsd(deploy.pnlUsd)})`,
+    `closed by ${formatCloseReason(deploy)}`,
+    `strategy ${deploy.strategy}`,
+    `held ${deploy.minutesHeld}m`,
+    `range efficiency ${deploy.rangeEfficiencyPct.toFixed(2)}%`,
+    `volatility at deploy ${deploy.volatilityAtDeploy.toFixed(2)}`,
+  ].join(", ") + `${valueSummary ?? ""}${feeSummary ?? ""}`;
+}
+
 export function buildPoolRecallString(
   entry: PoolMemoryEntry,
   options?: { now?: string },
@@ -72,9 +109,7 @@ export function buildPoolRecallString(
 
     const lastDeploy = validated.deploys[validated.deploys.length - 1];
     if (lastDeploy !== undefined) {
-      lines.push(
-        `Last deploy: pnl ${lastDeploy.pnlPct.toFixed(2)}% ($${lastDeploy.pnlUsd.toFixed(2)}), closeReason ${lastDeploy.closeReason}, strategy ${lastDeploy.strategy}, held ${lastDeploy.minutesHeld}m, range efficiency ${lastDeploy.rangeEfficiencyPct.toFixed(2)}%`,
-      );
+      lines.push(formatLastDeployLine(lastDeploy));
     }
   }
 

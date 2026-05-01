@@ -11,9 +11,13 @@ export const PoolDeploySchema = z
     closedAt: TimestampSchema,
     pnlPct: z.number(),
     pnlUsd: z.number(),
+    initialValueUsd: z.number().min(0).optional(),
+    finalValueUsd: z.number().min(0).optional(),
+    feesEarnedUsd: z.number().min(0).optional(),
     rangeEfficiencyPct: z.number().min(0).max(100),
     minutesHeld: z.number().int().min(0),
     closeReason: CloseReasonSchema,
+    closeReasonDetail: z.string().min(1).max(300).optional(),
     strategy: StrategySchema,
     volatilityAtDeploy: z.number(),
   })

@@ -106,6 +106,7 @@ const screeningPolicy = {
   maxMarketCapUsd: 10_000_000,
   minTvlUsd: 10_000,
   minVolumeUsd: 5_000,
+  minVolatility1hPct: 1,
   minFeeActiveTvlRatio: 0.05,
   minFeePerTvl24h: 0.01,
   minOrganic: 60,
@@ -334,6 +335,31 @@ describe("screening rules", () => {
         "24h fee-per-tvl below minimum",
       ]),
     );
+  });
+
+  it("rejects candidates with insufficient 1h volatility", () => {
+    const result = evaluateScreeningHardFilters({
+      candidate: buildCandidate({
+        marketFeatureSnapshot: buildMarketFeatureSnapshot({
+          volume24hUsd: 25_000,
+          fees24hUsd: 15,
+          tvlUsd: 50_000,
+          volatility1hPct: 0.4,
+          trendStrength1h: 10,
+          meanReversionScore: 70,
+          organicVolumeScore: 80,
+          washTradingRiskScore: 5,
+        }),
+      }),
+      portfolio: buildPortfolio(),
+      policy: {
+        ...screeningPolicy,
+        minVolatility1hPct: 1.5,
+      },
+    });
+
+    expect(result.hardFilterPassed).toBe(false);
+    expect(result.rejectionReasons).toContain("1h volatility below minimum");
   });
 
   it("rejects candidates with stale or missing active-bin strategy snapshots", () => {

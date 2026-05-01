@@ -35,6 +35,7 @@ export const ScreeningPolicySchema = z
     minTvlUsd: z.number().positive(),
     minVolumeUsd: z.number().positive(),
     minVolumeTrendPct: z.number().optional(),
+    minVolatility1hPct: z.number().nonnegative().optional(),
     minFeeActiveTvlRatio: z.number().positive(),
     minFeePerTvl24h: z.number().nonnegative(),
     minOrganic: z.number().min(0).max(100),
@@ -241,6 +242,14 @@ export function evaluateScreeningHardFilters(input: {
       rejectionReasons.push("volume trend below minimum");
     }
   }
+  const marketFeatureSnapshot =
+    candidate.marketFeatureSnapshot ?? defaultMarketFeatureSnapshot();
+  if (
+    policy.minVolatility1hPct !== undefined &&
+    marketFeatureSnapshot.volatility1hPct < policy.minVolatility1hPct
+  ) {
+    rejectionReasons.push("1h volatility below minimum");
+  }
   if (candidate.feeToTvlRatio < policy.minFeeActiveTvlRatio) {
     rejectionReasons.push("fee-to-tvl ratio below minimum");
   }
@@ -311,8 +320,6 @@ export function evaluateScreeningHardFilters(input: {
   if (!policy.allowedPairTypes.includes(candidate.pairType)) {
     rejectionReasons.push("pair type not allowed");
   }
-  const marketFeatureSnapshot =
-    candidate.marketFeatureSnapshot ?? defaultMarketFeatureSnapshot();
   const dlmmMicrostructureSnapshot =
     candidate.dlmmMicrostructureSnapshot ?? defaultDlmmMicrostructureSnapshot();
   const dataFreshnessSnapshot =

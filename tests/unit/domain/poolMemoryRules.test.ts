@@ -16,9 +16,13 @@ function buildDeploy(overrides: Partial<PoolDeploy> = {}): PoolDeploy {
     closedAt: "2026-04-22T02:00:00.000Z",
     pnlPct: 5,
     pnlUsd: 5,
+    initialValueUsd: 100,
+    finalValueUsd: 105,
+    feesEarnedUsd: 1.25,
     rangeEfficiencyPct: 80,
     minutesHeld: 120,
     closeReason: "take_profit",
+    closeReasonDetail: "Trailing take profit exit triggered",
     strategy: "bid_ask",
     volatilityAtDeploy: 12,
     ...overrides,
@@ -38,7 +42,9 @@ function buildEntry(overrides: Partial<PoolMemoryEntry> = {}): PoolMemoryEntry {
         closedAt: "2026-04-22T05:00:00.000Z",
         pnlPct: -4,
         pnlUsd: -4,
+        finalValueUsd: 96,
         closeReason: "volume_collapse",
+        closeReasonDetail: "Volume collapsed after entry",
       }),
     ],
     avgPnlPct: 0.5,
@@ -129,6 +135,12 @@ describe("pool memory rules", () => {
     expect(recall).toContain("POOL MEMORY [SOL-USDC]");
     expect(recall).toContain("avg PnL");
     expect(recall).toContain("Last deploy:");
+    expect(recall).toContain(
+      "closed by volume_collapse (Volume collapsed after entry)",
+    );
+    expect(recall).toContain("value $100.00->$96.00");
+    expect(recall).toContain("fees $1.25");
+    expect(recall).toContain("volatility at deploy");
     expect(recall).toContain("Recent trend:");
     expect(recall).toContain("Cooldown until:");
     expect(recall).toContain("Last note [2026-04-22T05:05:00.000Z]:");

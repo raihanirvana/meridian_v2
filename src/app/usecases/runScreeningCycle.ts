@@ -408,6 +408,7 @@ export async function runScreeningCycle(
         );
   const {
     minVolumeTrendPct: _coarseMinVolumeTrendPct,
+    minVolatility1hPct: _coarseMinVolatility1hPct,
     minTokenAgeHours: _coarseMinTokenAgeHours,
     maxTokenAgeHours: _coarseMaxTokenAgeHours,
     athFilterPct: _coarseAthFilterPct,

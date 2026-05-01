@@ -59,6 +59,7 @@ export const UserConfigSchema = z
         minTvlUsd: PositiveNumber,
         minVolumeUsd: PositiveNumber,
         minVolumeTrendPct: z.number().optional(),
+        minVolatility1hPct: z.number().nonnegative().optional(),
         minFeeActiveTvlRatio: PositiveNumber,
         minFeePerTvl24h: PositiveNumber,
         minOrganic: PercentNumber,

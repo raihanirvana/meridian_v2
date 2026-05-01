@@ -17,6 +17,7 @@
     "minTvlUsd": 5000,
     "minVolumeUsd": 2000,
     "minVolumeTrendPct": -30,
+    "minVolatility1hPct": 1.5,
     "minFeeActiveTvlRatio": 0.05,
     "minFeePerTvl24h": 0.0005,
     "minOrganic": 20,

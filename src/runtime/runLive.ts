@@ -293,6 +293,9 @@ function toRuntimeScreeningPolicy(
   if (userScreening.minVolumeTrendPct !== undefined) {
     policy.minVolumeTrendPct = userScreening.minVolumeTrendPct;
   }
+  if (userScreening.minVolatility1hPct !== undefined) {
+    policy.minVolatility1hPct = userScreening.minVolatility1hPct;
+  }
   if (userScreening.minTokenAgeHours !== undefined) {
     policy.minTokenAgeHours = userScreening.minTokenAgeHours;
   }

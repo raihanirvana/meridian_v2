@@ -562,6 +562,9 @@ export function createRuntimeSupervisor(
     ...(input.config.screening.minVolumeTrendPct === undefined
       ? {}
       : { minVolumeTrendPct: input.config.screening.minVolumeTrendPct }),
+    ...(input.config.screening.minVolatility1hPct === undefined
+      ? {}
+      : { minVolatility1hPct: input.config.screening.minVolatility1hPct }),
     minFeeActiveTvlRatio: input.config.screening.minFeeActiveTvlRatio,
     minFeePerTvl24h: input.config.screening.minFeePerTvl24h,
     minOrganic: input.config.screening.minOrganic,

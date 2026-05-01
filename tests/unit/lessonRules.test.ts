@@ -54,7 +54,10 @@ describe("lesson rules", () => {
       buildPerformance({
         pnlPct: 12,
         pnlUsd: 12,
+        finalValueUsd: 112,
         rangeEfficiencyPct: 90,
+        closeReason: "take_profit",
+        closeReasonDetail: "Trailing take profit exit triggered",
       }),
       "2026-04-22T02:00:00.000Z",
       () => "01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -67,6 +70,13 @@ describe("lesson rules", () => {
       }),
     );
     expect(lesson?.rule).toContain("PREFER:");
+    expect(lesson?.rule).toContain(
+      "close=take_profit (Trailing take profit exit triggered)",
+    );
+    expect(lesson?.rule).toContain("held=120m");
+    expect(lesson?.rule).toContain("value=$100.00->$112.00");
+    expect(lesson?.rule).toContain("fees=$2.00");
+    expect(lesson?.rule).toContain("profit was protected");
   });
 
   it("returns null for neutral outcomes", () => {
@@ -97,6 +107,7 @@ describe("lesson rules", () => {
     expect(lesson?.outcome).toBe("bad");
     expect(lesson?.rule).toContain("AVOID:");
     expect(lesson?.rule).toContain("went OOR");
+    expect(lesson?.rule).toContain("close=out_of_range");
   });
 
   it("derives a volume collapse lesson for bad collapse exits", () => {
@@ -113,6 +124,7 @@ describe("lesson rules", () => {
 
     expect(lesson?.outcome).toBe("bad");
     expect(lesson?.rule).toContain("volume collapse");
+    expect(lesson?.rule).toContain("volume/fee durability failed");
   });
 
   it("derives a worked lesson for non-perfect but good winners", () => {
@@ -169,7 +181,10 @@ describe("lesson rules", () => {
     );
 
     expect(lesson?.rule).toContain(
-      "Reason: rebalance (AI rebalance planner selected same-pool redeploy).",
+      "close=rebalance (AI rebalance planner selected same-pool redeploy)",
+    );
+    expect(lesson?.rule).toContain(
+      "do not treat same-pool redeploy as success unless realized PnL confirms it",
     );
   });
 

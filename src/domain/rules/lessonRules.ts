@@ -46,6 +46,14 @@ export function buildContextString(perf: PerformanceRecord): string {
   ].join(", ");
 }
 
+function formatPct(value: number): string {
+  return `${value.toFixed(2)}%`;
+}
+
+function formatUsd(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
 function formatCloseReason(perf: PerformanceRecord): string {
   const detail = perf.closeReasonDetail?.trim();
   if (detail === undefined || detail.length === 0) {
@@ -57,6 +65,36 @@ function formatCloseReason(perf: PerformanceRecord): string {
   }
 
   return `${perf.closeReason} (${detail})`;
+}
+
+function buildPerformanceSummary(perf: PerformanceRecord): string {
+  return [
+    `close=${formatCloseReason(perf)}`,
+    `held=${perf.minutesHeld}m`,
+    `in_range=${perf.minutesInRange}/${perf.minutesHeld}m`,
+    `value=${formatUsd(perf.initialValueUsd)}->${formatUsd(perf.finalValueUsd)}`,
+    `pnl=${formatUsd(perf.pnlUsd)} (${formatPct(perf.pnlPct)})`,
+    `fees=${formatUsd(perf.feesEarnedUsd)}`,
+  ].join(", ");
+}
+
+function buildLearningHint(perf: PerformanceRecord): string {
+  switch (perf.closeReason) {
+    case "take_profit":
+      return "Learn: profit was protected by take-profit/trailing exit; prefer similar setup only if entry conditions and in-range efficiency remain comparable.";
+    case "rebalance":
+      return "Learn: rebalance outcome depends on post-rebalance accounting and fresh range quality; do not treat same-pool redeploy as success unless realized PnL confirms it.";
+    case "volume_collapse":
+      return "Learn: volume/fee durability failed after entry; require stronger sustained fee and volume confirmation before redeploying.";
+    case "out_of_range":
+      return "Learn: range selection was too fragile for the move; prefer wider range or a different strategy under similar volatility.";
+    case "stop_loss":
+      return "Learn: downside protection fired; avoid similar entries unless risk flags improve materially.";
+    case "timeout":
+      return "Learn: capital was tied up too long relative to payoff; prefer faster fee generation or clearer momentum.";
+    default:
+      return "Learn: use this outcome as supporting evidence, but confirm with fresh market structure before repeating.";
+  }
 }
 
 export function inferRoleTags(perf: PerformanceRecord): string[] {
@@ -95,28 +133,30 @@ export function collectTags(perf: PerformanceRecord): string[] {
 export function pickRuleTemplate(perf: PerformanceRecord): string | null {
   const outcome = classifyOutcome(perf.pnlPct);
   const context = buildContextString(perf);
+  const performanceSummary = buildPerformanceSummary(perf);
+  const learningHint = buildLearningHint(perf);
 
   if (outcome === "neutral") {
     return null;
   }
 
   if (perf.rangeEfficiencyPct < 30 && outcome === "bad") {
-    return `AVOID: ${perf.poolName}-type pools (volatility=${perf.volatility}, bin_step=${perf.binStep}) with strategy="${perf.strategy}" — went OOR ${Math.round(100 - perf.rangeEfficiencyPct)}% of the time. Consider wider bin range or bid_ask strategy.`;
+    return `AVOID: ${perf.poolName}-type pools (volatility=${perf.volatility}, bin_step=${perf.binStep}) with strategy="${perf.strategy}" — went OOR ${Math.round(100 - perf.rangeEfficiencyPct)}% of the time. ${performanceSummary}. ${learningHint}`;
   }
 
   if (perf.rangeEfficiencyPct > 80 && outcome === "good") {
-    return `PREFER: ${perf.poolName}-type pools (volatility=${perf.volatility}, bin_step=${perf.binStep}) with strategy="${perf.strategy}" — ${perf.rangeEfficiencyPct}% in-range efficiency, PnL +${perf.pnlPct}%.`;
+    return `PREFER: ${perf.poolName}-type pools (volatility=${perf.volatility}, bin_step=${perf.binStep}) with strategy="${perf.strategy}" — ${formatPct(perf.rangeEfficiencyPct)} in-range efficiency. ${performanceSummary}. ${learningHint}`;
   }
 
   if (outcome === "bad" && perf.closeReason === "volume_collapse") {
-    return `AVOID: Pools with fee_tvl_ratio=${perf.feeTvlRatio} that showed volume collapse — fees evaporated quickly. Minimum sustained volume check needed before deploying.`;
+    return `AVOID: Pools with fee_tvl_ratio=${perf.feeTvlRatio} that showed volume collapse — fees evaporated quickly. ${performanceSummary}. ${learningHint}`;
   }
 
   if (outcome === "good") {
-    return `WORKED: ${context} -> PnL +${perf.pnlPct}%, range efficiency ${perf.rangeEfficiencyPct}%.`;
+    return `WORKED: ${context}. ${performanceSummary}. range_efficiency=${formatPct(perf.rangeEfficiencyPct)}. ${learningHint}`;
   }
 
-  return `FAILED: ${context} -> PnL ${perf.pnlPct}%, range efficiency ${perf.rangeEfficiencyPct}%. Reason: ${formatCloseReason(perf)}.`;
+  return `FAILED: ${context}. ${performanceSummary}. range_efficiency=${formatPct(perf.rangeEfficiencyPct)}. ${learningHint}`;
 }
 
 export function deriveLesson(
